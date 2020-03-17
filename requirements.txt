@@ -1,0 +1,12 @@
+attrs
+opencv-python
+mdv==1.7.4
+numpy
+oarphpy==0.0.4
+pandas
+plotly>=4.2.1
+pytest
+scipy>=1.4.0
+six>=1.14.0
+sphinx-autoapi
+tabulate
