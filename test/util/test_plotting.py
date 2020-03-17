@@ -1,0 +1,95 @@
+# Copyright 2020 Maintainers of PSegs
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+import tempfile
+from pathlib import Path
+
+import numpy as np
+from oarphpy import util
+
+from psegs.util import plotting as pspl
+
+
+def check_img(actual, fixture_name):
+  FIXTURES_DIR = Path(__file__).parent / '../fixtures'
+  OUTPUT_DIR = Path(tempfile.gettempdir()) / 'test_plotting'
+  util.mkdir(OUTPUT_DIR)
+  
+  actual_bytes = util.to_png_bytes(actual)
+  expected_bytes = open(FIXTURES_DIR / fixture_name, 'rb').read()
+  
+  actual_path = OUTPUT_DIR / ('actual_' + fixture_name)
+  open(actual_path, 'wb').write(actual_bytes)
+  assert actual_bytes == expected_bytes, "Check %s" % actual_path
+
+
+def test_draw_xy_depth_in_image():
+  # Create points for a test image:
+  #  * One point every 10 pixels in x- and y- directions
+  #  * The depth value of the pixel is the scalar value of the y-coord
+  #      interpreted as meters
+  h, w = 600, 600
+  pts = []
+  for y in range(int(h / 10)):
+    for x in range(int(w / 10)):
+      pts.append((x * 10, y * 10, y))
+  
+  pts = np.array(pts)
+  actual = np.zeros((h, w, 3))
+  pspl.draw_xy_depth_in_image(actual, pts)
+
+  check_img(actual, 'test_draw_xy_depth_in_image.png')
+
+
+def test_draw_cuboid_xy_in_image():
+  cube = np.array([
+    # Front
+    [50, 50],
+    [50, 75],
+    [75, 75],
+    [75, 50],
+    
+    # Back
+    [15, 15],
+    [15, 40],
+    [40, 40],
+    [40, 15],
+  ])
+
+  h, w = 100, 100
+  actual = np.zeros((h, w, 3))
+  pspl.draw_cuboid_xy_in_image(actual, cube, (128, 0, 128))
+
+  check_img(actual, 'test_draw_cuboid_xy_in_image.png')
+
+
+def test_draw_bbox_in_image():
+  from psegs.datum.bbox2d import BBox2D
+
+  img = np.zeros((100, 200, 3))
+  
+  center = BBox2D(x=80, y=40, width=20, height=20, category_name='center')
+  pspl.draw_bbox_in_image(img, center)
+
+  up_left = BBox2D(x=5, y=5, width=40, height=20, category_name='up_left')
+  pspl.draw_bbox_in_image(img, up_left)
+  
+  low_right = BBox2D(x=150, y=75, width=40, height=20, category_name='low_right')
+  pspl.draw_bbox_in_image(img, low_right)
+
+  no_txt = BBox2D(x=5, y=75, width=10, height=10, category_name='')
+  pspl.draw_bbox_in_image(img, no_txt)
+
+  check_img(img, 'test_draw_bbox_in_image.png')
