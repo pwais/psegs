@@ -220,7 +220,7 @@ def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
   pts = pts.copy()
   
   # Map points to pixels and filter off-screen points
-  pts_xy = np.rint(pts[:, :2]).astype(np.int)
+  pts_xy = np.rint(pts[:, :2])
   pts[:, :2] = pts_xy[:, :2]
   pts = pts[np.where(
     (pts[:, 0] >= 0) & (pts[:, 0] < w) &
@@ -235,8 +235,8 @@ def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
   colors = np.clip(colors, 0, 255).astype(int)
   
   # Draw the markers! NB: numpy assignment is very fast, even for 1M+ pts
-  yy = pts[:, 1]
-  xx = pts[:, 0]
+  yy = pts[:, 1].astype(np.int)
+  xx = pts[:, 0].astype(np.int)
   overlay[yy, xx] = colors
 
   if marker_radius < 0:

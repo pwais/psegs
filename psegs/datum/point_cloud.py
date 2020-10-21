@@ -19,6 +19,7 @@ import numpy as np
 
 from psegs.datum.transform import Transform
 from psegs.util import misc
+from psegs.util import plotting as pspl
 
 
 @attr.s(slots=True, eq=False, weakref_slot=False)
@@ -50,6 +51,7 @@ class PointCloud(object):
 
   def __eq__(self, other):
     return misc.attrs_eq(self, other)
+
 
   def get_bev_debug_image(self, cuboids=None, colored_cloud=True):
     """TODO DOCS
@@ -109,89 +111,77 @@ class PointCloud(object):
     img = np.frombuffer(img_str, np.uint8).reshape((height, width, 4))
     return img[:, :, :3] # Return RGB for easy interop
 
+
   def get_front_rv_debug_image(
           self,
           cuboids=None,
-          colored_cloud=True,
           z_bounds_meters=(-3, 3),
-          y_bounds_meters=(-20, 20)):
+          y_bounds_meters=(-20, 20),
+          pixels_per_meter=200):
     """TODO DOCS
     TODO direction (e.g. rear)
     """
     
-    cuboids = cuboids or []
+    import cv2
+
+    # Build the image to return
+    w = sum(abs(v) for v in y_bounds_meters) * pixels_per_meter
+    h = sum(abs(v) for v in z_bounds_meters) * pixels_per_meter
+    img = np.zeros((h, w, 3)).astype(np.uint8)
+
+    def yz_to_uv(yz):
+      # cloud +y = img -x axis
+      u = -yz[:, 0] * pixels_per_meter + w / 2.
+      # cloud +z = img -y axis (down)
+      v = -yz[:, 1] * pixels_per_meter + h / 2.
+      return np.column_stack([u, v])
 
     ## Draw Cloud
-    import matplotlib
-    from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-    from matplotlib.figure import Figure
+    # Filter behind ego; keep only +x points
+    cloud = self.cloud[:, :3]
+    cloud = cloud[np.where(cloud[:, 0] >= 0)]
 
-    fig_w = sum(abs(v) for v in y_bounds_meters)
-    fig_h = sum(abs(v) for v in z_bounds_meters)
-
-    fig = Figure(dpi=200, figsize=(fig_w, fig_h))
-    fig.set_facecolor((0, 0, 0))
-    canvas = FigureCanvas(fig)
+    # Convert to pixel (u, v, d)
+    pts_d = cloud[:, 0]
+    pts_uv = yz_to_uv(cloud[:, (1, 2)])
+    pts = np.column_stack([pts_uv, pts_d])
     
-    ax = fig.gca()
-
-    def filter_behind_ego(my_xyd):
-      my_xyd = my_xyd.T
-      idx_ = np.where(my_xyd[0, :] > 0)
-      idx_ = idx_[0]
-      my_xyd = my_xyd[:, idx_]
-      return my_xyd.T
-
-    xyz = filter_behind_ego(self.cloud)
-
-    if colored_cloud:
-      from psegs.util.plotting import rgb_for_distance
-      # colors = [~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      #   rgb_for_distance(np.linalg.norm(pt)) / 255
-      #   for pt in self.cloud
-      # ]
-      colors = rgb_for_distance(np.linalg.norm(xyz, axis=1)) / 255
-
-      # from psegs.util.plotting import rgb_for_distance
-      # colors = np.array([
-      #   rgb_for_distance(np.linalg.norm(pt)) / 255
-      #   for pt in xyz
-      # ])
-      ax.scatter(-xyz[:, 1], xyz[:, 2], s=.1, c=colors)
-    else:
-      ax.scatter(-xyz[:, 1], xyz[:, 2], s=.1)
+    pspl.draw_xy_depth_in_image(img, pts, alpha=1.0, marker_radius=1)
 
     ## Draw Cuboids
-    from matplotlib.patches import Polygon
-    from matplotlib.collections import PatchCollection
-
-    for c in cuboids:
+    for c in cuboids or []:
       box_xyz = c.get_box3d()
       box_xyz_2d = box_xyz[:, :2]
 
       from scipy.spatial import ConvexHull
       hull = ConvexHull(box_xyz[:, 1:])
-      corners = [(-box_xyz[v, 1], box_xyz[v, 2]) for v in hull.vertices]
-      polygon = Polygon(corners, closed=True)
-
+      corners_yz = np.array([
+        (box_xyz[v, 1], box_xyz[v, 2]) for v in hull.vertices])
+      
       from oarphpy.plotting import hash_to_rbg
-      color = np.array(hash_to_rbg(c.category_name)) / 255
+      color = pspl.color_to_opencv(
+        np.array(hash_to_rbg(c.category_name)))
 
-      ax.add_collection(
-        PatchCollection([polygon], facecolor=color, edgecolor=color, alpha=0.5))
+      pts_uv = yz_to_uv(corners_yz)
+      pts_uv = np.rint(pts_uv).astype(np.int)
 
-    ax.axis('off')
-    ax.set_xlim(*y_bounds_meters)
-    ax.set_ylim(*z_bounds_meters)
-    ax.set_aspect(1)
-    fig.tight_layout()
+      # Draw transparent fill
+      CUBOID_FILL_ALPHA = 0.6
+      coverlay = img.copy()
+      cv2.fillPoly(img, [pts_uv], color)
+      img[:] = cv2.addWeighted(
+        coverlay, CUBOID_FILL_ALPHA, img, 1 - CUBOID_FILL_ALPHA, 0)
+      
+      # Draw outline
+      cv2.polylines(
+        img,
+        [pts_uv],
+        True, # is_closed
+        color,
+        1) #thickness
 
-    # Render!
-    canvas.draw()
-    img_str, (width, height) = canvas.print_to_buffer()
+    return img
 
-    img = np.frombuffer(img_str, np.uint8).reshape((height, width, 4))
-    return img[:, :, :3] # Return RGB for easy interop
 
   def to_html(self, cuboids=None, bev_debug=False, rv_debug=False):
     cuboids = cuboids or []

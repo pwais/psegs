@@ -130,13 +130,19 @@ def save_labels_projected_to_lidar(
   ## Now create debug images
   pc = datum.PointCloud(cloud=cloud)
 
-  util.log.info("Projecting BEV %s ..." % frame)
-  bev_img = pc.get_bev_debug_image(cuboids=cuboids)
-  fname = 'projected_lidar_labels_bev_%s.png' % frame.replace('/', '_')
-  imageio.imwrite(outdir / fname, bev_img)
+  # util.log.info("Projecting BEV %s ..." % frame)
+  # import time
+  # start = time.time()
+  # bev_img = pc.get_bev_debug_image(cuboids=cuboids)
+  # print('bev', time.time() - start)
+  # fname = 'projected_lidar_labels_bev_%s.png' % frame.replace('/', '_')
+  # imageio.imwrite(outdir / fname, bev_img)
 
   util.log.info("Projecting Front RV %s ..." % frame)
+  import time
+  start = time.time()
   rv_img = pc.get_front_rv_debug_image(cuboids=cuboids)
+  print('rv', time.time() - start)
   fname = 'projected_lidar_labels_front_rv_%s.png' % frame.replace('/', '_')
   imageio.imwrite(outdir / fname, rv_img)
 
