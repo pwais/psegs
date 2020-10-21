@@ -66,7 +66,7 @@ class Fixtures(object):
   ### Extension Data ##########################################################
   ### See https://github.com/pwais/psegs-kitti-ext
 
-  EXT_DATA_ROOT = C.EXT_DATA_ROOT / 'kitti'
+  EXT_DATA_ROOT = C.EXT_DATA_ROOT / 'psegs-kitti-ext'
 
   @classmethod
   def bench_to_raw_path(cls):
@@ -80,7 +80,7 @@ class Fixtures(object):
 
   ### Testing #################################################################
 
-  TEST_FIXTURES_ROOT = Path('/tmp/avs_kitti_test_fixtures')
+  TEST_FIXTURES_ROOT = Path('/tmp/psegs_kitti_test_fixtures')
 
   EXTERNAL_FIXTURES_ROOT = C.EXTERNAL_TEST_FIXTURES_ROOT / 'kitti'
 
@@ -166,20 +166,22 @@ class Fixtures(object):
   @classmethod
   def maybe_emplace_psegs_kitti_ext(cls):
     if (cls.bench_to_raw_path().exists() and 
-          clx.EXTERNAL_FIXTURES_ROOT.exists()):
+          cls.EXTERNAL_FIXTURES_ROOT.exists()):
       return
     
     from oarphpy import util as oputil
     util.log.info("Downloading latest PSegs KITTI Extension data ...")
     oputil.mkdir(str(cls.index_root()))
     psegs_kitti_ext_root = cls.index_root() / 'psegs_kitti_ext_tmp'
-    oputil.run_cmd(
-      "git clone https://github.com/pwais/psegs-kitti-ext %s" % \
-        psegs_kitti_ext_root)
+    if not psegs_kitti_ext_root.exists():
+      oputil.run_cmd(
+        "git clone https://github.com/pwais/psegs-kitti-ext %s" % \
+          psegs_kitti_ext_root)
 
     util.log.info("... emplacing PSegs KITTI Extension data ...")
     def move(src, dest):
-      oputil.run_cmd("mv %s %s")
+      oputil.mkdir(dest.parent)
+      oputil.run_cmd("mv %s %s" % (src, dest))
     
     move(
       psegs_kitti_ext_root / 'assets' / 'bench_to_raw_df',
@@ -1469,12 +1471,13 @@ class DSUtil(IDatasetUtil):
 
         %s
 
-      """ % (zips,))
+        Once you've downloaded the archives, we'll need the path to where
+        you put them.  Enter that below, or exit this program.
 
-      cls.show_md(
-        "Once you've downloaded the archives, we'll need the path to where "
-        "you put them.  Enter that below, or exit this program.")
-      kitti_root = input("Please enter the path to your KITTI zip archives: ")
+      """ % (zips,))
+      kitti_root = input(
+        "Please enter the directory containing your KITTI zip archives; "
+        "PSegs will create a (read-only) symlink to them: ")
       kitti_root = Path(kitti_root.strip())
       assert kitti_root.exists()
       assert kitti_root.is_dir()
@@ -1484,6 +1487,13 @@ class DSUtil(IDatasetUtil):
 
       cls.show_md("Symlink: \n%s <- %s" % (kitti_root, cls.FIXTURES.ROOT))
       os.symlink(kitti_root, cls.FIXTURES.ROOT)
+
+      # Make symlink read-only
+      import stat
+      os.chmod(
+        kitti_root,
+        stat.S_IREAD|stat.S_IRGRP|stat.S_IROTH,
+        follow_symlinks=False)
 
     cls.show_md("Validating KITTI archives ...")
     zips_needed = set(cls.all_zips())
@@ -1517,7 +1527,7 @@ class DSUtil(IDatasetUtil):
   @classmethod
   def test(cls):
     from oarphpy import util as oputil
-    oputil.run_cmd("pytest -s -vvv -k test_kitti")
+    oputil.run_cmd("cd %s && pytest -s -vvv -k test_kitti" % C.PS_ROOT)
     return True
 
   @classmethod

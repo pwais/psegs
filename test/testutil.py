@@ -22,20 +22,18 @@ import psegs
 from psegs import spark
 
 
-AVS_TEST_TEMPDIR_ROOT = os.path.join(tempfile.gettempdir(), 'psegs_test')
+PS_TEST_TEMPDIR_ROOT = os.path.join(tempfile.gettempdir(), 'psegs_test')
 
 
 class LocalSpark(spark.Spark):
   """A local Spark session; should result in only one session being created
   per testing run"""
-  
-  MASTER = 'local[%s]' % os.cpu_count()
 
   SRC_ROOT_MODULES = ['psegs', 'test']
 
 
 def test_tempdir(name, clean=True):
-  path = os.path.join(AVS_TEST_TEMPDIR_ROOT, name)
+  path = os.path.join(PS_TEST_TEMPDIR_ROOT, name)
   if clean:
     from oarphpy.util import cleandir
     cleandir(path)

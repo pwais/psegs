@@ -29,11 +29,28 @@ class Spark(spark.SessionFactory):
 
   CONF_KV = {
     'spark.driver.memory': '8g',
-    'spark.pyspark.python': 'python3',
+
+    'spark.files.overwrite': 'true',
+      # Needed for notebook-based development; FMI see oarphpy.spark.NBSpark
+
     'spark.python.worker.reuse': False,
+      # Helps reduce memory leaks related to matplotlib / tensorflow / etc
+
     'spark.sql.files.maxPartitionBytes': int(8 * 1e6),
+      # Partitions need to be big enough to potentially fit
+      # point clouds / images
+
     'spark.port.maxRetries': '256',
+      # Allow lots of Spark drivers on a single machine (e.g. a dev machine)
+    
+    'spark.executorEnv.COLUMNS': '80',
+    'spark.executorEnv.LINES': '80',
+      # These settings make the `mdv` python package happy when we use it in a
+      # Spark executor that has no terminal
   }
+
+
+  # PSegs Utilities
 
   @staticmethod
   def save_df_thunks(df_thunks, compute_df_sizes=True, **save_opts):

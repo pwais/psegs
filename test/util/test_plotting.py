@@ -40,17 +40,20 @@ def test_draw_xy_depth_in_image():
   #  * One point every 10 pixels in x- and y- directions
   #  * The depth value of the pixel is the scalar value of the y-coord
   #      interpreted as meters
-  h, w = 600, 600
+  h, w = 1000, 100
   pts = []
   for y in range(int(h / 10)):
     for x in range(int(w / 10)):
       pts.append((x * 10, y * 10, y))
   
-  pts = np.array(pts)
+  apts = np.array(pts)
   actual = np.zeros((h, w, 3))
-  pspl.draw_xy_depth_in_image(actual, pts)
-
+  pspl.draw_xy_depth_in_image(actual, apts, marker_radius=0)
   check_img(actual, 'test_draw_xy_depth_in_image.png')
+
+  actual_2 = np.zeros((h, w, 3))
+  pspl.draw_xy_depth_in_image(actual_2, apts, marker_radius=1)
+  check_img(actual_2, 'test_draw_xy_depth_in_image_radius_2.png')
 
 
 def test_draw_cuboid_xy_in_image():

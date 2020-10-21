@@ -18,15 +18,20 @@ from pathlib import Path
 
 import attr
 
-DEFAULT_DATA_ROOT = Path('/opt/psegs/dataroot')
-DEFAULT_EXTERNAL_TEST_FIXTURES_ROOT = Path('/opt/psegs/external_test_fixtures')
-DEFAULT_EXT_DATA_ROOT = Path('/opt/psegs/ext_data')
+DEFAULT_PSEGS_ROOT = Path('/opt/psegs')
+DEFAULT_DATA_ROOT = DEFAULT_PSEGS_ROOT / Path('dataroot')
+DEFAULT_EXTERNAL_TEST_FIXTURES_ROOT = (
+  DEFAULT_DATA_ROOT / Path('external_test_fixtures'))
+DEFAULT_EXT_DATA_ROOT = DEFAULT_PSEGS_ROOT / Path('ext_data')
 DEFAULT_TEMP_DIR = Path(tempfile.gettempdir()) / 'psegs_temp'
 
 @attr.s(eq=True)
 class ProjConf(object):
   """A singleton that holds project-specific configuration (with defaults
   sensible for testing)"""
+
+  PS_ROOT = attr.ib(type=Path, default=DEFAULT_PSEGS_ROOT, converter=Path)
+  """Path: root of the PSegs project (Python code & data)"""
 
   DATA_ROOT = attr.ib(type=Path, default=DEFAULT_DATA_ROOT, converter=Path)
   """Path: root (perhaps local) for all input and output data."""

@@ -5,6 +5,7 @@
 ._.DS_Store
 .eggs
 .vscode
+*/**/._*
 eggs
 build
 ext_data

@@ -12,10 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import textwrap
+import mdv
+
+
+def is_ipython():
+  try:
+    from IPython import get_ipython
+    if 'IPKernelApp' not in get_ipython().config:
+      return False
+  except Exception:
+      return False
+  return True
+
+
 class IDatasetUtil(object):
 
   @classmethod
   def emplace(cls):
+    """Emplacing a dataset means downloading it any any other dependent
+    fixtures, including test fixtures (see e.g. PSegs Extensions in the root
+    README).  This method attempts to do that initial set-up for a given 
+    dataset.
+    
+    In many cases, dataset availability and licensing will require manual
+    effort from the user.  This method will explain necessary action (via
+    the terminal or notebook) and attempt to help interactively.
+
+    This method should be re-entrant (multiple attempts to emplace should be
+    safe) and will return True only when all emplacing has suceeded.
+    """
     return False
 
   @classmethod
@@ -28,11 +54,13 @@ class IDatasetUtil(object):
 
   @classmethod
   def show_md(cls, txt):
-    import textwrap
     txt = textwrap.dedent(txt)
 
-    import mdv
-    print()
-    print(mdv.main(txt, cols=80))
-    print()
+    if is_ipython():
+      from IPython.display import display, Markdown
+      display(Markdown(txt))
+    else:
+      print()
+      print(mdv.main(txt, cols=80))
+      print()
 

@@ -1,4 +1,8 @@
-PSegs
+# PSegs
+
+# PSegs Extensions
+
+notes about extensions and links to them
 
 readme!
 

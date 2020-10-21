@@ -17,7 +17,7 @@ import numpy as np
 
 def color_to_opencv(color):
   r, g, b = np.clip(color, 0, 255).astype(int).tolist()
-  return b, g, r
+  return r, g, b
 
 
 def contrasting_color(color):
@@ -167,7 +167,7 @@ def rgb_for_distance(d_meters, period_meters=10.):
   if not isinstance(d_meters, np.ndarray):
     d_meters = np.array([d_meters])
   
-  SEED = 10 # Colors for 0 and 1 look too similar otherwise
+  SEED = 1337 # Colors for the first 10 buckets verified to be very distinct
   max_bucket = int(np.ceil(d_meters.max() / period_meters))
   bucket_to_color = np.array(
     [hash_to_rbg(bucket + SEED) for bucket in range(max_bucket + 2)])
@@ -196,46 +196,17 @@ def rgb_for_distance(d_meters, period_meters=10.):
     return colors
 
 
-  # bids_below = np.floor(d_meters / period_meters).astype(int)
-  # bids_above = np.ciel(d_meters / period_meters).astype(int)
-  
-  # bucket_below = bucket_to_color[bids_below]
-  # bucket_above = bucket_to_color[bids_above]
-
-
-  # bucket_above = bucket_to_color[np.floor(d_meters / period_meters).astype(int)]
-  
-  # for bucket in range(int(max_bucket) + 1):
-
-
-  # period_meters = 10.
-
-
-
-  # bucket_below = np.floor(d_meters / period_meters)
-  # bucket_above = bucket_below + 1
-  
-  
-  # color_below = np.array(hash_to_rbg(bucket_below + SEED))
-  # color_above = np.array(hash_to_rbg(bucket_above + SEED))
-  
-  # # Interpolate to *nearest* color based on L1 distance
-  # l1_dist = np.abs(
-  #   d_meters / period_meters -
-  #   np.array([bucket_below, bucket_above]))
-  # weight = 1. - l1_dist
-  # return weight[0] * color_below + weight[1] * color_above  
-
-
-def draw_xy_depth_in_image(img, pts, dot_size=1, alpha=.2):
-  """Draw a point cloud `pts` in `img`. Point color interpolates between
+def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
+  """Draw a point cloud `pts` in `img`; *modifies* `img` in-place (so you can 
+  compose this draw call with others). Point color interpolates between
   standard colors for each 10-meter tick.
 
   Args:
     img (np.array): Draw in this image.
     pts (np.array): An array of N by 3 points in form
       (pixel x, pixel y, depth meters).
-    dot_size (int): Size of the dot to draw for each point.
+    marker_radius (int): Draw a marker with this size (or a non-positive
+      number to auto-choose based upon number of points).
     alpha (float): Blend point color using weight [0, 1].
   """
 
@@ -244,14 +215,41 @@ def draw_xy_depth_in_image(img, pts, dot_size=1, alpha=.2):
   # OpenCV can't draw transparent colors, so we use the 'overlay image' trick:
   # First draw dots an an overlay...
   overlay = img.copy()
-  for x, y, d_meters in pts.tolist():
-    color = color_to_opencv(rgb_for_distance(d_meters))
-    x = int(round(x))
-    y = int(round(y))
-    cv2.circle(overlay, (x, y), dot_size, color, thickness=2)
-      # NB: While this loop is slow for 10k+ points (several seconds), we
-      # benchmarked against matplotlib (similar approach to
-      # `get_cloud_rv_simple()`) and OpenCV was still about 2x faster.
+  h, w = overlay.shape[:2]
+
+  pts = pts.copy()
+  
+  # Map points to pixels and filter off-screen points
+  pts_xy = np.rint(pts[:, :2]).astype(np.int)
+  pts[:, :2] = pts_xy[:, :2]
+  pts = pts[np.where(
+    (pts[:, 0] >= 0) & (pts[:, 0] < w) &
+    (pts[:, 1] >= 0) & (pts[:, 1] < h))]
+
+  # Sort by distance descending; let nearer points draw over farther points
+  pts = pts[-pts[:, -1].argsort()]
+  if not pts.any():
+    return
+
+  colors = rgb_for_distance(pts[:, 2])
+  colors = np.clip(colors, 0, 255).astype(int)
+  
+  # Draw the markers! NB: numpy assignment is very fast, even for 1M+ pts
+  yy = pts[:, 1]
+  xx = pts[:, 0]
+  overlay[yy, xx] = colors
+
+  if marker_radius < 0:
+    # Draw larger markers for fewer points to make them conspicuous
+    if pts.shape[0] >= 1e5:
+      marker_radius = 2
+
+  if marker_radius >= 1:
+    # Draw a crosshairs marker
+    for r in range(-marker_radius, marker_radius + 1):
+      overlay[(yy + r) % h, xx] = colors
+      overlay[yy, (xx + r) % w] = colors
 
   # Now blend!
   img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+
