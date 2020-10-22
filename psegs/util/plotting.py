@@ -133,7 +133,10 @@ def draw_cuboid_xy_in_image(img, pts, base_color_rgb, alpha=0.3, thickness=2):
   # OpenCV can't draw transparent colors, so we use the 'overlay image' trick
   overlay = img.copy()
 
-  front = pts[:4].astype(int)
+  def to_opencv_px(arr):
+    return np.rint(arr).astype(int)
+
+  front = to_opencv_px(pts[:4])
   cv2.polylines(
     overlay,
     [front],
@@ -141,7 +144,7 @@ def draw_cuboid_xy_in_image(img, pts, base_color_rgb, alpha=0.3, thickness=2):
     front_color,
     thickness)
 
-  back = pts[4:].astype(int)
+  back = to_opencv_px(pts[4:])
   cv2.polylines(
     overlay,
     [back],
@@ -152,7 +155,19 @@ def draw_cuboid_xy_in_image(img, pts, base_color_rgb, alpha=0.3, thickness=2):
   for start, end in zip(front.tolist(), back.tolist()):
     cv2.line(overlay, tuple(start), tuple(end), center_color, thickness)
 
-  # Now blend!
+  # Add transparent fill
+  CUBOID_FILL_ALPHA = max(0, alpha - 0.1)
+  from scipy.spatial import ConvexHull
+  hull = ConvexHull(pts)
+  corners_uv = to_opencv_px(
+    np.array([
+      (pts[v, 0], pts[v, 1]) for v in hull.vertices]))
+  coverlay = overlay.copy()
+  cv2.fillPoly(coverlay, [corners_uv], center_color)
+  overlay[:] = cv2.addWeighted(
+    coverlay, CUBOID_FILL_ALPHA, overlay, 1 - CUBOID_FILL_ALPHA, 0)
+
+  # Now blend with input image!
   img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
 
 
@@ -210,8 +225,6 @@ def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
     alpha (float): Blend point color using weight [0, 1].
   """
 
-  import cv2
-
   # OpenCV can't draw transparent colors, so we use the 'overlay image' trick:
   # First draw dots an an overlay...
   overlay = img.copy()
@@ -251,5 +264,7 @@ def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
       overlay[yy, (xx + r) % w] = colors
 
   # Now blend!
+  import cv2
   img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
 
+# def get_2d

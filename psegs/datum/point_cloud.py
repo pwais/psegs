@@ -52,11 +52,38 @@ class PointCloud(object):
   def __eq__(self, other):
     return misc.attrs_eq(self, other)
 
+  # @
+  # def _get_2d_debug_image(
+      
 
-  def get_bev_debug_image(self, cuboids=None, colored_cloud=True):
-    """TODO DOCS
-    TODO bounds or maybe even a pylab plot
+
+  def get_bev_debug_image(
+        self, 
+        cuboids=None,
+        x_bounds_meters=(-50, 50),
+        y_bounds_meters=(-50, 50),
+        pixels_per_meter=200):
+    """Create and return a BEV (Bird's-Eye-View) perspective debug image
+    for this point cloud (i.e. flatten the z-axis).
+
+    Args:
+      cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
+        cuboids in the given debug image.
+      x_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+        x-value in point cloud frame.
+      y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+        y-value in point cloud frame.
+      pixels_per_meter (int): Rasterize debug image at this resolution.
+
+    Returns:
+      np.array: A HWC RGB debug image.
     """
+
+
+
+
+
+
     cuboids = cuboids or []
 
     ## Draw Cloud
@@ -117,9 +144,21 @@ class PointCloud(object):
           cuboids=None,
           z_bounds_meters=(-3, 3),
           y_bounds_meters=(-20, 20),
-          pixels_per_meter=200):
-    """TODO DOCS
-    TODO direction (e.g. rear)
+          pixels_per_meter=50):
+    """Create and return an RV (Range-Value) perspective debug image
+    for this point cloud (in the +x direction).
+
+    Args:
+      cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
+        cuboids in the given debug image.
+      z_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+        z-value in point cloud frame.
+      y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+        y-value in point cloud frame.
+      pixels_per_meter (int): Rasterize debug image at this resolution.
+
+    Returns:
+      np.array: A HWC RGB debug image.
     """
     
     import cv2
@@ -146,39 +185,53 @@ class PointCloud(object):
     pts_uv = yz_to_uv(cloud[:, (1, 2)])
     pts = np.column_stack([pts_uv, pts_d])
     
-    pspl.draw_xy_depth_in_image(img, pts, alpha=1.0, marker_radius=1)
+    pspl.draw_xy_depth_in_image(img, pts, alpha=1.0)
 
     ## Draw Cuboids
     for c in cuboids or []:
+      # TODO frame check ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       box_xyz = c.get_box3d()
-      box_xyz_2d = box_xyz[:, :2]
+      box_xyz_2d = box_xyz[:, (1, 2)]
 
-      from scipy.spatial import ConvexHull
-      hull = ConvexHull(box_xyz[:, 1:])
-      corners_yz = np.array([
-        (box_xyz[v, 1], box_xyz[v, 2]) for v in hull.vertices])
-      
+      # TODO Filter behind +x !!!!!!!!!!!!!!!!!!!!
+
       from oarphpy.plotting import hash_to_rbg
       color = pspl.color_to_opencv(
         np.array(hash_to_rbg(c.category_name)))
 
-      pts_uv = yz_to_uv(corners_yz)
-      pts_uv = np.rint(pts_uv).astype(np.int)
-
-      # Draw transparent fill
-      CUBOID_FILL_ALPHA = 0.6
-      coverlay = img.copy()
-      cv2.fillPoly(img, [pts_uv], color)
-      img[:] = cv2.addWeighted(
-        coverlay, CUBOID_FILL_ALPHA, img, 1 - CUBOID_FILL_ALPHA, 0)
-      
-      # Draw outline
-      cv2.polylines(
+      pspl.draw_cuboid_xy_in_image(
         img,
-        [pts_uv],
-        True, # is_closed
-        color,
-        1) #thickness
+        yz_to_uv(box_xyz_2d),
+        np.array(hash_to_rbg(c.category_name)),
+        alpha=0.8)
+
+
+      # from scipy.spatial import ConvexHull
+      # hull = ConvexHull(box_xyz[:, 1:])
+      # corners_yz = np.array([
+      #   (box_xyz[v, 1], box_xyz[v, 2]) for v in hull.vertices])
+      
+      # from oarphpy.plotting import hash_to_rbg
+      # color = pspl.color_to_opencv(
+      #   np.array(hash_to_rbg(c.category_name)))
+
+      # pts_uv = yz_to_uv(corners_yz)
+      # pts_uv = np.rint(pts_uv).astype(np.int)
+
+      # # Draw transparent fill
+      # CUBOID_FILL_ALPHA = 0.6
+      # coverlay = img.copy()
+      # cv2.fillPoly(img, [pts_uv], color)
+      # img[:] = cv2.addWeighted(
+      #   coverlay, CUBOID_FILL_ALPHA, img, 1 - CUBOID_FILL_ALPHA, 0)
+      
+      # # Draw outline
+      # cv2.polylines(
+      #   img,
+      #   [pts_uv],
+      #   True, # is_closed
+      #   color,
+      #   1) #thickness
 
     return img
 
