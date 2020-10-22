@@ -21,17 +21,21 @@ from oarphpy import util
 
 from psegs.util import plotting as pspl
 
+from test import testutil
+
 
 def check_img(actual, fixture_name):
   FIXTURES_DIR = Path(__file__).parent / '../fixtures'
-  OUTPUT_DIR = Path(tempfile.gettempdir()) / 'test_plotting'
+  OUTPUT_DIR = testutil.test_tempdir('test_plotting')
   util.mkdir(OUTPUT_DIR)
   
+  # First dump actual, in case the fixture doesn't exist yet and we're
+  # writing a new test
   actual_bytes = util.to_png_bytes(actual)
-  expected_bytes = open(FIXTURES_DIR / fixture_name, 'rb').read()
-  
   actual_path = OUTPUT_DIR / ('actual_' + fixture_name)
   open(actual_path, 'wb').write(actual_bytes)
+
+  expected_bytes = open(FIXTURES_DIR / fixture_name, 'rb').read()
   assert actual_bytes == expected_bytes, "Check %s" % actual_path
 
 
@@ -96,3 +100,46 @@ def test_draw_bbox_in_image():
   pspl.draw_bbox_in_image(img, no_txt)
 
   check_img(img, 'test_draw_bbox_in_image.png')
+
+
+def test_get_halfspace_debug_image():
+  
+  # Create a circular spiral in 3-d
+  t = np.arange(0, 2 * np.pi, 2 * np.pi / 100)
+  r = (t / (2 * np.pi))
+  uvd = np.column_stack([r * np.cos(t), r * np.sin(t), t])
+  
+  def draw_window(uvd, bounds):
+    kwargs = dict(
+                pixels_per_meters=100,
+                marker_radius=2,
+                period_meters=2 * np.pi / 10,
+                min_u=bounds[0],
+                min_v=bounds[1],
+                max_u=bounds[2],
+                max_v=bounds[3])
+    return pspl.get_halfspace_debug_image(uvd, **kwargs)
+  
+
+  check_img(
+    draw_window(uvd, [-1.25, -1.25, 1.25, 1.25]),
+    'test_get_halfspace_debug_image_all_manual.png')
+  check_img(
+    draw_window(uvd, [None, None, None, None]),
+    'test_get_halfspace_debug_image_autobound.png')
+  check_img(
+    draw_window(uvd, [0, 0, 1.25, 1.25]),
+    'test_get_halfspace_debug_image_q1.png')
+  check_img(
+    draw_window(uvd, [-1.25, 0, 0, 1.25]),
+    'test_get_halfspace_debug_image_q2.png')
+  check_img(
+    draw_window(uvd, [-1.25, -1.25, 0, 0]),
+    'test_get_halfspace_debug_image_q3.png')
+  check_img(
+    draw_window(uvd, [0, -1.25, 1.25, 0]),
+    'test_get_halfspace_debug_image_q4.png')
+  check_img(
+    draw_window(uvd, [1, 1, 2, 2]),
+    'test_get_halfspace_debug_image_empty_space.png')
+  

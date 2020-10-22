@@ -211,7 +211,12 @@ def rgb_for_distance(d_meters, period_meters=10.):
     return colors
 
 
-def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
+def draw_xy_depth_in_image(
+      img,
+      pts,
+      marker_radius=-1,
+      alpha=.4,
+      period_meters=10.):
   """Draw a point cloud `pts` in `img`; *modifies* `img` in-place (so you can 
   compose this draw call with others). Point color interpolates between
   standard colors for each 10-meter tick.
@@ -223,6 +228,8 @@ def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
     marker_radius (int): Draw a marker with this size (or a non-positive
       number to auto-choose based upon number of points).
     alpha (float): Blend point color using weight [0, 1].
+    period_meters (float) : Choose a distinct hue every `period_meters` and
+      interpolate between hues.
   """
 
   # OpenCV can't draw transparent colors, so we use the 'overlay image' trick:
@@ -237,14 +244,15 @@ def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
   pts[:, :2] = pts_xy[:, :2]
   pts = pts[np.where(
     (pts[:, 0] >= 0) & (pts[:, 0] < w) &
-    (pts[:, 1] >= 0) & (pts[:, 1] < h))]
+    (pts[:, 1] >= 0) & (pts[:, 1] < h) &
+    (pts[:, 2] >= 0))]
 
   # Sort by distance descending; let nearer points draw over farther points
   pts = pts[-pts[:, -1].argsort()]
   if not pts.any():
     return
 
-  colors = rgb_for_distance(pts[:, 2])
+  colors = rgb_for_distance(pts[:, 2], period_meters=period_meters)
   colors = np.clip(colors, 0, 255).astype(int)
   
   # Draw the markers! NB: numpy assignment is very fast, even for 1M+ pts
@@ -262,9 +270,79 @@ def draw_xy_depth_in_image(img, pts, marker_radius=-1, alpha=.4):
     for r in range(-marker_radius, marker_radius + 1):
       overlay[(yy + r) % h, xx] = colors
       overlay[yy, (xx + r) % w] = colors
+        # NB: toroidal boundary conditions plot hack for speed ...
 
   # Now blend!
   import cv2
   img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
 
-# def get_2d
+
+def get_halfspace_debug_image(
+      uvd,
+      min_u=0., min_v=0.,
+      max_u=10., max_v=10.,
+      pixels_per_meters=100,
+      marker_radius=1,
+      period_meters=10.):
+  """Create and return a half-space-flattened debug image for the given
+  cloud of (u, v, d) points (in meters) rasterized at `pixels_per_meters`.
+  Useful for visualizing a raw point cloud as a 2D image. The parameters
+  (min_u, minv) and (max_u, max_v) define the bounding box of points
+  to plot; provide `None` values to use `uvd` extents.
+
+  Args:
+    uvd (np.array): An nx3 array of points (in units of meters) where
+      the first axis (u) is the +u (left-to-right) axis of the debug image,
+      the second axis (v) is the +v (bottom-to-top) axis of the dbeug image,
+      and the third axis (d) is the depth of the point in the half-space
+      (and determines color).
+    min_u (float): The left image boundary (in meters).
+    min_v (float): The bottom image boundary (in meters).
+    max_u (float): The right image boundary (in meters).
+    max_v (float): The top image boundary (in meters).
+    pixels_per_meter (int): Rasterize points at this resolution.
+    recenter_points (bool): Re-center the given points to be the center
+      of the debug image.
+    marker_radius (int): Draw a marker with this size (in pixels).
+    period_meters (float) : Choose a distinct hue every `period_meters` and
+      interpolate between hues.
+  Returns:
+    np.array: A HWC RGB debug image.
+  """
+
+  if not uvd.any():
+    return np.zeros((0, 0, 3))
+  
+  if min_u is None:
+    min_u = uvd[:, 0].min()
+  if max_u is None:
+    max_u = uvd[:, 0].max()
+  if min_v is None:
+    min_v = uvd[:, 1].min()
+  if max_v is None:
+    max_v = uvd[:, 1].max()
+
+  assert min_u <= max_u
+  assert min_v <= max_v
+
+  # Move points to the viewport frame
+  uvd = uvd - np.array([min_u, min_v, 0])
+  
+  # (u, v) meters -> pixels
+  uvd[:, (0, 1)] *= pixels_per_meters
+  
+  w = int(pixels_per_meters * (max_u - min_u) + 1)
+  h = int(pixels_per_meters * (max_v - min_v) + 1)
+  img = np.zeros((h, w, 3), dtype=np.uint8)
+  
+  draw_xy_depth_in_image(
+    img,
+    uvd,
+    marker_radius=marker_radius,
+    period_meters=period_meters,
+    alpha=1.0)
+  
+  # image vertical axis is flipped
+  img = np.flipud(img)
+
+  return img

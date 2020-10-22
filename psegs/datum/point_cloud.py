@@ -139,6 +139,65 @@ class PointCloud(object):
     return img[:, :, :3] # Return RGB for easy interop
 
 
+  # @staticmethod
+  # def get_halfspace_debug_image(
+  #       cloud,                  # (x, y, z) in meters
+  #       flatten_axis=0,         # +x
+  #       u_axis=1,               # +y -> +u axis of image
+  #       v_axis=2,               # +z -> +v axis of image
+  #       u_bounds=(-10, 10),     # In meters
+  #       v_bounds=(-10, 10),     # In meters
+  #       pixels_per_meter=100):
+  # """Create and return a half-space-flattened debug image for the given
+  # `cloud` of (x, y, z) points.  For example, an RV (Range-Value-perspective)
+  # image flattens the cloud's +x axis (forwards), and a BEV (Bird's-Eye-View)
+  # image flattens the cloud's +z axis (up).
+
+  # Args:
+  #   cloud (np.array): An nx3 array of points (in units of meters)
+  #     draw this cloud.
+  #   flatten_axis (int): Flatten this `cloud` axis and use it as the image
+  #     plane. Use a positive number to plot points in the positive half space
+  #     and a negative number to plot in the negative half space.
+  #   u_axis (int): Use this `cloud` axis as the +u (left-to-right) axis
+  #     of the debug image.  Negative value flips the `cloud` axis.
+  #   v_axis (int): Use this `cloud` axis as the +v (top-to-bottom) axis
+  #     of the debug image.  Negative value flips the `cloud` axis.
+  #   u_bounds_meters (Tuple[int, int]): Filter points to this min/max
+  #     u_axis-value (in meters).
+  #   v_bounds_meters (Tuple[int, int]): Filter points to this min/max
+  #     v_axis-value (in meters).
+  #   pixels_per_meter (int): Rasterize points at this resolution.
+  # Returns:
+  #   np.array: A HWC RGB debug image.
+  # """
+
+  # # Map cloud to (u, v, d) space
+  # uvd = np.zeros_like(cloud)
+  # uvd[:, 0] = cloud[:, abs(u_axis)] * np.sign(u_axis)
+  # uvd[:, 1] = cloud[:, abs(v_axis)] * np.sign(v_axis)
+  # uvd[:, 2] = cloud[:, abs(flatten_axis)] * np.sign(flatten_axis)
+
+  # # Filter out-of-view points
+  # uvd = uvd[np.where(
+  #             (uvd[:, 0] >= u_bounds[0]) &
+  #             (uvd[:, 0] <= u_bounds[1]) &
+  #             (uvd[:, 1] >= v_bounds[0]) &
+  #             (uvd[:, 1] <= v_bounds[1]) &
+  #             (uvd[:, 2] >= 0))]
+  
+  # # Move points to the center of the debug image
+  # uvd[: (0, 1)] -= np.min(uvd[: (0, 1)], axis=0)
+
+  # # if ()
+
+  # # uvd[:, ]
+  # # if u_axis < 0:
+
+
+
+
+
   def get_front_rv_debug_image(
           self,
           cuboids=None,
