@@ -102,7 +102,7 @@ def test_draw_bbox_in_image():
   check_img(img, 'test_draw_bbox_in_image.png')
 
 
-def test_get_halfspace_debug_image():
+def test_get_ortho_debug_image():
   
   # Create a circular spiral in 3-d
   t = np.arange(0, 2 * np.pi, 2 * np.pi / 100)
@@ -111,35 +111,34 @@ def test_get_halfspace_debug_image():
   
   def draw_window(uvd, bounds):
     kwargs = dict(
-                pixels_per_meters=100,
+                pixels_per_meter=100,
                 marker_radius=2,
                 period_meters=2 * np.pi / 10,
                 min_u=bounds[0],
                 min_v=bounds[1],
                 max_u=bounds[2],
                 max_v=bounds[3])
-    return pspl.get_halfspace_debug_image(uvd, **kwargs)
+    return pspl.get_ortho_debug_image(uvd, **kwargs)
   
-
   check_img(
     draw_window(uvd, [-1.25, -1.25, 1.25, 1.25]),
-    'test_get_halfspace_debug_image_all_manual.png')
+    'test_get_ortho_debug_image_all_manual.png')
   check_img(
     draw_window(uvd, [None, None, None, None]),
-    'test_get_halfspace_debug_image_autobound.png')
+    'test_get_ortho_debug_image_autobound.png')
   check_img(
     draw_window(uvd, [0, 0, 1.25, 1.25]),
-    'test_get_halfspace_debug_image_q1.png')
+    'test_get_ortho_debug_image_q1.png')
   check_img(
     draw_window(uvd, [-1.25, 0, 0, 1.25]),
-    'test_get_halfspace_debug_image_q2.png')
+    'test_get_ortho_debug_image_q2.png')
   check_img(
     draw_window(uvd, [-1.25, -1.25, 0, 0]),
-    'test_get_halfspace_debug_image_q3.png')
+    'test_get_ortho_debug_image_q3.png')
   check_img(
     draw_window(uvd, [0, -1.25, 1.25, 0]),
-    'test_get_halfspace_debug_image_q4.png')
+    'test_get_ortho_debug_image_q4.png')
   check_img(
     draw_window(uvd, [1, 1, 2, 2]),
-    'test_get_halfspace_debug_image_empty_space.png')
+    'test_get_ortho_debug_image_empty_space.png')
   

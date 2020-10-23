@@ -277,18 +277,19 @@ def draw_xy_depth_in_image(
   img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
 
 
-def get_halfspace_debug_image(
+def get_ortho_debug_image(
       uvd,
       min_u=0., min_v=0.,
       max_u=10., max_v=10.,
-      pixels_per_meters=100,
+      pixels_per_meter=100,
       marker_radius=1,
       period_meters=10.):
-  """Create and return a half-space-flattened debug image for the given
-  cloud of (u, v, d) points (in meters) rasterized at `pixels_per_meters`.
-  Useful for visualizing a raw point cloud as a 2D image. The parameters
-  (min_u, minv) and (max_u, max_v) define the bounding box of points
-  to plot; provide `None` values to use `uvd` extents.
+  """Create and return an orthographic debug image for the given cloud of
+  `(u, v, d)` points (in meters) rasterized at `pixels_per_meters`.
+  Useful for visualizing a raw point cloud (or a half-space of one) as a
+  2D image. The parameters (min_u, minv) and (max_u, max_v) define the
+  bounding box of points to plot; provide `None` values to auto-fit to
+  `uvd` extents.
 
   Args:
     uvd (np.array): An nx3 array of points (in units of meters) where
@@ -329,10 +330,10 @@ def get_halfspace_debug_image(
   uvd = uvd - np.array([min_u, min_v, 0])
   
   # (u, v) meters -> pixels
-  uvd[:, (0, 1)] *= pixels_per_meters
+  uvd[:, (0, 1)] *= pixels_per_meter
   
-  w = int(pixels_per_meters * (max_u - min_u) + 1)
-  h = int(pixels_per_meters * (max_v - min_v) + 1)
+  w = int(pixels_per_meter * (max_u - min_u) + 1)
+  h = int(pixels_per_meter * (max_v - min_v) + 1)
   img = np.zeros((h, w, 3), dtype=np.uint8)
   
   draw_xy_depth_in_image(

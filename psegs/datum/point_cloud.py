@@ -57,145 +57,194 @@ class PointCloud(object):
       
 
 
-  def get_bev_debug_image(
-        self, 
-        cuboids=None,
-        x_bounds_meters=(-50, 50),
-        y_bounds_meters=(-50, 50),
+  # def get_bev_debug_image(
+  #       self, 
+  #       cuboids=None,
+  #       x_bounds_meters=(-50, 50),
+  #       y_bounds_meters=(-50, 50),
+  #       pixels_per_meter=200):
+  #   """Create and return a BEV (Bird's-Eye-View) perspective debug image
+  #   for this point cloud (i.e. flatten the z-axis).
+
+  #   Args:
+  #     cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
+  #       cuboids in the given debug image.
+  #     x_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+  #       x-value in point cloud frame.
+  #     y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+  #       y-value in point cloud frame.
+  #     pixels_per_meter (int): Rasterize debug image at this resolution.
+
+  #   Returns:
+  #     np.array: A HWC RGB debug image.
+  #   """
+
+
+
+
+
+
+  #   cuboids = cuboids or []
+
+  #   ## Draw Cloud
+  #   import matplotlib
+  #   from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+  #   from matplotlib.figure import Figure
+
+  #   fig = Figure(dpi=150)
+  #   fig.set_facecolor((0, 0, 0))
+  #   canvas = FigureCanvas(fig)
+    
+  #   ax = fig.gca()
+
+  #   xyz = self.cloud
+  #   if colored_cloud:
+  #     from psegs.util.plotting import rgb_for_distance
+  #     # colors = [~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  #     #   rgb_for_distance(np.linalg.norm(pt)) / 255
+  #     #   for pt in self.cloud
+  #     # ]
+  #     colors = rgb_for_distance(np.linalg.norm(self.cloud, axis=1)) / 255
+  #     ax.scatter(xyz[:, 0], xyz[:, 1], s=.1, c=colors)
+  #   else:
+  #     ax.scatter(xyz[:, 0], xyz[:, 1], s=.1)
+
+  #   ## Draw Cuboids
+  #   from matplotlib.patches import Polygon
+  #   from matplotlib.collections import PatchCollection
+
+  #   for c in cuboids:
+  #     box_xyz = c.get_box3d()
+  #     box_xyz_2d = box_xyz[:, :2]
+
+  #     from scipy.spatial import ConvexHull
+  #     hull = ConvexHull(box_xyz_2d)
+  #     corners = [(box_xyz_2d[v, 0], box_xyz_2d[v, 1]) for v in hull.vertices]
+  #     polygon = Polygon(corners, closed=True)
+
+  #     from oarphpy.plotting import hash_to_rbg
+  #     color = np.array(hash_to_rbg(c.category_name)) / 255
+
+  #     ax.add_collection(
+  #       PatchCollection([polygon], facecolor=color, edgecolor=color, alpha=0.5))
+
+  #   ax.axis('off')
+  #   fig.tight_layout()
+
+  #   # Render!
+  #   canvas.draw()
+  #   img_str, (width, height) = canvas.print_to_buffer()
+
+  #   img = np.frombuffer(img_str, np.uint8).reshape((height, width, 4))
+  #   return img[:, :, :3] # Return RGB for easy interop
+
+
+  @staticmethod
+  def get_ortho_debug_image(
+        cloud,                  
+        cuboids=None,           
+        flatten_axis='+x',
+        u_axis='+y',
+        v_axis='+z',
+        u_bounds=(-10, 10),
+        v_bounds=(-10, 10),
+        depth_values=None,
+        filter_behind=True,
         pixels_per_meter=200):
-    """Create and return a BEV (Bird's-Eye-View) perspective debug image
-    for this point cloud (i.e. flatten the z-axis).
+    """Create and return a half-space-flattened debug image for the given
+    `cloud` of (x, y, z) points.  For example, an RV (Range-Value-perspective)
+    image flattens the cloud's +x axis (forwards), and a BEV (Bird's-Eye-View
+    perspective) image flattens the cloud's +z axis (up).
 
     Args:
-      cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
-        cuboids in the given debug image.
-      x_bounds_meters (Tuple[int, int]): Filter points to to this min/max
-        x-value in point cloud frame.
-      y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
-        y-value in point cloud frame.
-      pixels_per_meter (int): Rasterize debug image at this resolution.
-
+      cloud (np.array): An nx3 array of points (in units of meters)
+        draw this cloud.
+      cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Optionally draw
+        these cuboids in the given debug image; cuboid points must be in the
+        same frame as `cloud`.
+      flatten_axis (str): Flatten this `cloud` axis and use it as the image
+        plane. Use a positive sign and `filter_behind=True` to plot points in
+        the positive half-space.
+      u_axis (str): Use this `cloud` axis as the +u (left-to-right) axis
+        of the debug image.  Negative sign flips the `cloud` axis.
+      v_axis (str): Use this `cloud` axis as the +v (bottom-to-top) axis
+        of the debug image.  Negative sign flips the `cloud` axis.
+      u_bounds_meters (Tuple[int, int]): Restrict view to this min/max
+        u_axis-value (in meters).  Use None to auto-fit.
+      v_bounds_meters (Tuple[int, int]): Restrict view to this min/max
+        v_axis-value (in meters).  Use None to auto-fit.
+      depth_values (np.array): Optional nx1 array of depth-in-meters values to
+        use for plot colors (in place of the raw `flatten_axis` values).
+      filter_behind (bool): Restrict view to only positive points
+        along the flattened dimension.
+      pixels_per_meter (int): Rasterize points at this resolution.
+    
     Returns:
       np.array: A HWC RGB debug image.
     """
 
+    def pts_to_uvd(pts):
+      AXIS_NAME_TO_IDX = {'x': 0, 'y': 1, 'z': 2}
+      AXES = (u_axis, v_axis, flatten_axis)
 
+      uvd = np.zeros_like(pts)
+      uid, vid, did = tuple(AXIS_NAME_TO_IDX[a[-1]] for a in AXES)
+      us, vs, ds = tuple(-1. if a[0] == '-' else 1. for a in AXES)
 
+      uvd[:, 0] = pts[:, uid] * us
+      uvd[:, 1] = pts[:, vid] * vs
+      uvd[:, 2] = pts[:, did] * ds
 
+      return uvd
 
+    # Map cloud to (u, v, d) space
+    uvd = pts_to_uvd(cloud)
 
-    cuboids = cuboids or []
+    if filter_behind:
+      uvd = uvd[uvd[:, 2] >= 0]
 
-    ## Draw Cloud
-    import matplotlib
-    from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-    from matplotlib.figure import Figure
+    # Decide bounds
+    if u_bounds is None:
+      u_bounds = (uvd[:, 0].min(), uvd[:, 0].max())
+    if v_bounds is None:
+      v_bounds = (uvd[:, 1].min(), uvd[:, 1].max())
+    if depth_values is not None:
+      uvd[:, 2] = depth_values
 
-    fig = Figure(dpi=150)
-    fig.set_facecolor((0, 0, 0))
-    canvas = FigureCanvas(fig)
-    
-    ax = fig.gca()
-
-    xyz = self.cloud
-    if colored_cloud:
-      from psegs.util.plotting import rgb_for_distance
-      # colors = [~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      #   rgb_for_distance(np.linalg.norm(pt)) / 255
-      #   for pt in self.cloud
-      # ]
-      colors = rgb_for_distance(np.linalg.norm(self.cloud, axis=1)) / 255
-      ax.scatter(xyz[:, 0], xyz[:, 1], s=.1, c=colors)
-    else:
-      ax.scatter(xyz[:, 0], xyz[:, 1], s=.1)
-
-    ## Draw Cuboids
-    from matplotlib.patches import Polygon
-    from matplotlib.collections import PatchCollection
-
-    for c in cuboids:
+    img = pspl.get_ortho_debug_image(
+            uvd,
+            min_u=u_bounds[0],
+            max_u=u_bounds[1],
+            min_v=v_bounds[0],
+            max_v=v_bounds[1],
+            pixels_per_meter=pixels_per_meter,
+            period_meters=10.)
+  
+    for c in cuboids or []:
       box_xyz = c.get_box3d()
-      box_xyz_2d = box_xyz[:, :2]
+      box_uvd = pts_to_uvd(box_xyz)
 
-      from scipy.spatial import ConvexHull
-      hull = ConvexHull(box_xyz_2d)
-      corners = [(box_xyz_2d[v, 0], box_xyz_2d[v, 1]) for v in hull.vertices]
-      polygon = Polygon(corners, closed=True)
+      if filter_behind:
+        has_in_front = np.any(box_uvd[:, 2] >= 0)
+        if not has_in_front:
+          continue
+
+      box_uv = box_uvd[:, (0, 1)] - np.array([u_bounds[0], v_bounds[1]])
+      box_uv *= pixels_per_meter
+      box_uv[:, 1] *= -1 # Debug image y-axis is flipped
+      box_uv = np.rint(box_uv).astype(np.int)
 
       from oarphpy.plotting import hash_to_rbg
-      color = np.array(hash_to_rbg(c.category_name)) / 255
+      color = pspl.color_to_opencv(
+        np.array(hash_to_rbg(c.category_name)))
 
-      ax.add_collection(
-        PatchCollection([polygon], facecolor=color, edgecolor=color, alpha=0.5))
+      pspl.draw_cuboid_xy_in_image(
+        img,
+        box_uv,
+        np.array(hash_to_rbg(c.category_name)),
+        alpha=0.8)
 
-    ax.axis('off')
-    fig.tight_layout()
-
-    # Render!
-    canvas.draw()
-    img_str, (width, height) = canvas.print_to_buffer()
-
-    img = np.frombuffer(img_str, np.uint8).reshape((height, width, 4))
-    return img[:, :, :3] # Return RGB for easy interop
-
-
-  # @staticmethod
-  # def get_halfspace_debug_image(
-  #       cloud,                  # (x, y, z) in meters
-  #       flatten_axis=0,         # +x
-  #       u_axis=1,               # +y -> +u axis of image
-  #       v_axis=2,               # +z -> +v axis of image
-  #       u_bounds=(-10, 10),     # In meters
-  #       v_bounds=(-10, 10),     # In meters
-  #       pixels_per_meter=100):
-  # """Create and return a half-space-flattened debug image for the given
-  # `cloud` of (x, y, z) points.  For example, an RV (Range-Value-perspective)
-  # image flattens the cloud's +x axis (forwards), and a BEV (Bird's-Eye-View)
-  # image flattens the cloud's +z axis (up).
-
-  # Args:
-  #   cloud (np.array): An nx3 array of points (in units of meters)
-  #     draw this cloud.
-  #   flatten_axis (int): Flatten this `cloud` axis and use it as the image
-  #     plane. Use a positive number to plot points in the positive half space
-  #     and a negative number to plot in the negative half space.
-  #   u_axis (int): Use this `cloud` axis as the +u (left-to-right) axis
-  #     of the debug image.  Negative value flips the `cloud` axis.
-  #   v_axis (int): Use this `cloud` axis as the +v (top-to-bottom) axis
-  #     of the debug image.  Negative value flips the `cloud` axis.
-  #   u_bounds_meters (Tuple[int, int]): Filter points to this min/max
-  #     u_axis-value (in meters).
-  #   v_bounds_meters (Tuple[int, int]): Filter points to this min/max
-  #     v_axis-value (in meters).
-  #   pixels_per_meter (int): Rasterize points at this resolution.
-  # Returns:
-  #   np.array: A HWC RGB debug image.
-  # """
-
-  # # Map cloud to (u, v, d) space
-  # uvd = np.zeros_like(cloud)
-  # uvd[:, 0] = cloud[:, abs(u_axis)] * np.sign(u_axis)
-  # uvd[:, 1] = cloud[:, abs(v_axis)] * np.sign(v_axis)
-  # uvd[:, 2] = cloud[:, abs(flatten_axis)] * np.sign(flatten_axis)
-
-  # # Filter out-of-view points
-  # uvd = uvd[np.where(
-  #             (uvd[:, 0] >= u_bounds[0]) &
-  #             (uvd[:, 0] <= u_bounds[1]) &
-  #             (uvd[:, 1] >= v_bounds[0]) &
-  #             (uvd[:, 1] <= v_bounds[1]) &
-  #             (uvd[:, 2] >= 0))]
-  
-  # # Move points to the center of the debug image
-  # uvd[: (0, 1)] -= np.min(uvd[: (0, 1)], axis=0)
-
-  # # if ()
-
-  # # uvd[:, ]
-  # # if u_axis < 0:
-
-
-
+    return img
 
 
   def get_front_rv_debug_image(
@@ -203,7 +252,7 @@ class PointCloud(object):
           cuboids=None,
           z_bounds_meters=(-3, 3),
           y_bounds_meters=(-20, 20),
-          pixels_per_meter=50):
+          pixels_per_meter=200):
     """Create and return an RV (Range-Value) perspective debug image
     for this point cloud (in the +x direction).
 
@@ -220,79 +269,126 @@ class PointCloud(object):
       np.array: A HWC RGB debug image.
     """
     
-    import cv2
+    return PointCloud.get_ortho_debug_image(
+              self.cloud,
+              cuboids=cuboids,
+              flatten_axis='+x',
+              u_axis='-y',
+              v_axis='+z',
+              u_bounds=y_bounds_meters,
+              v_bounds=z_bounds_meters,
+              filter_behind=True,
+              pixels_per_meter=pixels_per_meter)
+  
 
-    # Build the image to return
-    w = sum(abs(v) for v in y_bounds_meters) * pixels_per_meter
-    h = sum(abs(v) for v in z_bounds_meters) * pixels_per_meter
-    img = np.zeros((h, w, 3)).astype(np.uint8)
+  def get_bev_debug_image(
+          self,
+          cuboids=None,
+          x_bounds_meters=(-80, 80),
+          y_bounds_meters=(-80, 80),
+          pixels_per_meter=20):
+    """Create and return a BEV (Birds Eye View) perspective debug image
+    for this point cloud.
 
-    def yz_to_uv(yz):
-      # cloud +y = img -x axis
-      u = -yz[:, 0] * pixels_per_meter + w / 2.
-      # cloud +z = img -y axis (down)
-      v = -yz[:, 1] * pixels_per_meter + h / 2.
-      return np.column_stack([u, v])
+    Args:
+      cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
+        cuboids in the given debug image.
+      z_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+        z-value in point cloud frame.
+      y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+        y-value in point cloud frame.
+      pixels_per_meter (int): Rasterize debug image at this resolution.
 
-    ## Draw Cloud
-    # Filter behind ego; keep only +x points
-    cloud = self.cloud[:, :3]
-    cloud = cloud[np.where(cloud[:, 0] >= 0)]
+    Returns:
+      np.array: A HWC RGB debug image.
+    """
+    depth_values = np.linalg.norm(self.cloud[:, (0, 1)], axis=-1)
+    return PointCloud.get_ortho_debug_image(
+              self.cloud,
+              cuboids=cuboids,
+              flatten_axis='-z',
+              u_axis='+x',
+              v_axis='+y',
+              u_bounds=x_bounds_meters,
+              v_bounds=y_bounds_meters,
+              depth_values=depth_values,
+              filter_behind=False,
+              pixels_per_meter=pixels_per_meter)
 
-    # Convert to pixel (u, v, d)
-    pts_d = cloud[:, 0]
-    pts_uv = yz_to_uv(cloud[:, (1, 2)])
-    pts = np.column_stack([pts_uv, pts_d])
+
+    # import cv2
+
+    # # Build the image to return
+    # w = sum(abs(v) for v in y_bounds_meters) * pixels_per_meter
+    # h = sum(abs(v) for v in z_bounds_meters) * pixels_per_meter
+    # img = np.zeros((h, w, 3)).astype(np.uint8)
+
+    # def yz_to_uv(yz):
+    #   # cloud +y = img -x axis
+    #   u = -yz[:, 0] * pixels_per_meter + w / 2.
+    #   # cloud +z = img -y axis (down)
+    #   v = -yz[:, 1] * pixels_per_meter + h / 2.
+    #   return np.column_stack([u, v])
+
+    # ## Draw Cloud
+    # # Filter behind ego; keep only +x points
+    # cloud = self.cloud[:, :3]
+    # cloud = cloud[np.where(cloud[:, 0] >= 0)]
+
+    # # Convert to pixel (u, v, d)
+    # pts_d = cloud[:, 0]
+    # pts_uv = yz_to_uv(cloud[:, (1, 2)])
+    # pts = np.column_stack([pts_uv, pts_d])
     
-    pspl.draw_xy_depth_in_image(img, pts, alpha=1.0)
+    # pspl.draw_xy_depth_in_image(img, pts, alpha=1.0)
 
-    ## Draw Cuboids
-    for c in cuboids or []:
-      # TODO frame check ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      box_xyz = c.get_box3d()
-      box_xyz_2d = box_xyz[:, (1, 2)]
+    # ## Draw Cuboids
+    # for c in cuboids or []:
+    #   # TODO frame check ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #   box_xyz = c.get_box3d()
+    #   box_xyz_2d = box_xyz[:, (1, 2)]
 
-      # TODO Filter behind +x !!!!!!!!!!!!!!!!!!!!
+    #   # TODO Filter behind +x !!!!!!!!!!!!!!!!!!!!
 
-      from oarphpy.plotting import hash_to_rbg
-      color = pspl.color_to_opencv(
-        np.array(hash_to_rbg(c.category_name)))
+    #   from oarphpy.plotting import hash_to_rbg
+    #   color = pspl.color_to_opencv(
+    #     np.array(hash_to_rbg(c.category_name)))
 
-      pspl.draw_cuboid_xy_in_image(
-        img,
-        yz_to_uv(box_xyz_2d),
-        np.array(hash_to_rbg(c.category_name)),
-        alpha=0.8)
+    #   pspl.draw_cuboid_xy_in_image(
+    #     img,
+    #     yz_to_uv(box_xyz_2d),
+    #     np.array(hash_to_rbg(c.category_name)),
+    #     alpha=0.8)
 
 
-      # from scipy.spatial import ConvexHull
-      # hull = ConvexHull(box_xyz[:, 1:])
-      # corners_yz = np.array([
-      #   (box_xyz[v, 1], box_xyz[v, 2]) for v in hull.vertices])
+    #   # from scipy.spatial import ConvexHull
+    #   # hull = ConvexHull(box_xyz[:, 1:])
+    #   # corners_yz = np.array([
+    #   #   (box_xyz[v, 1], box_xyz[v, 2]) for v in hull.vertices])
       
-      # from oarphpy.plotting import hash_to_rbg
-      # color = pspl.color_to_opencv(
-      #   np.array(hash_to_rbg(c.category_name)))
+    #   # from oarphpy.plotting import hash_to_rbg
+    #   # color = pspl.color_to_opencv(
+    #   #   np.array(hash_to_rbg(c.category_name)))
 
-      # pts_uv = yz_to_uv(corners_yz)
-      # pts_uv = np.rint(pts_uv).astype(np.int)
+    #   # pts_uv = yz_to_uv(corners_yz)
+    #   # pts_uv = np.rint(pts_uv).astype(np.int)
 
-      # # Draw transparent fill
-      # CUBOID_FILL_ALPHA = 0.6
-      # coverlay = img.copy()
-      # cv2.fillPoly(img, [pts_uv], color)
-      # img[:] = cv2.addWeighted(
-      #   coverlay, CUBOID_FILL_ALPHA, img, 1 - CUBOID_FILL_ALPHA, 0)
+    #   # # Draw transparent fill
+    #   # CUBOID_FILL_ALPHA = 0.6
+    #   # coverlay = img.copy()
+    #   # cv2.fillPoly(img, [pts_uv], color)
+    #   # img[:] = cv2.addWeighted(
+    #   #   coverlay, CUBOID_FILL_ALPHA, img, 1 - CUBOID_FILL_ALPHA, 0)
       
-      # # Draw outline
-      # cv2.polylines(
-      #   img,
-      #   [pts_uv],
-      #   True, # is_closed
-      #   color,
-      #   1) #thickness
+    #   # # Draw outline
+    #   # cv2.polylines(
+    #   #   img,
+    #   #   [pts_uv],
+    #   #   True, # is_closed
+    #   #   color,
+    #   #   1) #thickness
 
-    return img
+    # return img
 
 
   def to_html(self, cuboids=None, bev_debug=False, rv_debug=False):
