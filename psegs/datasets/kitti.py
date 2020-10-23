@@ -37,7 +37,7 @@ from psegs.util import misc
 
 class Fixtures(object):
 
-  ROOT = C.EXT_DATA_ROOT / 'kitti_archives'#Path('/outer_root/media/seagates-ext4/au_datas/kitti')
+  ROOT = C.EXT_DATA_ROOT / 'kitti_archives'
 
   OBJECT_BENCHMARK_FNAMES = (
     'data_object_label_2.zip',
