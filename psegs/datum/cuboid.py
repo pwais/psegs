@@ -34,7 +34,7 @@ class Cuboid(object):
   category_name = attr.ib(type=str, default='')
   """str: Category of the cuboid, can be using the dataset category domain"""
 
-  avs_category = attr.ib(type=str, default='')
+  ps_category = attr.ib(type=str, default='')
   """str: `psegs` Category (typically coarser than `category_name`)"""
 
   timestamp = attr.ib(type=int, default=0)
@@ -291,7 +291,7 @@ class Cuboid(object):
     return Cuboid(
       track_id=c1.track_id + '-' + mode + '-' + c2.track_id,
       category_name=c1.category_name,
-      avs_category=c1.avs_category,
+      ps_category=c1.ps_category,
       timestamp=timestamp,
       # box3d=merged_box3d,~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       length_meters=float(length),

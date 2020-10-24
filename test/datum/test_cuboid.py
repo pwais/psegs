@@ -48,7 +48,7 @@ def test_cuboid_union_merge():
   c1 = Cuboid(
           track_id='c1',
           category_name='c1',
-          avs_category='c1',
+          ps_category='c1',
           length_meters=2,
           width_meters=2,
           height_meters=2,
@@ -61,7 +61,7 @@ def test_cuboid_union_merge():
   c2 = Cuboid(
           track_id='c2',
           category_name='c2',
-          avs_category='c2',
+          ps_category='c2',
           length_meters=2,
           width_meters=2,
           height_meters=2,
@@ -76,7 +76,7 @@ def test_cuboid_union_merge():
   expected_union = Cuboid(
           track_id='c1-union-c2',
           category_name='c1',
-          avs_category='c1',
+          ps_category='c1',
           length_meters=4,
           width_meters=2,
           height_meters=2,
@@ -94,7 +94,7 @@ def test_cuboid_union_interpolate():
   c1 = Cuboid(
           track_id='c1',
           category_name='c1',
-          avs_category='c1',
+          ps_category='c1',
           length_meters=2,
           width_meters=2,
           height_meters=2,
@@ -107,7 +107,7 @@ def test_cuboid_union_interpolate():
   c2 = Cuboid(
           track_id='c2',
           category_name='c2',
-          avs_category='c2',
+          ps_category='c2',
           length_meters=2,
           width_meters=2,
           height_meters=2,
@@ -122,7 +122,7 @@ def test_cuboid_union_interpolate():
   expected_interp = Cuboid(
           track_id='c1-interpolate-c2',
           category_name='c1',
-          avs_category='c1',
+          ps_category='c1',
           length_meters=2,
           width_meters=2,
           height_meters=2,
