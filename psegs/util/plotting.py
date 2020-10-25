@@ -124,6 +124,14 @@ def draw_cuboid_xy_in_image(img, pts, base_color_rgb, alpha=0.3, thickness=2):
     thickness (int): line thickness of cuboid edges.
   """
 
+  # Drawing is expensive! Skip if completely offscreen.
+  h, w = img.shape[:2]
+  idx = np.where(
+    (pts[:, 0] >= 0) & (pts[:, 0] <= w) &
+    (pts[:, 1] >= 0) & (pts[:, 1] <= h))
+  if not idx[0].any():
+    return
+
   base_color = np.array(base_color_rgb)
   front_color = color_to_opencv(base_color + 0.3 * 255)
   back_color = color_to_opencv(base_color - 0.3 * 255)
@@ -137,6 +145,7 @@ def draw_cuboid_xy_in_image(img, pts, base_color_rgb, alpha=0.3, thickness=2):
     return np.rint(arr).astype(int)
 
   front = to_opencv_px(pts[:4])
+  assert front.shape == (4, 2), "OpenCV requires nx2, have %s" % (front,)
   cv2.polylines(
     overlay,
     [front],
@@ -145,6 +154,7 @@ def draw_cuboid_xy_in_image(img, pts, base_color_rgb, alpha=0.3, thickness=2):
     thickness)
 
   back = to_opencv_px(pts[4:])
+  assert back.shape == (4, 2), "OpenCV requires nx2, have %s" % (back,)
   cv2.polylines(
     overlay,
     [back],
