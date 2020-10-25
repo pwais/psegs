@@ -151,6 +151,14 @@ def test_kitti350_play():
   cloud = np.reshape(cloud, [-1, 4])
   cloud = cloud[:, :3]
 
+  static_path =  ROOT / 'data_3d_semantics/2013_05_28_drive_0000_sync/static/007968_008291.ply'
+  dynamic_path = ROOT / 'data_3d_semantics/2013_05_28_drive_0000_sync/dynamic/007968_008291.ply'
+
+  import open3d
+  static_cloud = open3d.io.read_point_cloud(str(static_path))
+  dynamic_cloud = open3d.io.read_point_cloud(str(dynamic_path))
+
+
   # https://github.com/autonomousvision/kitti360Scripts/blob/fc4e92bfe7d7da0a404e58bca3b98660147ca09c/kitti360scripts/helpers/project.py#L65
   cam0_to_world = ROOT / 'data_poses/2013_05_28_drive_0000_sync/cam0_to_world.txt'
   poses = np.loadtxt(cam0_to_world)
@@ -361,9 +369,9 @@ def test_kitti350_play():
 
   frame = 'yay'
 
-  cloud = cloud[:, [1, 0, 2]]
-  cloud[:, 0] *= -1
-  cloud[:, 1] *= -1
+  # cloud = cloud[:, [1, 0, 2]]
+  # cloud[:, 0] *= -1
+  # cloud[:, 1] *= -1
   pc = datum.PointCloud(cloud=cloud)
   util.log.info("Projecting BEV %s ..." % frame)
   import time
@@ -381,6 +389,57 @@ def test_kitti350_play():
   fname = 'projected_lidar_labels_front_rv_%s.png' % frame.replace('/', '_')
   imageio.imwrite(outdir / fname, rv_img)
 
+
+
+  frame = 'static'
+  static_cloud_arr = np.asarray(static_cloud.points)
+  yay = calib.cam_left_raw_to_velo.get_inverse()
+  # yay.rotation = yay.rotation.T
+  xform = yay @ Tr_cam0_to_world['camera|left_raw', 'world']
+  static_cloud_arr = xform.apply(static_cloud_arr).T
+  # static_cloud_arr -= np.mean(static_cloud_arr, axis=0)
+  pc = datum.PointCloud(cloud=static_cloud_arr)
+  util.log.info("Projecting BEV %s ..." % frame)
+  import time
+  start = time.time()
+  bev_img = pc.get_bev_debug_image(cuboids=cuboids_lidar)
+  print('bev', time.time() - start)
+  fname = 'projected_lidar_labels_bev_%s.png' % frame.replace('/', '_')
+  imageio.imwrite(outdir / fname, bev_img)
+
+  util.log.info("Projecting Front RV %s ..." % frame)
+  import time
+  start = time.time()
+  rv_img = pc.get_front_rv_debug_image(cuboids=cuboids_lidar)
+  print('rv', time.time() - start)
+  fname = 'projected_lidar_labels_front_rv_%s.png' % frame.replace('/', '_')
+  imageio.imwrite(outdir / fname, rv_img)
+
+
+
+  frame = 'dynamic'
+  dynamic_cloud_arr = np.asarray(dynamic_cloud.points)
+  dynamic_cloud_arr -= np.mean(dynamic_cloud_arr, axis=0)
+  pc = datum.PointCloud(cloud=dynamic_cloud_arr)
+  util.log.info("Projecting BEV %s ..." % frame)
+  import time
+  start = time.time()
+  bev_img = pc.get_bev_debug_image(cuboids=cuboids_lidar)
+  print('bev', time.time() - start)
+  fname = 'projected_lidar_labels_bev_%s.png' % frame.replace('/', '_')
+  imageio.imwrite(outdir / fname, bev_img)
+
+  util.log.info("Projecting Front RV %s ..." % frame)
+  import time
+  start = time.time()
+  rv_img = pc.get_front_rv_debug_image(cuboids=cuboids_lidar)
+  print('rv', time.time() - start)
+  fname = 'projected_lidar_labels_front_rv_%s.png' % frame.replace('/', '_')
+  imageio.imwrite(outdir / fname, rv_img)
+
+
+
+  frame = 'left'
 
   from psegs.util import plotting as pspl
 

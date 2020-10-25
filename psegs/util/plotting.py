@@ -289,7 +289,7 @@ def draw_xy_depth_in_image(
 
 def get_ortho_debug_image(
       uvd,
-      min_u=0., min_v=0.,
+      min_u=0.,  min_v=0.,
       max_u=10., max_v=10.,
       pixels_per_meter=100,
       marker_radius=1,
@@ -322,7 +322,12 @@ def get_ortho_debug_image(
   """
 
   if not uvd.any():
-    return np.zeros((0, 0, 3))
+    if (min_u, min_v, max_u, max_v) is not (None, None, None, None):
+      w = int(pixels_per_meter * (max_u - min_u) + 1)
+      h = int(pixels_per_meter * (max_v - min_v) + 1)
+      return np.zeros((h, w, 3), dtype=np.uint8)
+    else:
+      return np.zeros((0, 0, 3), dtype=np.uint8)
   
   if min_u is None:
     min_u = uvd[:, 0].min()
