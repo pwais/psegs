@@ -309,7 +309,7 @@ class DSUtil(IDatasetUtil):
 
         %s
 
-        Optioanl KITTI-360 data dirs:
+        Optional KITTI-360 data dirs:
 
         %s
         """ % (req, opt))
