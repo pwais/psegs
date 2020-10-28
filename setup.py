@@ -36,6 +36,11 @@ def find_version():
   raise RuntimeError("Unable to find version string.")
 
 
+NUSC_DEPS = [
+  # TODO try to use v1.1 when they create a formal release ...
+  'nuscenes-devkit==1.1.0'
+]
+
 # SPARK_DEPS = [
 #   'findspark==1.3.0',
 #   'numpy',

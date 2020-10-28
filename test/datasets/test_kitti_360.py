@@ -111,7 +111,8 @@ def test_kitti350_play():
   from pathlib import Path
 
 
-  FRAMEID = 8112#8096
+  # FRAMEID = 8112#8096
+  FRAMEID = 8096
   FRAMENAME = str(FRAMEID).rjust(10, '0')
   
 
@@ -195,10 +196,12 @@ def test_kitti350_play():
     T_world = np.mean(obj['cuboid'], axis=0)
 
     from scipy.spatial.transform import Rotation as R
-    heading = front_world[0, :] - rear_world[0, :]
+    heading = np.mean(front_world, axis=0) - np.mean(rear_world, axis=0)
+    print('np.mean(front_world, axis=0) - np.mean(rear_world, axis=0)', np.mean(front_world, axis=0) - np.mean(rear_world, axis=0))
     heading /= np.linalg.norm(heading)
-    heading *= 2 * np.pi # effectively zero rotation about axis
+    # heading *= 2 * np.pi # effectively zero rotation about axis
     R_world = R.from_rotvec(heading).as_matrix()
+    R_world = np.eye(3, 3)
 
     T_world_to_obj = datum.Transform.from_transformation_matrix(
                           np.column_stack([R_world, T_world]),
@@ -206,11 +209,27 @@ def test_kitti350_play():
                           dest_frame='obj')
 
     RT_cam0_to_world = cam0_to_world[FRAMEID]
+    
+    RT_world_to_ego = poses_idk[FRAMEID]
+    T_world_to_ego = datum.Transform.from_transformation_matrix(
+                          RT_world_to_ego,
+                          src_frame='world',
+                          dest_frame='ego')
+
+    T_ego_to_velo = (
+        calib.cam_left_raw_to_ego @
+      calib.cam_left_raw_to_velo.get_inverse())
+    T_world_to_velo = (
+      T_world_to_ego @ T_ego_to_velo).get_inverse()
+
+
     # print('little', cam0_to_world[FRAMEID + 1][:3, 3] - cam0_to_world[FRAMEID][:3, 3])
     # print('big', cam0_to_world[8122][:3, 3] - cam0_to_world[FRAMEID][:3, 3])
 
-    R_cam0_to_world = RT_cam0_to_world[:3, :3].T
-    # R_cam0_to_world = np.eye(3, 3)
+    
+    # R_cam0_to_world = np.linalg.inv(wtf_fwd) @ RT_cam0_to_world[:3, :3] @ wtf_fwd
+
+    R_cam0_to_world = RT_cam0_to_world[:3, :3]
     T_cam0_to_world = RT_cam0_to_world[:3, 3]
 
     # if close is None:
@@ -240,7 +259,7 @@ def test_kitti350_play():
     
 
     T_obj_from_ego = (
-      T_world_to_obj['obj', 'world'] @ 
+      T_world_to_obj @ 
       Tr_cam0_to_world['world', 'camera|left_raw'])
         # left camera is ego?  or do we need `poses` that has lidar?
     T_obj_from_ego.src_frame = 'ego'
@@ -269,10 +288,15 @@ def test_kitti350_play():
     #   np.reshape(kitti_Tr_imu_to_velo, (3, 4)),
     #   src_frame='oxts', dest_frame='lidar')
 
-    T_obj_from_ego = (
-      # calib.cam_left_raw_to_velo @
-      T_world_to_obj['obj', 'world'] @
-      Tr_cam0_to_world['world', 'camera|left_raw'] )
+    wtf_fwd = np.array([
+                [0, -1,  0],
+                [1,  0,  0],
+                [0,  0,  1]
+              ])
+
+    T_obj_from_velo = (
+      T_world_to_obj.get_inverse() @ T_world_to_ego @ T_ego_to_velo).get_inverse()
+
       #calib.cam_left_raw_to_velo)
       # @ )
           # cam_left_raw_to_velo is really opposite?
@@ -293,11 +317,11 @@ def test_kitti350_play():
     # T_obj_from_ego.translation[1] *= -1
     # T_obj_from_ego.translation[0] *= -1
 
-    T_obj_from_ego.translation -= calib.cam_left_raw_to_velo.translation
+    # T_obj_from_ego.translation -= calib.cam_left_raw_to_velo.translation
 
     # T_obj_from_ego.translation = T_obj_from_ego.rotation.T
-    T_obj_from_ego.src_frame = 'ego'
-    T_obj_from_ego.dest_frame = 'obj'
+    T_obj_from_velo.src_frame = 'ego' # actually velo but tag this way to make psegs happy
+    T_obj_from_velo.dest_frame = 'obj'
 
     c = datum.Cuboid(
           track_id=obj_name,
@@ -305,7 +329,7 @@ def test_kitti350_play():
           length_meters=l,
           width_meters=w,
           height_meters=h,
-          obj_from_ego=T_obj_from_ego)
+          obj_from_ego=T_obj_from_velo)
     cuboids_lidar.append(c)
   
   # print('close', close)
@@ -393,10 +417,25 @@ def test_kitti350_play():
 
   frame = 'static'
   static_cloud_arr = np.asarray(static_cloud.points)
-  yay = calib.cam_left_raw_to_velo.get_inverse()
+  # vel_from_cam = calib.cam_left_raw_to_velo.get_inverse()
+
+  # wtf_fwd = datum.Transform.from_transformation_matrix(
+  #             np.array([
+  #               [0, 0, 1, 0],
+  #               [0, 1, 0, 0],
+  #               [1, 0, 0, 0]
+  #             ]))
+  # wtf_bwd = datum.Transform.from_transformation_matrix(
+  #             np.array([
+  #               [0, -1, 0, 0],
+  #               [1, 0, 0, 0],
+  #               [0,  0, 1, 0]
+  #             ]))
+
   # yay.rotation = yay.rotation.T
-  xform = yay @ Tr_cam0_to_world['camera|left_raw', 'world']
-  static_cloud_arr = xform.apply(static_cloud_arr).T
+
+  # xform = vel_from_cam @ Tr_cam0_to_world['camera|left_raw', 'world']
+  static_cloud_arr = T_world_to_velo.apply(static_cloud_arr).T
   # static_cloud_arr -= np.mean(static_cloud_arr, axis=0)
   pc = datum.PointCloud(cloud=static_cloud_arr)
   util.log.info("Projecting BEV %s ..." % frame)
@@ -417,25 +456,25 @@ def test_kitti350_play():
 
 
 
-  frame = 'dynamic'
-  dynamic_cloud_arr = np.asarray(dynamic_cloud.points)
-  dynamic_cloud_arr -= np.mean(dynamic_cloud_arr, axis=0)
-  pc = datum.PointCloud(cloud=dynamic_cloud_arr)
-  util.log.info("Projecting BEV %s ..." % frame)
-  import time
-  start = time.time()
-  bev_img = pc.get_bev_debug_image(cuboids=cuboids_lidar)
-  print('bev', time.time() - start)
-  fname = 'projected_lidar_labels_bev_%s.png' % frame.replace('/', '_')
-  imageio.imwrite(outdir / fname, bev_img)
+  # frame = 'dynamic'
+  # dynamic_cloud_arr = np.asarray(dynamic_cloud.points)
+  # dynamic_cloud_arr -= np.mean(dynamic_cloud_arr, axis=0)
+  # pc = datum.PointCloud(cloud=dynamic_cloud_arr)
+  # util.log.info("Projecting BEV %s ..." % frame)
+  # import time
+  # start = time.time()
+  # bev_img = pc.get_bev_debug_image(cuboids=cuboids_lidar)
+  # print('bev', time.time() - start)
+  # fname = 'projected_lidar_labels_bev_%s.png' % frame.replace('/', '_')
+  # imageio.imwrite(outdir / fname, bev_img)
 
-  util.log.info("Projecting Front RV %s ..." % frame)
-  import time
-  start = time.time()
-  rv_img = pc.get_front_rv_debug_image(cuboids=cuboids_lidar)
-  print('rv', time.time() - start)
-  fname = 'projected_lidar_labels_front_rv_%s.png' % frame.replace('/', '_')
-  imageio.imwrite(outdir / fname, rv_img)
+  # util.log.info("Projecting Front RV %s ..." % frame)
+  # import time
+  # start = time.time()
+  # rv_img = pc.get_front_rv_debug_image(cuboids=cuboids_lidar)
+  # print('rv', time.time() - start)
+  # fname = 'projected_lidar_labels_front_rv_%s.png' % frame.replace('/', '_')
+  # imageio.imwrite(outdir / fname, rv_img)
 
 
 

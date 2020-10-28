@@ -89,6 +89,11 @@ class Calibration(object):
   sick_to_velo = attr.ib(type=datum.Transform, default=datum.Transform())
   """Raw transform from SICK laser frame to velodyne frame."""
 
+  cam_left_raw_to_ego = attr.ib(type=datum.Transform, default=datum.Transform())
+  cam_right_raw_to_ego = attr.ib(type=datum.Transform, default=datum.Transform())
+  cam_left_fisheye_to_ego = attr.ib(type=datum.Transform, default=datum.Transform())
+  cam_right_fisheye_to_ego = attr.ib(type=datum.Transform, default=datum.Transform())
+
   cam0_K = attr.ib(type=np.ndarray, default=np.zeros((3, 3)))
   cam1_K = attr.ib(type=np.ndarray, default=np.zeros((3, 3)))
 
@@ -163,23 +168,23 @@ class Calibration(object):
     # Tr cam -> ego
     lines = [l.strip() for l in calib_cam_to_pose.split('\n')]
     cam_to_sRT = dict(l.split(':') for l in lines if l)
-    cam_left_raw_to_ego = datum.Transform.from_transformation_matrix(
+    kwargs['cam_left_raw_to_ego'] = datum.Transform.from_transformation_matrix(
               str_to_RT(cam_to_sRT['image_00']),
               src_frame='camera|left_raw',
               dest_frame='ego')
-    cam_right_raw_to_ego = datum.Transform.from_transformation_matrix(
+    kwargs['cam_right_raw_to_ego'] = datum.Transform.from_transformation_matrix(
               str_to_RT(cam_to_sRT['image_01']),
               src_frame='camera|right_raw',
               dest_frame='ego')
-    cam_left_fisheye_to_ego = datum.Transform.from_transformation_matrix(
+    kwargs['cam_left_fisheye_to_ego'] = datum.Transform.from_transformation_matrix(
               str_to_RT(cam_to_sRT['image_02']),
               src_frame='camera|left_fisheye',
               dest_frame='ego')
-    cam_left_fisheye_to_ego = datum.Transform.from_transformation_matrix(
+    kwargs['cam_right_fisheye_to_ego'] = datum.Transform.from_transformation_matrix(
               str_to_RT(cam_to_sRT['image_03']),
               src_frame='camera|left_fisheye',
               dest_frame='ego')
-
+    
 
     ## Intrinsics
 
