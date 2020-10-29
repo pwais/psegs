@@ -322,7 +322,7 @@ def get_ortho_debug_image(
   """
 
   if not uvd.any():
-    if (min_u, min_v, max_u, max_v) is not (None, None, None, None):
+    if (min_u, min_v, max_u, max_v) != (None, None, None, None):
       w = int(pixels_per_meter * (max_u - min_u) + 1)
       h = int(pixels_per_meter * (max_v - min_v) + 1)
       return np.zeros((h, w, 3), dtype=np.uint8)

@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pprint
-
+from psegs.datasets import nuscenes
 from psegs.datasets import kitti
 
 DS_TO_UTIL_IMPL = {
   'kitti': kitti.DSUtil,
+  'nuscenes': nuscenes.NuscDSUtil,
 }
 
 def run(dataset):
   assert dataset in DS_TO_UTIL_IMPL, (
     "Unknown dataset %s, choices: %s" % (
-      dataset, pprint.pformat(DS_TO_UTIL_IMPL.keys())))
+      dataset, sorted(DS_TO_UTIL_IMPL.keys())))
   
   dsutil_impl = DS_TO_UTIL_IMPL[dataset]
 

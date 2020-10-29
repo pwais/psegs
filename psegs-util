@@ -48,7 +48,12 @@ PS_ROOT = os.environ.get(
 ## Utils 
 
 def get_psegs_version(ps_root):
-  import imp
+  import warnings
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore",category=DeprecationWarning)
+    import imp
+      # Dear imp maintainers, please stop renaming things ...
+
   path = os.path.join(ps_root, 'psegs/__init__.py')
   m = imp.load_source('_', path)
   return m.__version__
@@ -205,6 +210,9 @@ def run_dsutil(dataset):
     "Run DSUtil from inside the PSegs dockerized environment.  Haved you run "
     "psegs-util --shell ?")
   
+  assert sys.version_info[0] >= 3, \
+    "Python 3 required, run with `python3 ./psegs-util`"
+
   # Import PSegs or die
   sys.path.append(PS_ROOT)
   try:
@@ -247,8 +255,8 @@ def create_arg_parser():
   
   parser.add_argument(
     '--dsutil',
-    help='Run the PSegs Dataset Util for this dataset (to see choices, run '
-         'with any argument')
+    help='Run the PSegs Dataset Util for this dataset '
+         '(to see choices, run with --dsutil=help )')
 
   return parser
 
