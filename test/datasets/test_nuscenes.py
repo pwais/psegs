@@ -95,6 +95,8 @@ def test_nuscenes_yay():
   #   version='v1.0-trainval',
   #   dataroot='/outer_root//media/seagates-ext4/au_datas/nuscenes_root/')
 
+  # import pdb; pdb.set_trace()
+
   # from pprint import pprint
   # pprint(nusc.get_all_sensors())
   # pprint(nusc.get_all_classes())

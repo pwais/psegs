@@ -8,6 +8,7 @@
 */**/._*
 eggs
 build
+dataroot
 ext_data
 external_test_fixtures
 notebooks/.ipynb_checkpoints

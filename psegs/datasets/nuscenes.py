@@ -14,6 +14,7 @@
 
 import itertools
 import os
+import pickle
 import shelve
 from pathlib import Path
 
@@ -181,6 +182,7 @@ class PSegsNuScenes(BASE):
       table_names = list(nusc.table_names)
       if (Path(self.table_root) / 'lidarseg.json').exists():
         table_names += ['lidarseg']
+      
       for table_name in nusc.table_names:
         cache_path = self._get_cache_path(table_name)
         oputil.mkdir(cache_path.parent)
@@ -189,11 +191,19 @@ class PSegsNuScenes(BASE):
           "Building shelve cache for %s (in %s) ..." % (
             table_name, cache_path))
         
-        import pickle
         d = shelve.open(str(cache_path), protocol=pickle.HIGHEST_PROTOCOL)
         rows = getattr(nusc, table_name) # E.g. self.sample_data
         d.update((r['token'], r) for r in rows)
         d.close()
+      
+      # This cache helps speed up full-scene lookups by 10x
+      util.log.info("Building scene name -> sample_data token cache ...")
+      scene_name_to_sd_token = self._build_scene_name_to_sd_token(nusc)
+      cache_path = self._get_cache_path('scene_name_to_sd_token')
+      d = shelve.open(str(cache_path), protocol=pickle.HIGHEST_PROTOCOL)
+      d.update(scene_name_to_sd_token)
+      d.close()
+
       util.log.info("... done.")
       del nusc # Free several GB memory
 
@@ -232,20 +242,29 @@ class PSegsNuScenes(BASE):
     # This override should be safe due to our override of `get()` above"""
     raise ValueError("Unsupported / unnecessary; provided by shelve")
 
-  def get_sample_data_for_scene(self, scene_name):
-    # print('expensive get rows')~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  @classmethod
+  def _build_scene_name_to_sd_token(cls, nusc):
+    scene_name_to_sd_token = {}
 
     sample_to_scene = {}
-    for sample in self.sample:
-      scene = self.get('scene', sample['scene_token'])
+    for sample in nusc.sample:
+      scene = nusc.get('scene', sample['scene_token'])
       sample_to_scene[sample['token']] = scene['token']
 
-    for sd in self.sample_data:
-      if self.get('scene', sample_to_scene[sd['sample_token']])['name'] == scene_name:
-        yield sd
-    # df = self.sample_data_ts_df
-    # df = df[df['scene_name'] == scene_name]
-    # return df.to_dict(orient='records')
+    for sd in nusc.sample_data:
+      scene_tok = sample_to_scene[sd['sample_token']]
+      cur_scene = nusc.get('scene', scene_tok)['name']
+      scene_name_to_sd_token.setdefault(cur_scene, [])
+      scene_name_to_sd_token[cur_scene].append(sd['token'])
+    
+    # For NuScenes trainval-1.0, this is about 400MB of memory
+    return scene_name_to_sd_token
+
+  def iter_sample_data_for_scene(self, scene_name):
+    sd_tokens = self._get_table('scene_name_to_sd_token')[scene_name]
+    for sd_token in sd_tokens:
+      yield self.get('sample_data', sd_token)
+
 
   #### PSegs Adhoc Utils
 
@@ -629,12 +648,17 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       task_rdd = spark.sparkContext.parallelize(task_chunk)
 
       def gen_partition_datums(task):
+        import time
+        total_sd_time = 0
         segment_id, partition = task
         for i, uri in enumerate(cls.iter_uris_for_segment(segment_id)):
           if to_nusc_datum_id(uri) in existing_ids:
             continue
           if (i % PARTITIONS_PER_SEGMENT) == partition:
+            start = time.time()
             yield cls.create_stamped_datum(uri)
+            total_sd_time += time.time() - start
+        print('total_sd_time', total_sd_time)
         
       datum_rdd = task_rdd.flatMap(gen_partition_datums)
       datum_rdds.append(datum_rdd)
@@ -656,12 +680,14 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
 
   @classmethod
   def iter_uris_for_segment(cls, segment_id):
+    import time
+    start = time.time()
     nusc = cls.get_nusc()
 
     scene_split = nusc.get_split_for_scene(segment_id)
 
     ## Get sensor data and ego pose
-    for sd in nusc.get_sample_data_for_scene(segment_id):
+    for sd in nusc.iter_sample_data_for_scene(segment_id):
       # Use these for creating frames based upon NuScenes / Lyft groupings
       sample_token = sd['sample_token']
       is_key_frame = str(sd['is_key_frame'])
@@ -741,6 +767,8 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                     'nuscenes-sample-token': sample_token,
                     'nuscenes-is-keyframe': 'True',
                   })
+    
+    print('iter_uris_for_segment', time.time() - start)
 
   @classmethod
   def create_stamped_datum(cls, uri):
@@ -935,8 +963,9 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
         elif cuboid.ps_category == 'motorcycle_no_rider':
           cuboid.ps_category = 'motorcycle_with_rider'
         else:
-          raise ValueError(
-            "Don't know how to give a rider to %s %s" % (cuboid, attribs))
+          # raise ValueError(
+            # "Don't know how to give a rider to %s %s" % (cuboid, attribs))
+          print("""TODO "Don't know how to give a rider """)#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
       cuboid.extra = {
         'nuscenes_token': box.token,
@@ -1093,3 +1122,44 @@ class LyftDSUtil(IDatasetUtil):
   FIXTURES = LyftFixtures
 
   REQUIRED_SUBDIRS = ('maps', 'images', 'lidar')
+
+
+# 2020-10-29 07:43:22,447 oarph 965634 : Progress for                             
+# save_df_thunks [Pid:965634 Id:140090221242784]
+# -----------------------  -------------------------------------------------------------------------------
+# Thruput
+# N thru                   3 (of 496)
+# N chunks                 3
+# Total time               8 minutes and 51.56 seconds
+# Total thru               2.34 GB
+# Rate                     4.4 MB / sec
+# Hz                       0.0056438171817696624
+# Progress
+# Percent Complete         0.6048387096774194
+# Est. Time To Completion  1 day, 15 minutes and 52.23 seconds
+# Latency (per chunk)
+# Avg                      2 minutes, 57 seconds, 185 milliseconds, 44 microseconds and 765.47 nanoseconds
+# p50                      3 minutes, 1 second, 11 milliseconds, 476 microseconds and 755.14 nanoseconds
+# p95                      3 minutes, 7 seconds, 486 milliseconds, 417 microseconds and 293.55 nanoseconds
+# p99                      3 minutes, 8 seconds, 61 milliseconds, 967 microseconds and 563.63 nanoseconds
+# -----------------------  -------------------------------------------------------------------------------
+
+# with faster loops now
+# save_df_thunks [Pid:1588334 Id:140225493356208]
+# -----------------------  -------------------------------------------------------------------------------
+# Thruput
+# N thru                   3 (of 496)
+# N chunks                 3
+# Total time               3 minutes and 35.83 seconds
+# Total thru               2.34 GB
+# Rate                     10.82 MB / sec
+# Hz                       0.013900148032916951
+# Progress
+# Percent Complete         0.6048387096774194
+# Est. Time To Completion  9 hours, 51 minutes and 7.25 seconds
+# Latency (per chunk)
+# Avg                      1 minute, 11 seconds, 941 milliseconds, 679 microseconds and 875.06 nanoseconds
+# p50                      1 minute, 15 seconds, 234 milliseconds, 795 microseconds and 331.95 nanoseconds
+# p95                      1 minute, 16 seconds, 7 milliseconds, 751 microseconds and 536.37 nanoseconds
+# p99                      1 minute, 16 seconds, 76 milliseconds, 458 microseconds and 754.54 nanoseconds
+# -----------------------  -------------------------------------------------------------------------------
