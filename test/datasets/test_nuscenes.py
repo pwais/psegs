@@ -21,6 +21,9 @@ except ImportError:
 
 from psegs.datasets import nuscenes as psnusc
 
+from test import testutil
+
+
 ###############################################################################
 ### Test Utils
 
@@ -105,4 +108,10 @@ def test_nuscenes_yay():
   # pprint(('lidarseg_idx2name_mapping', nusc.lidarseg_idx2name_mapping))
 
 
-  psnusc.NuscStampedDatumTableBase.build()
+  T = psnusc.NuscStampedDatumTableBase
+  myseg = T.get_all_segment_uris()[10]
+  with testutil.LocalSpark.getOrCreate() as spark:
+    datum_rdd = T.get_segment_datum_rdd(spark, myseg)
+    print('datum_rdd.count()', datum_rdd.count())
+    import pdb; pdb.set_trace()
+    print()

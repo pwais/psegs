@@ -1062,7 +1062,7 @@ class KITTISDTable(StampedDatumTableBase):
   ## Subclass API
 
   @classmethod
-  def get_all_segment_uris(cls):
+  def _get_all_segment_uris(cls):
     import zipfile
     from oarphpy import util as oputil
     
@@ -1116,7 +1116,8 @@ class KITTISDTable(StampedDatumTableBase):
           suri.soft_matches_segment(uri) for suri in only_segments))
 
     ## ... run tasks and create stamped datums.
-    URIS_PER_CHUNK = os.cpu_count() * 64 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # from oarphpy.spark import cluster_cpu_count
+    URIS_PER_CHUNK = os.cpu_count() * 64 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ make class member so can configure to RAM
     uris = uri_rdd.collect()
     util.log.info("... creating datums for %s URIs." % len(uris))
 

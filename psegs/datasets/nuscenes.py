@@ -118,7 +118,7 @@ class PSegsNuScenes(BASE):
   To warm the disk--based caches (requires one-time temporary ~8GB memory
   usage), use `maybe_warm_caches()` below.  At the time of writing
   the cache for the `v1.0-trainval` split requires about 4GB of cache and takes
-  about 2-3 minutes on a 3.9GHz Intel Core i7.
+  about 2-3 minutes on a 2.2GHz Intel Core i7.
 
   ## Utils
   See `print_sensor_sample_rates()` in particular for important data about
@@ -602,67 +602,148 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
   NUSC_VERSION = 'v1.0-trainval' # E.g. v1.0-mini, v1.0-trainval, v1.0-test
 
   SENSORS_KEYFRAMES_ONLY = False
-    # NuScenes: If enabled, throttles sensor data to about 2Hz, in tune with
-    #   samples; if disabled, samples at full res.
-    # Lyft Level 5: all sensor data is key frames.
-    # FMI see print_sensor_sample_rates() above.
+  """bool: Should we only emit datums for Keyframes?
+  NuScenes: If enabled, throttles sensor data to about 2Hz, in tune with
+    samples; if disabled, samples at full res.
+  Lyft Level 5: all sensor data is key frames.
+    FMI see `PSegsNuScenes.print_sensor_sample_rates()` above.
+  """
   
   LABELS_KEYFRAMES_ONLY = True
-    # If enabled, samples only raw annotations.  If disabled, will motion-
-    # correct cuboids to every sensor reading.
+  """bool: Should we emit label datums for only keyframes?
+  If enabled, samples only raw annotations.  If disabled, will motion-
+  correct cuboids to every sensor reading.
+  """
 
+  PARTITIONS_PER_SEGMENT = 1
+  """int: For read performance, partiton entire segments read into this many
+  Spark partitions. Tuned for approx 2GB RAM per core"""
 
   ## Subclass API
   
   @classmethod
+  def _get_all_segment_uris(cls):
+    nusc = cls.get_nusc()
+    segment_ids = (s['name'] for s in nusc.scene)
+    return [datum.URI(
+              dataset=nusc.DATASET,
+              split=nusc.get_split_for_scene(segment_id),
+              segment_id=segment_id)
+      for segment_id in segment_ids
+    ]
+
+  @classmethod
   def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
+
+    ## First build a set of tasks to do ...
+    # NuScenes is big enough that it's cheap to list all scenes (850 for 
+    # the trainval-1.0 split) but expensive to list all datum URIs (
+    # there are millions).  So we create tasks based upon partitioned
+    # segments.
+
     from psegs.spark import Spark
     from oarphpy.spark import cluster_cpu_count
-
-    PARTITIONS_PER_SEGMENT = 7
+    
     TASKS_PER_RDD = cluster_cpu_count(spark)
 
-    # Are we resuming? We need to filter existing datums *before* computing
-    # them for resume mode to save time.
-    existing_ids = []
-    def to_nusc_datum_id(row):
-      return (
-        row.dataset,
-        row.split,
-        row.segment_id,
-        row.topic,
-        row.timestamp)
-    if existing_uri_df:
-      existing_ids = set(existing_uri_df.rdd.map(to_nusc_datum_id).collect())
-      util.log.info("Resume mode: have %s datums" % len(existing_ids))
-
-    segment_ids = cls.get_segment_ids()
+    seg_uris = cls.get_all_segment_uris()
     if only_segments:
-      segment_ids = [s for s in segment_ids if s in only_segments]
+      util.log.info(
+        "Filtering to only %s segments" % len(only_segments))
+      seg_uris = [
+        uri for uri in seg_uris
+        if any(
+          suri.soft_matches_segment(uri) for suri in only_segments)
+      ]
+    print('seg_uris', seg_uris)
 
-    datum_rdds = []
+    ## ... now do those tasks in chunks.
     iter_tasks = itertools.chain.from_iterable(
-      ((segment_id, p) for p in range(PARTITIONS_PER_SEGMENT))
-      for segment_id in segment_ids)
+      ((seg_uri, p) for p in range(cls.PARTITIONS_PER_SEGMENT))
+      for seg_uri in seg_uris)
+    
+    datum_rdds = []
     for task_chunk in oputil.ichunked(iter_tasks, TASKS_PER_RDD):
       task_rdd = spark.sparkContext.parallelize(task_chunk)
+      def iter_uris_for_task(task):
+        seg_uri, partition = task
+        for i, uri in enumerate(cls.iter_uris_for_segment(seg_uri.segment_id)):
+          if ((i + 1337) % cls.PARTITIONS_PER_SEGMENT) == partition:
+            yield uri
+      
+      uri_rdd = task_rdd.flatMap(iter_uris_for_task)
 
-      def gen_partition_datums(task):
-        import time
-        total_sd_time = 0
-        segment_id, partition = task
-        for i, uri in enumerate(cls.iter_uris_for_segment(segment_id)):
-          if to_nusc_datum_id(uri) in existing_ids:
-            continue
-          if (i % PARTITIONS_PER_SEGMENT) == partition:
-            start = time.time()
-            yield cls.create_stamped_datum(uri)
-            total_sd_time += time.time() - start
-        print('total_sd_time', total_sd_time)
-        
-      datum_rdd = task_rdd.flatMap(gen_partition_datums)
+      # Are we trying to resume? Filter URIs if necessary.
+      if existing_uri_df is not None:
+        def to_datum_id(obj):
+          return (
+            obj.dataset,
+            obj.split,
+            obj.segment_id,
+            obj.topic,
+            obj.timestamp)
+        key_uri_rdd = uri_rdd.map(lambda u: (to_datum_id(u), u))
+        existing_keys = existing_uri_df.rdd.map(to_datum_id)
+        uri_rdd = key_uri_rdd.subtractByKey(existing_keys).map(lambda kv: kv[0])
+      
+      # Some datums are more expensive to materialize than others.  Force
+      # a repartition to avoid stragglers.
+      uri_rdd = uri_rdd.repartition(TASKS_PER_RDD)
+
+      datum_rdd = uri_rdd.map(cls.create_stamped_datum)
       datum_rdds.append(datum_rdd)
     return datum_rdds
+
+
+    #         start = time.time()
+    #         yield cls.create_stamped_datum(uri)
+    #         total_sd_time += time.time() - start
+
+
+    #   # Are we trying to resume? Convert to URIs and filter those tasks if necessary ...
+
+
+    # # Are we resuming? We need to filter existing datums *before* computing
+    # # them for resume mode to save time.
+    # existing_ids = []
+    # def to_nusc_datum_id(row):
+    #   return (
+    #     row.dataset,
+    #     row.split,
+    #     row.segment_id,
+    #     row.topic,
+    #     row.timestamp)
+    # if existing_uri_df:
+    #   existing_ids = set(existing_uri_df.rdd.map(to_nusc_datum_id).collect())
+    #   util.log.info("Resume mode: have %s datums" % len(existing_ids))
+
+    # segment_ids = cls.get_segment_ids()
+    # if only_segments:
+    #   segment_ids = [s for s in segment_ids if s in only_segments]
+
+    # datum_rdds = []
+    # iter_tasks = itertools.chain.from_iterable(
+    #   ((segment_id, p) for p in range(PARTITIONS_PER_SEGMENT))
+    #   for segment_id in segment_ids)
+    # for task_chunk in oputil.ichunked(iter_tasks, TASKS_PER_RDD):
+    #   task_rdd = spark.sparkContext.parallelize(task_chunk)
+
+    #   def gen_partition_datums(task):
+    #     import time
+    #     total_sd_time = 0
+    #     segment_id, partition = task
+    #     for i, uri in enumerate(cls.iter_uris_for_segment(segment_id)):
+    #       if to_nusc_datum_id(uri) in existing_ids:
+    #         continue
+    #       if (i % PARTITIONS_PER_SEGMENT) == partition:
+    #         start = time.time()
+    #         yield cls.create_stamped_datum(uri)
+    #         total_sd_time += time.time() - start
+    #     print('total_sd_time', total_sd_time)
+        
+    #   datum_rdd = task_rdd.flatMap(gen_partition_datums)
+    #   datum_rdds.append(datum_rdd)
+    # return datum_rdds
 
   
   ## Public API
@@ -675,8 +756,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
   
   @classmethod
   def get_segment_ids(cls):
-    nusc = cls.get_nusc()
-    return sorted(s['name'] for s in nusc.scene)
+    return sorted(uri.segment_id for uri in cls.get_all_segment_uris())
 
   @classmethod
   def iter_uris_for_segment(cls, segment_id):

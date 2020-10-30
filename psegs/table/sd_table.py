@@ -34,7 +34,7 @@ class StampedDatumTableBase(object):
   
   @classmethod
   def get_all_segment_uris(cls):
-    return []
+    return cls._get_all_segment_uris()
 
   @classmethod
   def build(cls, spark=None, only_segments=None):
@@ -130,6 +130,10 @@ class StampedDatumTableBase(object):
 
 
   ## Subclass API - Each dataset should provide ETL to a StampedDatumTable
+
+  @classmethod
+  def _get_all_segment_uris(cls):
+    return []
 
   @classmethod
   def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
