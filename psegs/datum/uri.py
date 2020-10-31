@@ -264,4 +264,12 @@ class URI(object):
       self.replaced(sel_datums=[], **attr.asdict(ds))
       for ds in self.sel_datums
     ]
-
+  
+  @classmethod
+  def segment_uri_from_datum_uris(cls, uris):
+    """Given a list of `uris`, construct and return a single (segment) `URI`
+    instance that references the given `uris` as `DatumSelection`s"""
+    assert uris, "Empty selection"
+    uris = sorted(cls.from_str(uri) for uri in uris)
+    out = uris[0].to_segment_uri()
+    return out.replaced(sel_datums=DatumSelection.selections_from_value(uris))

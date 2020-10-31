@@ -655,7 +655,6 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
         if any(
           suri.soft_matches_segment(uri) for suri in only_segments)
       ]
-    print('seg_uris', seg_uris)
 
     ## ... now do those tasks in chunks.
     iter_tasks = itertools.chain.from_iterable(
@@ -668,7 +667,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       def iter_uris_for_task(task):
         seg_uri, partition = task
         for i, uri in enumerate(cls.iter_uris_for_segment(seg_uri.segment_id)):
-          if ((i + 1337) % cls.PARTITIONS_PER_SEGMENT) == partition:
+          if (i % cls.PARTITIONS_PER_SEGMENT) == partition:
             yield uri
       
       uri_rdd = task_rdd.flatMap(iter_uris_for_task)

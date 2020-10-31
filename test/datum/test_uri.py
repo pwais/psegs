@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from psegs.datum.uri import URI
 from psegs.datum.uri import DatumSelection
 
@@ -102,6 +104,25 @@ def test_uri_datum_to_datum_uris():
       'psegs://dataset=d&timestamp=2&topic=t1',
       'psegs://dataset=d&timestamp=1&topic=t2',
     ])
+
+
+def test_segment_uri_from_datum_uris():
+
+  with pytest.raises(Exception):
+    URI.segment_uri_from_datum_uris([])
+
+  assert (
+    URI.from_str('psegs://dataset=d&sel_datums=t1,1') ==
+    URI.segment_uri_from_datum_uris([
+      'psegs://dataset=d&timestamp=1&topic=t1'
+    ]))
+  
+  assert (
+    URI.from_str('psegs://dataset=d&sel_datums=t1,1,t2,1') ==
+    URI.segment_uri_from_datum_uris([
+      'psegs://dataset=d&timestamp=1&topic=t1',
+      'psegs://dataset=d&timestamp=1&topic=t2',
+    ]))
 
 
 def test_uri_sorting():

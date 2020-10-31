@@ -18,6 +18,7 @@ from pyspark.sql import Row
 
 from psegs import util
 from psegs.conf import C
+from psegs.datum import URI
 from psegs.datum.stamped_datum import STAMPED_DATUM_PROTO
 from psegs.spark import Spark
 
@@ -61,6 +62,7 @@ class StampedDatumTableBase(object):
 
   @classmethod
   def as_df(cls, spark):
+    # TODO REPLACE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     """ comments ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
     util.log.info("Loading %s ..." % cls.table_root())
     df = spark.read.option("mergeSchema", "true").parquet(str(cls.table_root()))
@@ -74,36 +76,111 @@ class StampedDatumTableBase(object):
     df = df or cls.as_df(spark)
     return df.rdd.map(StampedDatumTableBase.from_row)
 
+  # @classmethod
+  # def get_segment_datum_rdd(cls, spark, segment_uri, time_ordered=True):
+  #   if util.missing_or_empty(cls.table_root()):
+  #     datum_rdds = cls._create_datum_rdds(spark, only_segments=[segment_uri])
+  #     if not datum_rdds:
+  #       return spark.sparkContext.parallelize([])
+  #     datum_rdd = spark.sparkContext.union(datum_rdds)
+  #     from pyspark import StorageLevel
+  #     datum_rdd = datum_rdd.persist(StorageLevel.MEMORY_AND_DISK)
+  #     if time_ordered:
+  #       datum_rdd = datum_rdd.sortBy(lambda sd: sd.uri.timestamp)
+  #     return datum_rdd
+  #   else:
+  #     df = cls.as_df(spark)
+  #     assert segment_uri.segment_id
+  #     seg_df = df.filter(df.segment_id == segment_uri.segment_id)
+  #     if segment_uri.dataset:
+  #       seg_df = seg_df.filter(df.dataset == segment_uri.dataset)
+  #     if segment_uri.split:
+  #       seg_df = seg_df.filter(df.split == segment_uri.split)
+
+  #     seg_df = seg_df.persist()
+  #     if time_ordered:
+  #       seg_df = seg_df.orderBy('uri.timestamp')
+  #     return seg_df.rdd.map(StampedDatumTableBase.from_row)
+
   @classmethod
-  def get_segment_datum_rdd(cls, spark, segment_uri, time_ordered=True):
+  def _get_segment_datum_rdd_or_df(cls, spark, segment_uri):
+    segment_uri = URI.from_str(segment_uri)
     if util.missing_or_empty(cls.table_root()):
       datum_rdds = cls._create_datum_rdds(spark, only_segments=[segment_uri])
       if not datum_rdds:
         return spark.sparkContext.parallelize([])
       datum_rdd = spark.sparkContext.union(datum_rdds)
-      
-      from pyspark import StorageLevel
-      datum_rdd = datum_rdd.persist(StorageLevel.MEMORY_AND_DISK)
-      if time_ordered:
-        datum_rdd = datum_rdd.sortBy(lambda sd: sd.uri.timestamp)
+      if segment_uri.sel_datums:
+        selected = set(
+          (sd.topic, sd.timestamp) for sd in segment_uri.sel_datums)
+        datum_rdd = datum_rdd.filter(
+          lambda sd: (sd.uri.topic, sd.uri.timestamp) in selected)
       return datum_rdd
     else:
       df = cls.as_df(spark)
-      assert segment_uri.segment_id
+      assert segment_uri.segment_id, "Bad URI %s" % segment_uri
       seg_df = df.filter(df.segment_id == segment_uri.segment_id)
       if segment_uri.dataset:
         seg_df = seg_df.filter(df.dataset == segment_uri.dataset)
       if segment_uri.split:
         seg_df = seg_df.filter(df.split == segment_uri.split)
+      if segment_uri.sel_datums:
+        import pyspark.sql.functions as F
+        seg_df = seg_df.where(
+          reduce(
+            lambda a, b: a | b,
+            ((F.col('uri.topic') == sd.topic) & 
+              (F.col('uri.timestamp') == sd.timestamp)
+            for sd in segment_uri.sel_datums)))
+      return seg_df
+    
+  @classmethod
+  def get_segment_datum_rdd(cls, spark, segment_uri):
+    rdd_or_df = cls._get_segment_datum_rdd_or_df(spark, segment_uri)
+    if hasattr(rdd_or_df, 'rdd'):
+      return rdd_or_df.rdd.map(StampedDatumTableBase.from_row)
+    else:
+      return rdd_or_df
+  
+  @classmethod
+  def get_segment_datum_df(cls, spark, segment_uri):
+    rdd_or_df = cls._get_segment_datum_rdd_or_df(spark, segment_uri)
+    if hasattr(rdd_or_df, 'rdd'):
+      return rdd_or_df
+    else:
+      return cls._sd_rdd_to_sd_df(spark, rdd_or_df)
 
-      seg_df = seg_df.persist()
-      if time_ordered:
-        seg_df = seg_df.orderBy('uri.timestamp')
-      return seg_df.rdd.map(StampedDatumTableBase.from_row)
+  # @classmethod
+  # def get_segment_datum_rdd(cls, spark, segment_uri, time_ordered=True):
+  #   if util.missing_or_empty(cls.table_root()):
+  #     datum_rdds = cls._create_datum_rdds(spark, only_segments=[segment_uri])
+  #     if not datum_rdds:
+  #       return spark.sparkContext.parallelize([])
+  #     datum_rdd = spark.sparkContext.union(datum_rdds)
+      
+  #     from pyspark import StorageLevel
+  #     datum_rdd = datum_rdd.persist(StorageLevel.MEMORY_AND_DISK)
+  #     if time_ordered:
+  #       datum_rdd = datum_rdd.sortBy(lambda sd: sd.uri.timestamp)
+  #     return datum_rdd
+  #   else:
+  #     df = cls.as_df(spark)
+  #     assert segment_uri.segment_id
+  #     seg_df = df.filter(df.segment_id == segment_uri.segment_id)
+  #     if segment_uri.dataset:
+  #       seg_df = seg_df.filter(df.dataset == segment_uri.dataset)
+  #     if segment_uri.split:
+  #       seg_df = seg_df.filter(df.split == segment_uri.split)
+
+  #     seg_df = seg_df.persist()
+  #     if time_ordered:
+  #       seg_df = seg_df.orderBy('uri.timestamp')
+  #     return seg_df.rdd.map(StampedDatumTableBase.from_row)
 
   @staticmethod
   def to_row(sd):
-    """This method is FINAL! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
+    """This method is FINAL! ~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
+    # TODO do we need this method or can we add partition keys in a dataframe step ? ~~~~~~~~~~~~~~~~~~~~~
     row = RowAdapter.to_row(sd)
     row = row.asDict()
     for k in StampedDatumTableBase.PARTITION_KEYS:
@@ -160,3 +237,7 @@ class StampedDatumTableBase(object):
     row_rdd = sd_rdd.map(StampedDatumTableBase.to_row)
     df = spark.createDataFrame(row_rdd, schema=cls.table_schema())
     return df
+
+  @classmethod
+  def sd_df_to_rdd(cls, sd_df):
+    return sd_df.rdd.map(cls.from_row)
