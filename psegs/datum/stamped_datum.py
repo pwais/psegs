@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
 import typing
 
 import attr
@@ -36,7 +37,7 @@ class StampedDatum(object):
 
   ## Every datum can be addressed
   
-  uri = attr.ib(type=URI, default=None)
+  uri = attr.ib(type=URI, default=None, converter=URI.from_str)
   """URI: The URI addressing this datum; also defines sort order"""
 
 
@@ -88,6 +89,101 @@ class StampedDatum(object):
   #   sd = cls(**attr.asdict(uri))
   #   sd.update(**init_kwargs)
   #   return sd
+
+
+@attr.s(slots=True, eq=True, weakref_slot=False)
+class Sample(object):
+  """A `Sample` is a group of :class:`~psegs.datum.stamped_datum.StampedDatum`
+  instances that centers around a specific event or purpose.  For example, a
+  `Sample` may group all datums around a specific timestamp; in particular,
+  a `Sample` may be used to synchronized camera, lidar, and label
+  data.  A `Sample` is a container for a set of data specified in a
+  :class:`~psegs.datum.uri.DatumSelection`.
+  """
+
+  datums = attr.ib(type=typing.List[StampedDatum], default=[])
+  """List[StampedDatum]: All datums associated with this `Sample`"""
+
+  uri = attr.ib(type=URI, default=None, converter=URI.from_str)
+  """URI: The URI addressing this frame (and group of datums)"""
+
+  def __attrs_post_init__(self):
+    if not self.uri:
+      if self.datums:
+        # Note this is not safe ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # because the first URI might have a different segment .. ?
+        # also because extra might get blown away
+        base_uri = sorted(self.datums)[0].uri
+        self.uri = copy.deepcopy(base_uri)
+    
+    if self.uri and not self.uri.sel_datums:
+      self.uri.sel_datums = DatumSelection.selections_from_value(self.datums)
+
+  ## Topic selectors
+
+  def topic_datums(self, topic=None, prefix=None):
+    """Return all `StampedDatum` instances for the given topic.
+
+    Args:
+      topic (str): Select all datums from this topic, e.g. `camera|front`.
+      prefix (str): Select all datums with this topic prefix; E.g.
+        `camera` selects `camera|front` and `camera|back`.
+    
+    Returns:
+      List[StampedDatum]: The selected datums
+    """
+    
+    def is_from_topic(datum):
+      if topic is not None:
+        return datum.uri.topic == topic
+      elif prefix is not None:
+        return datum.uri.topic.startswith(prefix)
+      else:
+        raise ValueError("Must specify a topic or prefix")
+    
+    return [
+      sd for sd in self.datums
+      if is_from_topic(sd)
+    ]
+
+  @property
+  def ego_poses(self):
+    """Normalized selector for the `ego_pose`
+    :class:`~psegs.datum.transform.Transform` canonical topic.
+    Returns a list of transforms.
+    """
+    return [
+      sd.transform for sd in self.topic_datums(topic='ego_pose')
+    ]
+  
+  @property
+  def camera_images(self):
+    """Normalized selector for all camera
+    :class:`~psegs.datum.camera_image.CameraImage` canonical topics.
+    Returns a list of camera images.
+    """
+    return [
+      sd.camera_image for sd in self.topic_datums(prefix='camera')
+    ]
+  
+  @property
+  def lidar_clouds(self):
+    """Normalized selector for all lidar
+    :class:`~psegs.datum.point_cloud.PointCloud` canonical topics.
+    Returns a list of point clouds.
+    """
+    return [
+      sd.point_cloud for sd in self.topic_datums(prefix='lidar')
+    ]
+  
+  @property
+  def cuboid_labels(self):
+    """Normalized selector for the *label* :class:`~psegs.datum.Cuboid`
+    canonical topic.  Returns a list of cuboids flattened from all available
+    datums.
+    """
+    return list(itertools.chain.from_iterable(
+      sd.cuboids for sd in self.topic_datums(topic='labels|cuboids')))
 
 
 ###
@@ -172,3 +268,5 @@ STAMPED_DATUM_PROTO = StampedDatum(
   cuboids=[CUBOID_PROTO],
   transform=TRANSFORM_PROTO,
 )
+
+# TODO: Sample proto?

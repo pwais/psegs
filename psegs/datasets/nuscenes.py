@@ -615,9 +615,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
   correct cuboids to every sensor reading.
   """
 
-  PARTITIONS_PER_SEGMENT = 1
-  """int: For read performance, partiton entire segments read into this many
-  Spark partitions. Tuned for approx 2GB RAM per core"""
+  PARTITIONS_PER_SEGMENT = 4
+  """int: To cap memory required per Spark partition of datums, partiton
+  entire segments read into this many Spark partitions. Tuned for approx
+  2GB RAM per core."""
 
   ## Subclass API
   
@@ -759,8 +760,6 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
 
   @classmethod
   def iter_uris_for_segment(cls, segment_id):
-    import time
-    start = time.time()
     nusc = cls.get_nusc()
 
     scene_split = nusc.get_split_for_scene(segment_id)
@@ -846,8 +845,6 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                     'nuscenes-sample-token': sample_token,
                     'nuscenes-is-keyframe': 'True',
                   })
-    
-    print('iter_uris_for_segment', time.time() - start)
 
   @classmethod
   def create_stamped_datum(cls, uri):
@@ -919,15 +916,16 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                       pose_record,
                       dest_frame='city',
                       src_frame='ego')  ## TODO check nusc, lyft ok ~~~~~~~~~~~~~
+    sensor_name = sample_data['channel']
     ci = datum.CameraImage(
-            sensor_name=sample_data['channel'],
+            sensor_name=sensor_name,
             image_jpeg=bytearray(open(data_path, 'rb').read()),
             height=h,
             width=w,
             # viewport=viewport,~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             timestamp=to_nanostamp(timestamp),
             ego_pose=ego_pose,
-            ego_to_sensor=ego_from_cam,
+            ego_to_sensor=ego_from_cam['ego', sensor_name],
             K=cam_intrinsic,
             # principal_axis_in_ego=principal_axis_in_ego,~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     )
@@ -950,8 +948,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       util.log.warn('Kaggle download has a broken file') #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     if sample_data['sensor_modality'] == 'lidar':
       pc = LidarPointCloud.from_file(pcl_path)
+        # NB: In NuScenes, lidar is +y = forward, +x = right, +z = up
     else:
       pc = RadarPointCloud.from_file(pcl_path)
+        # NB: In NuScenes, radar is +x = forward, +y = left, +z = up
 
     # Step 1: Points live in the point sensor frame.  First transform to
     # world frame:
@@ -963,28 +963,35 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
     pc.translate(np.array(cs_record['translation']))
 
-    # 1b transform to the global frame.
-    poserecord = nusc.get('ego_pose', sample_data['ego_pose_token'])
-    pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
-    pc.translate(np.array(poserecord['translation']))
+    # # 1b transform to the global frame.
+    # poserecord = nusc.get('ego_pose', sample_data['ego_pose_token'])
+    # pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
+    # pc.translate(np.array(poserecord['translation']))
 
-    # Step 2: Send points into the ego frame at the target timestamp
-    poserecord = nusc.get('ego_pose', target_pose_token)
-    pc.translate(-np.array(poserecord['translation']))
-    pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
+    # # Step 2: Send points into the ego frame at the target timestamp
+    # poserecord = nusc.get('ego_pose', target_pose_token)
+    # pc.translate(-np.array(poserecord['translation']))
+    # pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
 
     n_xyz = pc.points[:3, :].T
       # Throw out intensity (lidar) and ... other stuff (radar) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
+    # if sample_data['sensor_modality'] == 'lidar':
+    #   n_xyz = n_xyz[:, [1, 0, 2]]
+    #   n_xyz[:, 0] *= -1
+    #   # .............. shouldnt these be in ego because of above? ~~~~~~~~~~~``
+
     ego_pose = transform_from_record(
                       nusc.get('ego_pose', sample_data['ego_pose_token']),
                       dest_frame='city',
                       src_frame='ego')
-    ego_to_sensor = transform_from_record(
-                      cs_record,
-                      src_frame='ego',
-                      dest_frame=sample_data['channel']) # ?????????????????????????
-
+    # ego_to_sensor = transform_from_record(
+    #                   cs_record,
+    #                   src_frame='ego',
+    #                   dest_frame=sample_data['channel']) # ?????????????????????????
+    # TODO save this xform as context ................................................
+    ego_to_sensor = datum.Transform(
+      src_frame='ego', dest_frame=sample_data['channel'])
     motion_corrected = (sample_data['ego_pose_token'] != target_pose_token)
 
     pc = datum.PointCloud(

@@ -242,7 +242,7 @@ class PointCloud(object):
         img,
         box_uv,
         np.array(hash_to_rbg(c.category_name)),
-        alpha=0.7)
+        alpha=0.3)
 
     return img
 

@@ -20,6 +20,7 @@ import numpy as np
 
 from psegs.datum.transform import Transform
 from psegs.util import misc
+from psegs.util import plotting as pspl
 
 
 def l2_normalized(v):
@@ -130,6 +131,44 @@ class CameraImage(object):
     fov_v = 2. * math.atan(.5 * self.height / f_y)
     return fov_h, fov_v
 
+  def get_debug_image(self, clouds=None, cuboids=None):
+    """Create and return a debug image showing the given content projected
+    onto this `CameraImage`.
+
+    Args:
+      clouds (List[:class:`~psegs.datum.point_cloud.PointCloud`]): Draw these 
+        PointClouds in the given debug image.
+      cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
+        cuboids in the given debug image.
+
+    Returns:
+      np.array: A HWC RGB debug image.
+    """
+
+    debug_img = np.copy(self.image)
+    for pc in clouds:
+      xyz = (self.ego_to_sensor @ pc.ego_to_sensor.get_inverse()).apply(pc.cloud).T
+      uvd = self.project_ego_to_image(xyz, omit_offscreen=True)
+      pspl.draw_xy_depth_in_image(debug_img, uvd, alpha=0.7, marker_radius=3)
+    
+    for c in cuboids:
+      box_xyz = self.ego_to_sensor.apply(c.get_box3d()).T
+      box_uvd = self.project_ego_to_image(c.get_box3d(), omit_offscreen=False)
+      if (box_uvd[:, 2] <= 1e-6).all():
+        continue
+      
+      from oarphpy.plotting import hash_to_rbg
+      color = pspl.color_to_opencv(
+        np.array(hash_to_rbg(c.category_name)))
+
+      pspl.draw_cuboid_xy_in_image(
+        debug_img,
+        box_uvd[:, :2],
+        np.array(hash_to_rbg(c.category_name)),
+        alpha=0.3)
+    
+    return debug_img
+
   def project_ego_to_image(self, pts, omit_offscreen=True):
     """Project the given points into the image plane.
 
@@ -171,15 +210,13 @@ class CameraImage(object):
     uvd = uvd.T
 
     return uvd
-  
+
   def _has_edge_in_fov(self, cuboid):
     
     f_x = self.K[0, 0]
     f_y = self.K[1, 1]
     fov_h = 2. * math.atan(.5 * self.width / f_x)
     fov_v = 2. * math.atan(.5 * self.height / f_y)
-
-    
 
     def intervals_overlap(i1, i2):
       (s1, e1), (s2, e2) = (i1, i2)

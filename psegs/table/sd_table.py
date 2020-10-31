@@ -19,6 +19,7 @@ from pyspark.sql import Row
 from psegs import util
 from psegs.conf import C
 from psegs.datum import URI
+from psegs.datum.stamped_datum import Sample
 from psegs.datum.stamped_datum import STAMPED_DATUM_PROTO
 from psegs.spark import Spark
 
@@ -138,7 +139,7 @@ class StampedDatumTableBase(object):
   def get_segment_datum_rdd(cls, spark, segment_uri):
     rdd_or_df = cls._get_segment_datum_rdd_or_df(spark, segment_uri)
     if hasattr(rdd_or_df, 'rdd'):
-      return rdd_or_df.rdd.map(StampedDatumTableBase.from_row)
+      return cls.sd_df_to_rdd(rdd_or_df)
     else:
       return rdd_or_df
   
@@ -149,6 +150,15 @@ class StampedDatumTableBase(object):
       return rdd_or_df
     else:
       return cls._sd_rdd_to_sd_df(spark, rdd_or_df)
+
+  @classmethod
+  def get_sample(cls, uri, spark=None):
+    with Spark.sess(spark) as spark:
+      datums = cls._get_segment_datum_rdd_or_df(spark, uri)
+      if hasattr(datums, 'rdd'):
+        datums = cls.sd_df_to_rdd(datums)
+      return Sample(uri=uri, datums=datums.collect())
+      
 
   # @classmethod
   # def get_segment_datum_rdd(cls, spark, segment_uri, time_ordered=True):
@@ -240,4 +250,5 @@ class StampedDatumTableBase(object):
 
   @classmethod
   def sd_df_to_rdd(cls, sd_df):
+    # TODO refactor this and above ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
     return sd_df.rdd.map(cls.from_row)
