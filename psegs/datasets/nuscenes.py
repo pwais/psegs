@@ -601,7 +601,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
 
   NUSC_VERSION = 'v1.0-trainval' # E.g. v1.0-mini, v1.0-trainval, v1.0-test
 
-  SENSORS_KEYFRAMES_ONLY = True #False ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  SENSORS_KEYFRAMES_ONLY = False
   """bool: Should we only emit datums for Keyframes?
   NuScenes: If enabled, throttles sensor data to about 2Hz, in tune with
     samples; if disabled, samples at full res.
@@ -804,6 +804,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
               })
 
       # Get labels (non-keyframes; interpolated one per track)
+      # for every sample datum
       if not cls.LABELS_KEYFRAMES_ONLY:
         yield datum.URI(
                 dataset=nusc.DATASET,
@@ -817,9 +818,8 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                   'nuscenes-is-keyframe': is_key_frame,
                 })
 
-    ## Get labels (keyframes only)
+    ## Get labels (keyframes only, but interpolated for each sensor
     if cls.LABELS_KEYFRAMES_ONLY:
-
       # Get annos for *only* samples, which are keyframes
       scene_tokens = [
         s['token'] for s in nusc.scene if s['name'] == segment_id]
@@ -831,7 +831,6 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       ]
 
       for sample in scene_samples:
-        sample_token = sample['token']
         for channel, sample_data_token in sample['data'].items():
           sd = nusc.get('sample_data', sample_data_token)
           yield datum.URI(
@@ -844,6 +843,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                     'nuscenes-token': 'sample_data|' + sd['token'],
                     'nuscenes-sample-token': sample_token,
                     'nuscenes-is-keyframe': 'True',
+                    'nuscenes-label-channel': channel,
                   })
 
   @classmethod
