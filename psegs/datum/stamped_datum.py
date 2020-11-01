@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import itertools
 import typing
 
@@ -40,6 +41,10 @@ class StampedDatum(object):
   uri = attr.ib(type=URI, default=None, converter=URI.from_str)
   """URI: The URI addressing this datum; also defines sort order"""
 
+  def __lt__(self, other):
+    """Ordering is by URI (and not by data content)"""
+    assert type(other) is type(self)
+    return self.uri < other.uri
 
   ## A datum should contain exactly one of the following:
 
@@ -104,7 +109,7 @@ class Sample(object):
   datums = attr.ib(type=typing.List[StampedDatum], default=[])
   """List[StampedDatum]: All datums associated with this `Sample`"""
 
-  uri = attr.ib(type=URI, default=None, converter=URI.from_str)
+  uri = attr.ib(type=URI, default=None)
   """URI: The URI addressing this frame (and group of datums)"""
 
   def __attrs_post_init__(self):
@@ -116,6 +121,9 @@ class Sample(object):
         base_uri = sorted(self.datums)[0].uri
         self.uri = copy.deepcopy(base_uri)
     
+    if self.uri:
+      self.uri = URI.from_str(self.uri)
+
     if self.uri and not self.uri.sel_datums:
       self.uri.sel_datums = DatumSelection.selections_from_value(self.datums)
 

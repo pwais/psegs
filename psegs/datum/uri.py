@@ -74,7 +74,7 @@ class DatumSelection(object):
       raise ValueError("Don't know what to do with %s" % (v,))
 
 
-@attr.s(slots=True, eq=True,  weakref_slot=False)
+@attr.s(slots=True, eq=True,  weakref_slot=False, order=False)
 class URI(object):
   """A URI for one specifc datum, or a group of datums (e.g. a 
   :class:`~psegs.datum.frame.Frame`). All parameters are optional; more
@@ -180,6 +180,19 @@ class URI(object):
   def __lt__(self, other):
     assert type(other) is type(self)
     return self.as_tuple() < other.as_tuple()
+    
+    # import pdb; pdb.set_trace()
+    # def a_extra_less_than_b_extra(a, b):
+    #   # extra (dicts) are not comparable, so we need to handle them specially
+    #   assert self.__slots__[-1] == 'extra', "Schema changed?"
+    #   a_extra = a[-1]
+    #   b_extra = b[-1]
+    #   return sorted(a_extra.items()) < sorted(b_extra.items())
+    
+    # return (
+    #   (self_t[:-1] < other_t[:-1]) or 
+    #     a_extra_less_than_b_extra(self_t, other_t))
+
 
   # def __hash__(self): # breaks equality of containers ... ~~~~~~~~~~~~~~~~~~~~~~``
   #   return hash(self.as_tuple())

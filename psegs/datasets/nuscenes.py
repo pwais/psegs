@@ -601,7 +601,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
 
   NUSC_VERSION = 'v1.0-trainval' # E.g. v1.0-mini, v1.0-trainval, v1.0-test
 
-  SENSORS_KEYFRAMES_ONLY = False
+  SENSORS_KEYFRAMES_ONLY = True #False ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   """bool: Should we only emit datums for Keyframes?
   NuScenes: If enabled, throttles sensor data to about 2Hz, in tune with
     samples; if disabled, samples at full res.
