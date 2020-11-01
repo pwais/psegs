@@ -147,9 +147,9 @@ class CameraImage(object):
 
     debug_img = np.copy(self.image)
     for pc in clouds:
-      xyz = (self.ego_to_sensor @ pc.ego_to_sensor.get_inverse()).apply(pc.cloud).T
+      xyz = pc.ego_to_sensor.get_inverse().apply(pc.cloud).T
       uvd = self.project_ego_to_image(xyz, omit_offscreen=True)
-      pspl.draw_xy_depth_in_image(debug_img, uvd, alpha=0.7, marker_radius=3)
+      pspl.draw_xy_depth_in_image(debug_img, uvd, alpha=0.7)
     
     for c in cuboids:
       box_xyz = self.ego_to_sensor.apply(c.get_box3d()).T

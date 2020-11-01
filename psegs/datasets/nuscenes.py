@@ -963,15 +963,15 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
     pc.translate(np.array(cs_record['translation']))
 
-    # # 1b transform to the global frame.
-    # poserecord = nusc.get('ego_pose', sample_data['ego_pose_token'])
-    # pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
-    # pc.translate(np.array(poserecord['translation']))
+    # 1b transform to the global frame.
+    poserecord = nusc.get('ego_pose', sample_data['ego_pose_token'])
+    pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
+    pc.translate(np.array(poserecord['translation']))
 
-    # # Step 2: Send points into the ego frame at the target timestamp
-    # poserecord = nusc.get('ego_pose', target_pose_token)
-    # pc.translate(-np.array(poserecord['translation']))
-    # pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
+    # Step 2: Send points into the ego frame at the target timestamp
+    poserecord = nusc.get('ego_pose', target_pose_token)
+    pc.translate(-np.array(poserecord['translation']))
+    pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
 
     n_xyz = pc.points[:3, :].T
       # Throw out intensity (lidar) and ... other stuff (radar) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

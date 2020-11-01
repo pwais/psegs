@@ -272,7 +272,7 @@ def draw_xy_depth_in_image(
 
   if marker_radius < 0:
     # Draw larger markers for fewer points to make them conspicuous
-    if pts.shape[0] >= 1e5:
+    if pts.shape[0] <= 1e5:
       marker_radius = 2
 
   if marker_radius >= 1:
