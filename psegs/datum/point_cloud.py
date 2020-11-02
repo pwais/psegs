@@ -161,7 +161,7 @@ class PointCloud(object):
         draw this cloud.
       cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Optionally draw
         these cuboids in the given debug image; cuboid points must be in the
-        same frame as `cloud`.
+        same frame as `cloud`. FIXME ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       flatten_axis (str): Flatten this `cloud` axis and use it as the image
         plane. Use a positive sign and `filter_behind=True` to plot points in
         the positive half-space.

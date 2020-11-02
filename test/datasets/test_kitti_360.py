@@ -176,6 +176,7 @@ def test_kitti350_play():
   cuboids_cam = []
   cuboids_lidar = []
   print('obs_in_frame', len(obs_in_frame))
+
   close = None
   for obj_name, obj in obs_in_frame.items():
     from psegs import datum
@@ -183,25 +184,56 @@ def test_kitti350_play():
     # if obj['k360_class_name'] in ('building', 'garage'):
     #   continue
 
-    front_world = obj['cuboid'][:4, :]
-    rear_world = obj['cuboid'][4:, :]
+    # IMU frame: x = forward, y = right, z = down
+    # +x +y +z
+    # +x +y -z
+    # +x -y +z
+    # +x -y -z
+    # -x +y -z
+    # -x +y +z
+    # -x -y -z
+    # -x -y +z
+    
+    front_world = obj['cuboid'][[0, 1, 2, 3], :]
+    rear_world = obj['cuboid'][[5, 4, 7, 6], :]
 
-    w = 1.5#abs(front_world[0, 0] - rear_world[0, 0])
-    l = 2.5#abs(front_world[0, 1] - front_world[2, 1])
-    h = 1.5#abs(front_world[0, 2] - front_world[1, 2])
-    # w = np.linalg.norm(front_world[0, :] - rear_world[0, :])
-    # l = abs(front_world[0, 1] - front_world[2, 1])
-    # h = abs(front_world[0, 2] - front_world[1, 2])
+    # Now:
+    # +x +y +z
+    # +x +y -z
+    # +x -y +z
+    # +x -y -z
+    # -x +y +z
+    # -x +y -z
+    # -x -y +z
+    # -x -y -z
+
+    print(front_world - np.mean(obj['cuboid'], axis=0))
+    print(rear_world - np.mean(obj['cuboid'], axis=0))
+
+    # w = 1.5#abs(front_world[0, 0] - rear_world[0, 0])
+    # l = 2.5#abs(front_world[0, 1] - front_world[2, 1])
+    # h = 1.5#abs(front_world[0, 2] - front_world[1, 2])
+    w = 1#np.linalg.norm(front_world[0, :] - front_world[2, :])
+    l = np.linalg.norm(front_world[0, :] - rear_world[0, :])
+    h = 1#np.linalg.norm(front_world[0, :] - front_world[1, :])
 
     T_world = np.mean(obj['cuboid'], axis=0)
+    # print(obj['cuboid'] - T_world)
 
     from scipy.spatial.transform import Rotation as R
-    heading = np.mean(front_world, axis=0) - np.mean(rear_world, axis=0)
-    print('np.mean(front_world, axis=0) - np.mean(rear_world, axis=0)', np.mean(front_world, axis=0) - np.mean(rear_world, axis=0))
-    heading /= np.linalg.norm(heading)
+    import math
+    heading = front_world[0, :] - rear_world[0, :]
+    heading_hat = heading / np.linalg.norm(heading)
+    X_HAT = np.array([1, 0, 0])
+    cos_theta = heading_hat.dot(X_HAT)
+    rot_axis = np.cross(heading_hat, X_HAT)
+    R_world = R.from_rotvec(
+      math.acos(cos_theta) * rot_axis / np.linalg.norm(rot_axis)).as_matrix()
+
+
     # heading *= 2 * np.pi # effectively zero rotation about axis
-    R_world = R.from_rotvec(heading).as_matrix()
-    R_world = np.eye(3, 3)
+    # R_world = R.from_rotvec(heading).as_matrix()
+    # R_world = np.eye(3, 3)
 
     T_world_to_obj = datum.Transform.from_transformation_matrix(
                           np.column_stack([R_world, T_world]),
@@ -288,12 +320,7 @@ def test_kitti350_play():
     #   np.reshape(kitti_Tr_imu_to_velo, (3, 4)),
     #   src_frame='oxts', dest_frame='lidar')
 
-    wtf_fwd = np.array([
-                [0, -1,  0],
-                [1,  0,  0],
-                [0,  0,  1]
-              ])
-
+    
     T_obj_from_velo = (
       T_world_to_obj.get_inverse() @ T_world_to_ego @ T_ego_to_velo).get_inverse()
 

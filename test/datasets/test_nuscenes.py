@@ -95,34 +95,34 @@ def test_nuscenes_trainval_stats():
 
   assert actual == TABLE_TO_EXPECTED_LENGTH
 
-def _check_sample(sample, testname):
-  prefix = sample.uri.segment_id
-  # outdir = testutil.test_tempdir(testname + '_' + prefix)
+# def _check_sample(sample, testname):
+#   prefix = sample.uri.segment_id
+#   # outdir = testutil.test_tempdir(testname + '_' + prefix)
 
-  from pathlib import Path
-  outdir = Path('/opt/psegs/test_run_output/')
-  # oputil.cleandir(outdir)
+#   from pathlib import Path
+#   outdir = Path('/opt/psegs/test_run_output/')
+#   # oputil.cleandir(outdir)
 
-  def save(path, img):
-    import imageio
-    imageio.imwrite(path, img)
-    print(path)
+#   def save(path, img):
+#     import imageio
+#     imageio.imwrite(path, img)
+#     print(path)
 
-  cuboids = sample.cuboid_labels
-  for pc in sample.lidar_clouds:
-    path = outdir / ('%s_bev.png' % pc.sensor_name)
-    save(path, pc.get_bev_debug_image(cuboids=cuboids))
+#   cuboids = sample.cuboid_labels
+#   for pc in sample.lidar_clouds:
+#     path = outdir / ('%s_bev.png' % pc.sensor_name)
+#     save(path, pc.get_bev_debug_image(cuboids=cuboids))
     
-    path = outdir / ('%s_rv.png' % pc.sensor_name)
-    save(path, pc.get_front_rv_debug_image(cuboids=cuboids))
+#     path = outdir / ('%s_rv.png' % pc.sensor_name)
+#     save(path, pc.get_front_rv_debug_image(cuboids=cuboids))
 
-  for ci in sample.camera_images:
-    path = outdir / ('%s_debug.png' % ci.sensor_name)
-    save(
-      path,
-      ci.get_debug_image(
-        clouds=sample.lidar_clouds,
-        cuboids=cuboids))
+#   for ci in sample.camera_images:
+#     path = outdir / ('%s_debug.png' % ci.sensor_name)
+#     save(
+#       path,
+#       ci.get_debug_image(
+#         clouds=sample.lidar_clouds,
+#         cuboids=cuboids))
   
   
 
@@ -157,12 +157,12 @@ def test_nuscenes_fused_lidar():
     o3d.io.write_point_cloud('/opt/psegs/test_run_output/fused.ply', pcd)
 
 
-
+@skip_if_no_nusc_trainval
 def test_nuscenes_create_sd():
-  # samples = ['psegs://dataset=nuscenes&split=train_track&segment_id=scene-0594&sel_datums=camera|CAM_BACK,1537292951937558000,camera|CAM_BACK_LEFT,1537292951947405000,camera|CAM_BACK_RIGHT,1537292951928113000,camera|CAM_FRONT,1537292951912404000,camera|CAM_FRONT_LEFT,1537292951904799000,camera|CAM_FRONT_RIGHT,1537292951920482000,ego_pose,1537292951904799000,ego_pose,1537292951912404000,ego_pose,1537292951920482000,ego_pose,1537292951928113000,ego_pose,1537292951933926000,ego_pose,1537292951937558000,ego_pose,1537292951945648000,ego_pose,1537292951947405000,ego_pose,1537292951949628000,ego_pose,1537292951954005000,ego_pose,1537292951954663000,ego_pose,1537292951976984000,labels|cuboids,1537292951904799000,labels|cuboids,1537292951912404000,labels|cuboids,1537292951920482000,labels|cuboids,1537292951928113000,labels|cuboids,1537292951933926000,labels|cuboids,1537292951937558000,labels|cuboids,1537292951945648000,labels|cuboids,1537292951947405000,labels|cuboids,1537292951949628000,labels|cuboids,1537292951954005000,labels|cuboids,1537292951954663000,labels|cuboids,1537292951976984000,lidar|LIDAR_TOP,1537292951949628000,radar|RADAR_BACK_LEFT,1537292951954005000,radar|RADAR_BACK_RIGHT,1537292951954663000,radar|RADAR_FRONT,1537292951945648000,radar|RADAR_FRONT_LEFT,1537292951976984000,radar|RADAR_FRONT_RIGHT,1537292951933926000', 'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0513&sel_datums=camera|CAM_BACK,1535478901787558000,camera|CAM_BACK_LEFT,1535478901797405000,camera|CAM_BACK_RIGHT,1535478901778113000,camera|CAM_FRONT,1535478901762404000,camera|CAM_FRONT_LEFT,1535478901754799000,camera|CAM_FRONT_RIGHT,1535478901770482000,ego_pose,1535478901754799000,ego_pose,1535478901762404000,ego_pose,1535478901770480000,ego_pose,1535478901770482000,ego_pose,1535478901778113000,ego_pose,1535478901787558000,ego_pose,1535478901796360000,ego_pose,1535478901797405000,ego_pose,1535478901803288000,ego_pose,1535478901813085000,ego_pose,1535478901815802000,ego_pose,1535478901832909000,labels|cuboids,1535478901754799000,labels|cuboids,1535478901762404000,labels|cuboids,1535478901770480000,labels|cuboids,1535478901770482000,labels|cuboids,1535478901778113000,labels|cuboids,1535478901787558000,labels|cuboids,1535478901796360000,labels|cuboids,1535478901797405000,labels|cuboids,1535478901803288000,labels|cuboids,1535478901813085000,labels|cuboids,1535478901815802000,labels|cuboids,1535478901832909000,lidar|LIDAR_TOP,1535478901796360000,radar|RADAR_BACK_LEFT,1535478901770480000,radar|RADAR_BACK_RIGHT,1535478901813085000,radar|RADAR_FRONT,1535478901815802000,radar|RADAR_FRONT_LEFT,1535478901803288000,radar|RADAR_FRONT_RIGHT,1535478901832909000', 'psegs://dataset=nuscenes&split=train_detect&segment_id=scene-0750&sel_datums=camera|CAM_BACK,1535656879787558000,camera|CAM_BACK_LEFT,1535656879797405000,camera|CAM_BACK_RIGHT,1535656879778113000,camera|CAM_FRONT,1535656879762404000,camera|CAM_FRONT_LEFT,1535656879754799000,camera|CAM_FRONT_RIGHT,1535656879770482000,ego_pose,1535656879754799000,ego_pose,1535656879762404000,ego_pose,1535656879770482000,ego_pose,1535656879778113000,ego_pose,1535656879781462000,ego_pose,1535656879787558000,ego_pose,1535656879797405000,ego_pose,1535656879801090000,ego_pose,1535656879805167000,ego_pose,1535656879819687000,ego_pose,1535656879823023000,ego_pose,1535656879832112000,labels|cuboids,1535656879754799000,labels|cuboids,1535656879762404000,labels|cuboids,1535656879770482000,labels|cuboids,1535656879778113000,labels|cuboids,1535656879781462000,labels|cuboids,1535656879787558000,labels|cuboids,1535656879797405000,labels|cuboids,1535656879801090000,labels|cuboids,1535656879805167000,labels|cuboids,1535656879819687000,labels|cuboids,1535656879823023000,labels|cuboids,1535656879832112000,lidar|LIDAR_TOP,1535656879801090000,radar|RADAR_BACK_LEFT,1535656879832112000,radar|RADAR_BACK_RIGHT,1535656879805167000,radar|RADAR_FRONT,1535656879819687000,radar|RADAR_FRONT_LEFT,1535656879781462000,radar|RADAR_FRONT_RIGHT,1535656879823023000']
   
-  # T = psnusc.NuscStampedDatumTableBase
-  # uris = T.iter_uris_for_segment('scene-0594') # with only keyframes!!!
+  # SAMPLE_URIS below picked using:
+  # T = psnusc.NuscStampedDatumTableBase # with only keyframes!!!
+  # uris = T.iter_uris_for_segment('scene-0594') 
   # uris = [str(u) for u in sorted(uris)]
   # first_cuboid = None
   # for u in uris:
@@ -173,10 +173,7 @@ def test_nuscenes_create_sd():
   # uris = [u for u in uris if 'cuboids' not in u]
   # uris = [first_cuboid] + uris
 
-  # import pprint
-  # pprint.pprint(uris[:30])
-  # assert False
-
+  # Essentially all the data for sample ad4b2f2f60084f479261bfce1448af5e
   SAMPLE_URIS = [
     'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0594&timestamp=1537292943354799000&topic=labels|cuboids&extra.nuscenes-is-keyframe=True&extra.nuscenes-label-channel=CAM_FRONT_LEFT&extra.nuscenes-sample-token=fe6f79aed6ea4b7b9f87be3d68248f54&extra.nuscenes-token=sample_data|d141f680981f4c018e066751c2e8a489',
     'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0594&timestamp=1537292943354799000&topic=camera|CAM_FRONT_LEFT&extra.nuscenes-is-keyframe=True&extra.nuscenes-sample-token=ad4b2f2f60084f479261bfce1448af5e&extra.nuscenes-token=sample_data|d141f680981f4c018e066751c2e8a489',
@@ -205,8 +202,8 @@ def test_nuscenes_create_sd():
   SAMPLE_URIS = [datum.URI.from_str(s) for s in SAMPLE_URIS]
 
   T = psnusc.NuscStampedDatumTableBase
-  s = datum.Sample(datums=[T.create_stamped_datum(u) for u in SAMPLE_URIS])
-  _check_sample(s, 'test_nusenes_create_sd')
+  sample = datum.Sample(datums=[T.create_stamped_datum(u) for u in SAMPLE_URIS])
+  testutil.check_sample_debug_images(sample, 'test_nuscenes_create_sd')
 
 
 def test_nuscenes_yay():

@@ -24,33 +24,14 @@ from oarphpy import util as oputil
 from psegs import datum
 from psegs import util
 from psegs.datasets import kitti
+
 from test import testutil
 
 
 ###############################################################################
 ## Utils
 
-def assert_img_directories_equal(actual_dir, expected_dir):
-  util.log.info("Inspecting artifacts in %s ..." % expected_dir)
-  for actual in oputil.all_files_recursive(actual_dir):
-    actual = Path(actual)
-    expected = expected_dir / actual.name
 
-    match = (open(actual, 'rb').read() == open(expected, 'rb').read())
-    if not match:
-      import imageio
-      actual_img = imageio.imread(actual)
-      expected_img = imageio.imread(expected)
-      
-      diff = expected_img - actual_img
-      n_pixels = (diff != 0).sum() / 3
-      diff_path = str(actual) + '.diff.png'
-      imageio.imwrite(diff_path, diff)
-      assert False, \
-        "File mismatch \n%s != %s ,\n %s pixels different, diff: %s" % (
-          actual, expected, n_pixels, diff_path)
-  
-  util.log.info("Good! %s == %s" % (actual_dir, expected_dir))
 
 
 def save_projected_lidar(base_dir, outdir, frame, camera, K, lidar_to_cam):
@@ -536,7 +517,7 @@ def test_kitti_object_lidar_camera_projection():
   expected_base = (
     kitti.Fixtures.EXTERNAL_FIXTURES_ROOT / 
       'test_kitti_object_lidar_camera_projection')
-  assert_img_directories_equal(outdir, expected_base)
+  testutil.assert_img_directories_equal(outdir, expected_base)
 
 
 def test_kitti_object_label_camera_projection():
@@ -577,7 +558,7 @@ def test_kitti_object_label_camera_projection():
   expected_base = (
     kitti.Fixtures.EXTERNAL_FIXTURES_ROOT / 
       'test_kitti_object_label_camera_projection')
-  assert_img_directories_equal(outdir, expected_base)
+  testutil.assert_img_directories_equal(outdir, expected_base)
 
 
 def test_kitti_object_label_lidar_projection():
@@ -605,7 +586,7 @@ def test_kitti_object_label_lidar_projection():
   expected_base = (
     kitti.Fixtures.EXTERNAL_FIXTURES_ROOT / 
       'test_kitti_object_label_lidar_projection')
-  assert_img_directories_equal(outdir, expected_base)
+  testutil.assert_img_directories_equal(outdir, expected_base)
 
 
 ###############################################################################
@@ -699,7 +680,7 @@ def test_kitti_tracking_lidar_camera_projection():
   expected_base = (
     kitti.Fixtures.EXTERNAL_FIXTURES_ROOT / 
       'test_kitti_tracking_lidar_camera_projection')
-  assert_img_directories_equal(outdir, expected_base)
+  testutil.assert_img_directories_equal(outdir, expected_base)
 
 
 def test_kitti_tracking_label_camera_projection():
@@ -737,7 +718,7 @@ def test_kitti_tracking_label_camera_projection():
   expected_base = (
     kitti.Fixtures.EXTERNAL_FIXTURES_ROOT / 
       'test_kitti_tracking_label_camera_projection')
-  assert_img_directories_equal(outdir, expected_base)
+  testutil.assert_img_directories_equal(outdir, expected_base)
 
 
 def test_kitti_tracking_label_lidar_projection():
@@ -770,7 +751,7 @@ def test_kitti_tracking_label_lidar_projection():
   expected_base = (
     kitti.Fixtures.EXTERNAL_FIXTURES_ROOT / 
       'test_kitti_tracking_label_lidar_projection')
-  assert_img_directories_equal(outdir, expected_base)
+  testutil.assert_img_directories_equal(outdir, expected_base)
 
 
 ###############################################################################
