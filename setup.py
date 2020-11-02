@@ -41,6 +41,10 @@ NUSC_DEPS = [
   'nuscenes-devkit==1.1.0'
 ]
 
+KITT_360_DEPS = [
+  'xmltodict',
+]
+
 # SPARK_DEPS = [
 #   'findspark==1.3.0',
 #   'numpy',

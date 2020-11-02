@@ -133,8 +133,8 @@ def draw_cuboid_xy_in_image(img, pts, base_color_rgb, alpha=0.3, thickness=2):
     return
 
   base_color = np.array(base_color_rgb)
-  front_color = color_to_opencv(base_color + 0.3 * 255)
-  back_color = color_to_opencv(base_color - 0.3 * 255)
+  front_color = color_to_opencv(base_color + 0.6 * 255)
+  back_color = color_to_opencv(base_color - 0.6 * 255)
   center_color = color_to_opencv(base_color)
 
   import cv2

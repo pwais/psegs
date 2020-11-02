@@ -29,16 +29,181 @@ class Fixtures(object):
 
   ROOT = C.EXT_DATA_ROOT / 'kitti-360'
 
+  CAMERAS = ('image_00', 'image_01', 'image_02', 'image_03')
+
+  TRAIN_SEQUENCES = (
+    '2013_05_28_drive_0000_sync',
+    '2013_05_28_drive_0002_sync',
+    '2013_05_28_drive_0003_sync',
+    '2013_05_28_drive_0004_sync',
+    '2013_05_28_drive_0005_sync',
+    '2013_05_28_drive_0006_sync',
+    '2013_05_28_drive_0007_sync',
+    '2013_05_28_drive_0009_sync',
+    '2013_05_28_drive_0010_sync',
+  )
+
+  TEST_SEQUENCES = tuple() # Data not released yet?
+
   @classmethod
   def filepath(cls, rpath):
     return cls.ROOT / rpath
+
+  @classmethod
+  def frame_id_to_fname(frame_id):
+    return str(frame_id).rjust(10, '0')
+
+
+  @classmethod
+  def camera_image_path(cls, sequence, camera_name, frame_id):
+    if camera_name in ('image_00', 'image_01'):
+      return (
+        cls.ROOT / 'data_2d_raw' / 
+          sequence / camera_name / 'data_rect'/ 
+            (cls.frame_id_to_fname(frame_id) + ".png"))
+    elif camera_name in ('image_02', 'image_03'):
+      return (
+        cls.ROOT / 'data_2d_raw' / 
+          sequence / camera_name / 'data_rgb'/ 
+            (cls.frame_id_to_fname(frame_id) + ".png"))
+    else:
+      raise ValueError("Unsupported camera %s" % camera_name)
+  
+  @classmethod
+  def get_camera_frame_ids(cls, sequence, camera_name):
+    from oarphpy import util as oputil
+    paths = oputil.all_files_recursive(
+      str(cls.ROOT / 'data_2d_raw' / sequence / camera_name),
+      pattern='*.png')
+    frame_ids = [
+      int(os.path.split(path)[-1].split('.')[0])
+      for path in paths
+    ]
+    return frame_ids
+
+
+  @classmethod
+  def velodyne_cloud_path(cls, sequence, frame_id):
+    return (
+      cls.ROOT / 'data_3d_raw' / 
+        sequence / 'velodyne_points' / 'data' / 
+          (cls.frame_id_to_fname(frame_id) + ".bin"))
+
+  @classmethod
+  def velodyne_timestamps_path(cls, sequence):
+    return (
+      cls.ROOT / 'data_3d_raw' / 
+        sequence / 'velodyne_points' / 'timestamps.txt')
+
+  @classmethod
+  def sick_cloud_path(cls, sequence, frame_id):
+    return (
+      cls.ROOT / 'data_3d_raw' / 
+        sequence / 'sick_points' / 'data' / 
+          (cls.frame_id_to_fname(frame_id) + ".bin"))
+
+  @classmethod
+  def sick_timestamps_path(cls, sequence):
+    return (
+      cls.ROOT / 'sick_points' / 
+        sequence / 'velodyne_points' / 'timestamps.txt')
+
+  @classmethod
+  def get_raw_scan_frame_ids(cls, sequence, sensor):
+    from oarphpy import util as oputil
+    paths = oputil.all_files_recursive(
+      str(cls.ROOT / 'data_3d_raw' / sensor),
+      pattern='*.bin')
+    frame_ids = [
+      int(os.path.split(path)[-1].split('.')[0])
+      for path in paths
+    ]
+    return frame_ids
+  
+
+
+  @classmethod
+  def cuboids_path(cls, sequence, split='train'):
+    return (
+      cls.ROOT / 'data_3d_bboxes' / split / (sequence + ".xml"))
+  
+
+  @classmethod
+  def ego_poses_path(cls, sequence):
+    return (
+      cls.ROOT / 'data_poses' / sequence / 'poses.txt')
+
+  @classmethod
+  def cam0_poses_path(cls, sequence):
+    return (
+      cls.ROOT / 'data_poses' / sequence / 'cam0_to_world.txt')
+
 
 
 ###############################################################################
 ### KITTI Parsing Utils
 
+def kitti_360_3d_bboxes_get_parsed_node(d):
+  """Parse a node in a data_3d_bboxes XML file"""
+
+  def to_ndarray(d):
+    import numpy as np
+    r = int(d['rows'])
+    c = int(d['cols'])
+    dtype = str(d['dt'])
+    parse = float if dtype == 'f' else int
+    data = [parse(t) for t in d['data'].split() if t]
+    a = np.array(data)
+    return a.reshape((r, c))
+
+  def fill_cuboid(d):
+    # Appears the cuboid bounds are encoded as a scaling transform in the
+    # transform itself; in the raw XML, the vertices are +/- 0.5m for all
+    # objects in the XML
+    # FMI https://github.com/autonomousvision/kitti360Scripts/blob/081c08b34a14960611f459f23a0ad049542205c6/kitti360scripts/helpers/annotation.py#L125
+    R = d['transform'][:3, :3]
+    T = d['transform'][:3, 3]
+    v = d['vertices']
+    d['cuboid'] = np.matmul(R, v.T).T + T
+
+  # ??? Not sure what this is about
+  # FMI https://github.com/autonomousvision/kitti360Scripts/blob/081c08b34a14960611f459f23a0ad049542205c6/kitti360scripts/helpers/annotation.py#L154
+  def to_class(label_value):
+    K360_CLASSMAP = {
+      'driveway': 'parking',
+      'ground': 'terrain',
+      'unknownGround': 'ground', 
+      'railtrack': 'rail track'
+    }
+    if label_value in K360_CLASSMAP:
+      return K360_CLASSMAP[label_value]
+    else:
+      return label_value
+
+  out = {
+    'index':            int(d['index']),
+    'label':            str(d['label']),
+    'k360_class_name':  to_class(str(d['label'])),
+    'semanticId_orig':  int(d['semanticId_orig']),
+    'semanticId':       int(d['semanticId']),
+    'instanceId':       int(d['instanceId']),
+    'category':         str(d['category']),
+    'timestamp':        int(d['timestamp']),
+    'dynamic':          int(d['dynamic']),
+    'start_frame':      int(d['start_frame']),
+    'end_frame':        int(d['end_frame']),
+    'transform':        to_ndarray(d['transform']),
+    'vertices':         to_ndarray(d['vertices']),
+    'faces':            to_ndarray(d['faces']),
+  }
+
+  fill_cuboid(out)
+  return out
+
 @attr.s(eq=False)
 class Calibration(object):
+
+
 
 
   ### Camera Intrinsics (Rectified)
@@ -267,6 +432,237 @@ class Calibration(object):
     #   src_frame='oxts', dest_frame='lidar')
     
     return cls(**kwargs)
+
+
+###############################################################################
+### StampedDatumTable Impl
+
+class KITTI360SDTable(StampedDatumTableBase):
+
+  FIXTURES = Fixtures
+
+  ## Dataset API
+
+  @classmethod
+  def get_uris_for_sequence(cls, sequence):
+    if sequence in cls.FIXTURES.TRAIN_SEQUENCES:
+      split = 'train'
+    elif sequence in cls.FIXTURES.TEST_SEQUENCES:
+      split = 'test'
+    else:
+      raise ValueError("Unknown sequence %s" % sequence)
+    
+    base_uri = datum.URI(
+      dataset='kitti-360',
+      split=split,
+      segment_id=sequence)
+
+    iter_uris = itertools.chain(
+      cls._iter_ego_pose_uris(base_uri),
+      cls._iter_camera_image_uris(base_uri),
+      cls._iter_point_cloud_uris(base_uri),
+      cls._iter_cuboid_uris(base_uri),
+    )
+    return list(iter_uris)
+
+    # Ego Pose
+    # camera images
+    # velodyne points
+    # sick points
+    # cuboids
+
+
+  ## Subclass API
+
+
+
+
+  ## Private API: Utils
+  
+  @classmethod
+  def _frame_id_to_timestamp(cls, frame_id):
+    # KITTI-360 has not yet released all timestamps; for now
+    # pretend all data captured at 10Hz.
+    TEN_MS_IN_NS = 10000000
+    return int(frame_id * TEN_MS_IN_NS)
+
+  @classmethod
+  def _get_frame_id(cls, uri):
+    return int(uri.extra['kitti-360.frame_id'])
+
+  CAMERA_NAME_TO_TOPIC = {
+    'image_00': 'camera|left_rect',
+    'image_01': 'camera|right_rect',
+    'image_02': 'camera|left_fisheye',
+    'image_03': 'camera|right_fisheye',
+  }
+
+
+  ## Private API: Ego Pose
+
+  @classmethod
+  def _iter_ego_pose_uris(cls, base_uri):
+    poses = np.loadtxt(cls.FIXTURES.ego_poses_path(base_uri.segment_id))
+    frame_ids = poses[:,0]
+    for frame_id in frame_ids:
+      yield base_uri.replaced(
+              topic='ego_pose',
+              timestamp=cls._frame_id_to_timestamp(frame_id),
+              extra={'kitti-360.frame_id': str(frame_id)})
+
+  @classmethod
+  def _create_ego_pose(cls, uri):
+    if not hasattr('_ego_pose_cache'):
+      cls._ego_pose_cache = {}
+    if not uri.segment_id in cls._ego_pose_cache:
+      poses = np.loadtxt(
+        cls.FIXTURES.ego_poses_path(base_uri.segment_id))
+      frame_ids = poses[:,0]
+      poses_raw = np.reshape(poses[:, 1:],[-1, 3, 4])
+      frame_to_RT = dict(zip(frames, poses_raw))
+      cls._ego_pose_cache[uri.segment_id] = frame_to_RT
+    
+    frame_id = cls._get_frame_id(uri)
+    RT_world_to_ego = cls._ego_pose_cache[uri.segment_id][frame_id]
+    return datum.StampedDatum(
+            uri=uri,
+            transform=datum.Transform.from_transformation_matrix(
+                RT_world_to_ego,
+                src_frame='world',
+                dest_frame='ego'))
+
+
+  ## Private API: Camera Images
+
+  @classmethod
+  def _iter_camera_image_uris(cls, base_uri):
+    for camera in cls.FIXTURES.CAMERAS:
+      frame_ids = cls.FIXTURES.get_camera_frame_ids(base_uri.segment_id, camera)
+      for frame_id in frame_ids:
+        yield base_uri.replaced(
+                topic=cls.CAMERA_NAME_TO_TOPIC[camera],
+                timestamp=cls._frame_id_to_timestamp(frame_id),
+                extra={
+                  'kitti-360.frame_id': str(frame_id),
+                  'kitti-360.camera': camera,
+                })
+
+  @classmethod
+  def _create_camera_image(cls, uri):
+    path = cls.FIXTURES.cam0_poses_path(uri.segment_id)
+
+    # need calib!
+    
+    img_path = cls.FIXTURES.camera_image_path(
+                  uri.segment_id,
+                  uri.extra['kitti-360.camera'],
+                  cls._get_frame_id(uri))
+
+    return datum.StampedDatum(
+            uri=uri)
+
+
+  ## Private API: Point Clouds
+
+  @classmethod
+  def _iter_point_cloud_uris(cls, base_uri):
+    frame_ids = cls.FIXTURES.get_raw_scan_frame_ids(
+                    base_uri.segment_id, 'velodyne_points')
+    timestamps_path = cls.FIXTURES.velodyne_timestamps_path(base_uri.segment_id)
+    # TODO Use timestamps ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    for frame_id in frame_ids:
+      yield base_uri.replaced(
+              topic='lidar',
+              timestamp=cls._frame_id_to_timestamp(frame_id),
+              extra={
+                'kitti-360.frame_id': str(frame_id),
+              })
+
+    frame_ids = cls.FIXTURES.get_raw_scan_frame_ids(
+                    base_uri.segment_id, 'sick_points')
+    timestamps_path = cls.FIXTURES.sick_timestamps_path(base_uri.segment_id)
+    # TODO Use timestamps ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    for frame_id in frame_ids:
+      yield base_uri.replaced(
+              topic='laser|sick',
+              timestamp=cls._frame_id_to_timestamp(frame_id),
+              extra={
+                'kitti-360.frame_id': str(frame_id),
+              })
+
+    # TODO: fused clouds ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      
+  @classmethod
+  def _create_point_cloud(cls, uri):
+
+    # need calib!
+    if uri.topic == 'lidar':
+      vel_path = cls.FIXTURES.velodyne_cloud_path(
+                      uri.segment_id, cls._get_frame_id(uri))
+      cloud = np.fromfile(vel_path, dtype=np.float32)
+      cloud = np.reshape(cloud, [-1, 4])
+    elif uri.topic == 'laser|sick':
+      sick_path = cls.FIXTURES.sick_cloud_path(
+                      uri.segment_id, cls._get_frame_id(uri))
+      cloud = np.fromfile(sick_path, dtype=np.float32) # FIXME ?~~~~~~~~~~~~~~~~~~~~~~~~
+      cloud = np.reshape(cloud, [-1, 4])
+    else:
+      raise ValueError(uri)
+
+    return datum.StampedDatum(
+            uri=uri)
+
+
+  ## Private API: Cuboids
+  
+  @classmethod
+  def _get_raw_cuboids_for_segment(cls, sequence):
+    if not hasattr(cls, '_seq_to_raw_cuboids_cache'):
+      cls._seq_to_raw_cuboids_cache = {}
+    if not sequence in cls._seq_to_raw_cuboids_cache:
+      import xmltodict
+      path = cls.FIXTURES.cuboids_path(sequence)
+      d = xmltodict.parse(open(path).read())
+      objects = d['opencv_storage']
+      obj_name_to_value = dict(
+        (k, kitti_360_3d_bboxes_get_parsed_node(v))
+        for (k, v) in objects.items())
+      objs = [
+        v.update(obj_name=k)
+        for (k, v) in obj_name_to_value.items()
+      ]
+      cls._seq_to_raw_cuboids_cache[sequence] = objs
+    return cls._seq_to_raw_cuboids_cache[sequence]
+
+  @classmethod
+  def _iter_cuboid_uris(cls, base_uri):
+    raw_cuboids = cls._get_raw_cuboids_for_segment(base_uri.segment_id)
+    frame_ids = sorted(set(
+      itertools.chain.from_iterable(
+        range(c['start_frame'], c['end_frame'] + 1)
+        for c in raw_cuboids)))
+    for frame_id in frame_ids:
+      yield base_uri.replaced(
+              topic='labels|cuboids',
+              timestamp=cls._frame_id_to_timestamp(frame_id),
+              extra={
+                'kitti-360.frame_id': str(frame_id),
+              })
+  
+  @classmethod
+  def _create_cuboids(cls, uri):
+    frame_id = cls._get_frame_id(uri)
+    raw_cuboids = cls._get_raw_cuboids_for_segment(base_uri.segment_id)
+    raw_cuboids = [
+      obj for obj in raw_cuboids
+      if (
+        ((not obj['dynamic']) and (obj['start_frame'] <= frame_id <= v['end_frame'])) or
+        False)   #)(v['dynamic'] and v['index'] == FRAMEID)) FIXME ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ]
+
+    return datum.StampedDatum(
+            uri=uri)
+
 
 
 ###############################################################################

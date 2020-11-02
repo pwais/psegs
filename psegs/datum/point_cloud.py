@@ -142,7 +142,7 @@ class PointCloud(object):
   @staticmethod
   def get_ortho_debug_image(
         cloud,                  
-        cuboids=None,           
+        cuboids=None,
         flatten_axis='+x',
         u_axis='+y',
         v_axis='+z',
