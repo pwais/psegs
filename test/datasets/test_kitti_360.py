@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from psegs.datasets.kitti_360 import *
+from psegs.datasets import kitti_360
 
 
 # NB: cv2 File Storage in _python_ does not support integers, only floats :(
@@ -101,6 +101,15 @@ def kitti_360_get_parsed_node(d):
   fill_cuboid(out)
   return out
 
+
+def test_kitti360_uris():
+  T = kitti_360.KITTI360SDTable
+  uris = T.get_uris_for_sequence('2013_05_28_drive_0000_sync')
+  uris = [u for u in uris if u.extra['kitti-360.frame_id'] == '106']
+
+  for uri in uris:
+    sd = T.create_stamped_datum(uri)
+    print(sd.uri)
 
 def test_kitti350_play():
 

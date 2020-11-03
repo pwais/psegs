@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
+import os
+
 import attr
 import numpy as np
 
@@ -19,6 +22,7 @@ from psegs import util
 from psegs import datum
 from psegs.conf import C
 from psegs.datasets.idsutil import IDatasetUtil
+from psegs.table.sd_table import StampedDatumTableBase
 from psegs.util import misc
 
 
@@ -50,7 +54,7 @@ class Fixtures(object):
     return cls.ROOT / rpath
 
   @classmethod
-  def frame_id_to_fname(frame_id):
+  def frame_id_to_fname(cls, frame_id):
     return str(frame_id).rjust(10, '0')
 
 
@@ -78,6 +82,7 @@ class Fixtures(object):
     frame_ids = [
       int(os.path.split(path)[-1].split('.')[0])
       for path in paths
+      if not oputil.is_stupid_mac_file(path)
     ]
     return frame_ids
 
@@ -112,11 +117,12 @@ class Fixtures(object):
   def get_raw_scan_frame_ids(cls, sequence, sensor):
     from oarphpy import util as oputil
     paths = oputil.all_files_recursive(
-      str(cls.ROOT / 'data_3d_raw' / sensor),
+      str(cls.ROOT / 'data_3d_raw' / sequence / sensor),
       pattern='*.bin')
     frame_ids = [
       int(os.path.split(path)[-1].split('.')[0])
       for path in paths
+      if not oputil.is_stupid_mac_file(path)
     ]
     return frame_ids
   
@@ -465,11 +471,18 @@ class KITTI360SDTable(StampedDatumTableBase):
     )
     return list(iter_uris)
 
-    # Ego Pose
-    # camera images
-    # velodyne points
-    # sick points
-    # cuboids
+  @classmethod
+  def create_stamped_datum(cls, uri):
+    if uri.topic.startswith('camera'):
+      return cls._create_camera_image(uri)
+    elif uri.topic.startswith('lidar') or uri.topic.startswith('laser'):
+      return cls._create_point_cloud(uri)
+    elif uri.topic == 'ego_pose':
+      return cls._create_ego_pose(uri)
+    elif uri.topic == 'labels|cuboids':
+      return cls._create_cuboids(uri)
+    else:
+      raise ValueError(uri)
 
 
   ## Subclass API
@@ -508,18 +521,18 @@ class KITTI360SDTable(StampedDatumTableBase):
       yield base_uri.replaced(
               topic='ego_pose',
               timestamp=cls._frame_id_to_timestamp(frame_id),
-              extra={'kitti-360.frame_id': str(frame_id)})
+              extra={'kitti-360.frame_id': str(int(frame_id))})
 
   @classmethod
   def _create_ego_pose(cls, uri):
-    if not hasattr('_ego_pose_cache'):
+    if not hasattr(cls, '_ego_pose_cache'):
       cls._ego_pose_cache = {}
     if not uri.segment_id in cls._ego_pose_cache:
-      poses = np.loadtxt(
-        cls.FIXTURES.ego_poses_path(base_uri.segment_id))
+      poses = np.loadtxt(cls.FIXTURES.ego_poses_path(uri.segment_id))
       frame_ids = poses[:,0]
+      frame_ids = [int(f) for f in frame_ids]
       poses_raw = np.reshape(poses[:, 1:],[-1, 3, 4])
-      frame_to_RT = dict(zip(frames, poses_raw))
+      frame_to_RT = dict(zip(frame_ids, poses_raw))
       cls._ego_pose_cache[uri.segment_id] = frame_to_RT
     
     frame_id = cls._get_frame_id(uri)
@@ -604,8 +617,14 @@ class KITTI360SDTable(StampedDatumTableBase):
     elif uri.topic == 'laser|sick':
       sick_path = cls.FIXTURES.sick_cloud_path(
                       uri.segment_id, cls._get_frame_id(uri))
-      cloud = np.fromfile(sick_path, dtype=np.float32) # FIXME ?~~~~~~~~~~~~~~~~~~~~~~~~
-      cloud = np.reshape(cloud, [-1, 4])
+      cloud = np.fromfile(sick_path, dtype=np.float32)
+      cloud = np.reshape(cloud, [-1, 2])
+      cloud = np.concatenate([
+                  np.zeros_like(cloud[:, 0:1]), # ? no x-dimension?
+                  -cloud[:, 0:1],
+                  cloud[:, 1:2]
+                ],
+                axis=1)
     else:
       raise ValueError(uri)
 
@@ -628,7 +647,7 @@ class KITTI360SDTable(StampedDatumTableBase):
         (k, kitti_360_3d_bboxes_get_parsed_node(v))
         for (k, v) in objects.items())
       objs = [
-        v.update(obj_name=k)
+        dict(v, obj_name=k)
         for (k, v) in obj_name_to_value.items()
       ]
       cls._seq_to_raw_cuboids_cache[sequence] = objs
@@ -652,11 +671,11 @@ class KITTI360SDTable(StampedDatumTableBase):
   @classmethod
   def _create_cuboids(cls, uri):
     frame_id = cls._get_frame_id(uri)
-    raw_cuboids = cls._get_raw_cuboids_for_segment(base_uri.segment_id)
+    raw_cuboids = cls._get_raw_cuboids_for_segment(uri.segment_id)
     raw_cuboids = [
       obj for obj in raw_cuboids
       if (
-        ((not obj['dynamic']) and (obj['start_frame'] <= frame_id <= v['end_frame'])) or
+        ((not obj['dynamic']) and (obj['start_frame'] <= frame_id <= obj['end_frame'])) or
         False)   #)(v['dynamic'] and v['index'] == FRAMEID)) FIXME ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     ]
 
