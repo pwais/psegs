@@ -194,10 +194,19 @@ def kitti_360_3d_bboxes_get_parsed_node(d):
     'semanticId':       int(d['semanticId']),
     'instanceId':       int(d['instanceId']),
     'category':         str(d['category']),
-    'timestamp':        int(d['timestamp']),
-    'dynamic':          int(d['dynamic']),
+    
+    # 'timestamp':        int(d['timestamp']),
+    'is_static':        bool(d['timestamp'] == '-1'),
+    'active_frame_id':  int(d['timestamp']),
+      # `timestamp` is -1 if object is static, and `timestamp` is actually
+      # a frame ID, not a unix time
+    
+    # 'dynamic':          int(d['dynamic']),
+    #   # In the current release, dynamic is always 0 (?)
+    
     'start_frame':      int(d['start_frame']),
     'end_frame':        int(d['end_frame']),
+    
     'transform':        to_ndarray(d['transform']),
     'vertices':         to_ndarray(d['vertices']),
     'faces':            to_ndarray(d['faces']),
@@ -525,24 +534,32 @@ class KITTI360SDTable(StampedDatumTableBase):
 
   @classmethod
   def _create_ego_pose(cls, uri):
+    transform = cls._get_ego_pose(uri.segment_id, cls._get_frame_id(uri))
+    assert transform, "Programming Error: no pose available for %s" % uri
+    return datum.StampedDatum(uri=uri, transform=transform)
+
+  @classmethod
+  def _get_ego_pose(cls, sequence, frame_id):
     if not hasattr(cls, '_ego_pose_cache'):
       cls._ego_pose_cache = {}
-    if not uri.segment_id in cls._ego_pose_cache:
-      poses = np.loadtxt(cls.FIXTURES.ego_poses_path(uri.segment_id))
+    if not sequence in cls._ego_pose_cache:
+      poses = np.loadtxt(cls.FIXTURES.ego_poses_path(sequence))
       frame_ids = poses[:,0]
       frame_ids = [int(f) for f in frame_ids]
       poses_raw = np.reshape(poses[:, 1:],[-1, 3, 4])
       frame_to_RT = dict(zip(frame_ids, poses_raw))
-      cls._ego_pose_cache[uri.segment_id] = frame_to_RT
+      cls._ego_pose_cache[sequence] = frame_to_RT
     
-    frame_id = cls._get_frame_id(uri)
-    RT_world_to_ego = cls._ego_pose_cache[uri.segment_id][frame_id]
-    return datum.StampedDatum(
-            uri=uri,
-            transform=datum.Transform.from_transformation_matrix(
+    if frame_id not in cls._ego_pose_cache[sequence]:
+      # Poses are incomplete :(
+      # TODO see if we can interpolate ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      return None
+    
+    RT_world_to_ego = cls._ego_pose_cache[sequence][frame_id]
+    return datum.Transform.from_transformation_matrix(
                 RT_world_to_ego,
                 src_frame='world',
-                dest_frame='ego'))
+                dest_frame='ego')
 
 
   ## Private API: Camera Images
@@ -672,15 +689,91 @@ class KITTI360SDTable(StampedDatumTableBase):
   def _create_cuboids(cls, uri):
     frame_id = cls._get_frame_id(uri)
     raw_cuboids = cls._get_raw_cuboids_for_segment(uri.segment_id)
+
+    def is_in_current_frame(obj):
+      return (
+        # Every object has a frame range
+        (obj['start_frame'] <= frame_id <= obj['end_frame']) and
+        # Static objects are active for the entire frame range; dynamic
+        #  objects have different annotations for each frame.
+        (obj['is_static'] or (obj['active_frame_id'] == frame_id)))
+    
     raw_cuboids = [
       obj for obj in raw_cuboids
-      if (
-        ((not obj['dynamic']) and (obj['start_frame'] <= frame_id <= obj['end_frame'])) or
-        False)   #)(v['dynamic'] and v['index'] == FRAMEID)) FIXME ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      if is_in_current_frame(obj)
     ]
 
-    return datum.StampedDatum(
-            uri=uri)
+
+    cuboids = []
+    for obj in raw_cuboids:
+      # Kitti-360 cuboids are in the IMU (world) frame:
+      # x = forward, y = right, z = down
+      # And vertices are in the (weird) order:
+      # +x +y +z
+      # +x +y -z
+      # +x -y +z
+      # +x -y -z | psegs convention differs for rear face:
+      # -x +y -z |        -x +y +z
+      # -x +y +z |        -x +y -z
+      # -x -y -z |        -x -y +z
+      # -x -y +z |        -x -y -z
+
+      # We'll permute the faces to match psegs convention.
+      front_world = obj['cuboid'][[0, 1, 2, 3], :]
+      rear_world = obj['cuboid'][[5, 4, 7, 6], :]
+
+      # Now get dimensions
+      w = np.linalg.norm(front_world[0, :] - front_world[2, :])
+      l = np.linalg.norm(front_world[0, :] - rear_world[0, :])
+      h = np.linalg.norm(front_world[0, :] - front_world[1, :])
+
+      # Now get pose (in world frame)
+      T_world = np.mean(obj['cuboid'], axis=0)
+
+      # KITTI-360 Transform confounds R and S; we need to separate them.
+      # See also https://math.stackexchange.com/a/1463487
+      obj_sR = obj['transform'][:3, :3]
+      sx = np.linalg.norm(obj_sR[:, 0])
+      sy = np.linalg.norm(obj_sR[:, 1])
+      sz = np.linalg.norm(obj_sR[:, 2])
+      R_world = obj_sR.copy()
+      R_world[:, 0] *= 1. / sx
+      R_world[:, 1] *= 1. / sy
+      R_world[:, 2] *= 1. / sz
+
+      T_world_to_obj = datum.Transform.from_transformation_matrix(
+                          np.column_stack([R_world, T_world]),
+                          src_frame='world',
+                          dest_frame='obj')
+
+      # Convert pose to ego frame (PSegs standard)
+      T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
+      if not T_world_to_ego:
+        # Labels are in world frame, so can't put them in ego frame
+        continue
+
+      T_obj_from_ego = (
+        T_world_to_obj.get_inverse() @ T_world_to_ego).get_inverse()
+      
+      cuboids.append(datum.Cuboid(
+          track_id=obj['instanceId'],
+          category_name=obj['k360_class_name'],
+          ps_category='TODO', # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
+          timestamp=cls._frame_id_to_timestamp(frame_id),
+          length_meters=l,
+          width_meters=w,
+          height_meters=h,
+          obj_from_ego=T_obj_from_ego,
+          ego_pose=T_world_to_ego,
+          extra={
+            'kitt-360.cuboid.index': str(obj['index']),
+            'kitt-360.cuboid.label': str(obj['label']),
+            'kitt-360.cuboid.category': str(obj['category']),
+            'kitt-360.cuboid.start_frame': str(obj['start_frame']),
+            'kitt-360.cuboid.end_frame': str(obj['end_frame']),
+          }))
+
+    return datum.StampedDatum(uri=uri, cuboids=cuboids)
 
 
 
