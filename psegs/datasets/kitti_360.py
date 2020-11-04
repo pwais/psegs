@@ -487,10 +487,10 @@ class KITTI360SDTable(StampedDatumTableBase):
       K = calib.cam1_K
       ego_to_sensor = calib.cam_right_rect_to_ego.get_inverse()
     elif uri.topic == 'camera|left_fisheye':
-      # NB: no K for fisheyes
+      K = calib.cam0_K # NB: no K for fisheyes -- this is just for debugging
       ego_to_sensor = calib.cam_left_fisheye_to_ego.get_inverse()
     elif uri.topic == 'camera|right_fisheye':
-      # NB: no K for fisheyes
+      K = calib.cam0_K # NB: no K for fisheyes -- this is just for debugging
       ego_to_sensor = calib.cam_right_fisheye_to_ego.get_inverse()
     else:
       raise ValueError(uri)
