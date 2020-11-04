@@ -18,6 +18,8 @@ import os
 import attr
 import numpy as np
 
+from oarphpy import util as oputil
+
 from psegs import util
 from psegs import datum
 from psegs.conf import C
@@ -75,7 +77,6 @@ class Fixtures(object):
   
   @classmethod
   def get_camera_frame_ids(cls, sequence, camera_name):
-    from oarphpy import util as oputil
     paths = oputil.all_files_recursive(
       str(cls.ROOT / 'data_2d_raw' / sequence / camera_name),
       pattern='*.png')
@@ -115,7 +116,6 @@ class Fixtures(object):
 
   @classmethod
   def get_raw_scan_frame_ids(cls, sequence, sensor):
-    from oarphpy import util as oputil
     paths = oputil.all_files_recursive(
       str(cls.ROOT / 'data_3d_raw' / sequence / sensor),
       pattern='*.bin')
@@ -126,6 +126,68 @@ class Fixtures(object):
     ]
     return frame_ids
   
+
+  @classmethod
+  def get_fused_scan_frame_ids(cls, sequence):
+    paths = []
+    paths += oputil.all_files_recursive(
+      str(cls.ROOT / 'data_3d_semantics' / sequence / 'static'),
+      pattern='*.ply')
+    paths += oputil.all_files_recursive(
+      str(cls.ROOT / 'data_3d_semantics' / sequence / 'dynamic'),
+      pattern='*.ply')
+    
+    fnames = [
+      os.path.split(path)[-1].split('.')[0]
+      for path in paths
+      if not oputil.is_stupid_mac_file(path)
+    ]
+
+    # 004631_004927.ply -> (4631, 4927)
+    frame_intervals = [
+      tuple(int(v) for v in fnames.split('.')[0].split('_'))
+      for fname in fnames
+    ]
+    assert all(len(fi) == 2 for fi in frame_intervals)
+
+    frame_ids = sorted(set(
+      range(start, end + 1) for (start, end) in frame_intervals))
+    return frame_ids
+
+  @classmethod
+  def get_fused_scan_frame_id_to_chan_to_path(cls, sequence):
+    def build_frame_id_to_path(channel):
+      paths = oputil.all_files_recursive(
+                str(cls.ROOT / 'data_3d_semantics' / sequence / channel),
+                pattern='*.ply')
+
+      paths = [p for p in paths if not oputil.is_stupid_mac_file(p)]
+      fnames = [
+        os.path.split(path)[-1].split('.')[0]
+        for path in paths
+      ]
+
+      # E.g. 004631_004927.ply -> (4631, 4927)
+      frame_intervals = [
+        tuple(int(v) for v in fname.split('.')[0].split('_'))
+        for fname in fnames
+      ]
+      assert all(len(fi) == 2 for fi in frame_intervals)
+
+      frame_id_to_path = {}
+      for ((start, end), path) in zip(frame_intervals, paths):
+        for frame_id in range(start, end + 1):
+          frame_id_to_path[frame_id] = path
+      return frame_id_to_path
+    
+    from collections import defaultdict
+    frame_id_to_chan_to_path = defaultdict(dict)
+    for frame_id, path in build_frame_id_to_path('static').items():
+      frame_id_to_chan_to_path[frame_id]['static'] = path
+    for frame_id, path in build_frame_id_to_path('dynamic').items():
+      frame_id_to_chan_to_path[frame_id]['dynamic'] = path
+    
+    return frame_id_to_chan_to_path
 
 
   @classmethod
@@ -511,6 +573,16 @@ class KITTI360SDTable(StampedDatumTableBase):
   ## Private API: Point Clouds
 
   @classmethod
+  def _get_fused_scan_idx(cls, sequence):
+    if not hasattr(cls, '_fused_scan_idx'):
+      cls._fused_scan_idx = {}
+    if not sequence in cls._fused_scan_idx:
+      frame_id_to_chan_to_path = (
+        cls.FIXTURES.get_fused_scan_frame_id_to_chan_to_path(sequence))
+      cls._fused_scan_idx[sequence] = frame_id_to_chan_to_path
+    return cls._fused_scan_idx[sequence]
+
+  @classmethod
   def _iter_point_cloud_uris(cls, base_uri):
     frame_ids = cls.FIXTURES.get_raw_scan_frame_ids(
                     base_uri.segment_id, 'velodyne_points')
@@ -536,8 +608,16 @@ class KITTI360SDTable(StampedDatumTableBase):
                 'kitti-360.frame_id': str(frame_id),
               })
 
-    # TODO: fused clouds ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      
+    frame_id_to_chan_to_path = cls._get_fused_scan_idx(base_uri.segment_id)
+    for frame_id, chan_to_path in frame_id_to_chan_to_path.items():
+      for chan in chan_to_path.keys():
+        yield base_uri.replaced(
+              topic='lidar|fused_' + chan,
+              timestamp=cls._frame_id_to_timestamp(frame_id),
+              extra={
+                'kitti-360.frame_id': str(frame_id),
+              })
+
   @classmethod
   def _create_point_cloud(cls, uri):
     frame_id = cls._get_frame_id(uri)
@@ -568,6 +648,25 @@ class KITTI360SDTable(StampedDatumTableBase):
       
       sick_from_ego = calib.sick_to_velo['laser|sick', 'lidar'] @ velo_to_ego
       ego_to_sensor = sick_from_ego.get_inverse()
+    
+    elif uri.topic in ('lidar|fused_static', 'lidar|fused_dynamic'):
+      
+      T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
+      assert T_world_to_ego is not None, "Programming error: no pose %s" % uri
+      # T_world_to_velo = (velo_to_ego.get_inverse() @ T_world_to_ego).get_inverse()
+      T_world_to_velo = (T_world_to_ego @ velo_to_ego).get_inverse()
+      
+      chan = 'static' if 'static' in uri.topic else 'dynamic'
+      frame_id_to_chan_to_path = cls._get_fused_scan_idx(uri.segment_id)
+      path = frame_id_to_chan_to_path[frame_id][chan]
+
+      import open3d
+      pcd = open3d.io.read_point_cloud(str(path))
+      cloud = np.asarray(pcd.points)
+      cloud = T_world_to_velo.apply(cloud).T
+
+      ego_to_sensor = velo_to_ego.get_inverse()
+
     else:
       raise ValueError(uri)
 
@@ -763,7 +862,6 @@ class DSUtil(IDatasetUtil):
       assert kitti_root.exists()
       assert kitti_root.is_dir()
 
-      from oarphpy import util as oputil
       oputil.mkdir(str(cls.FIXTURES.ROOT.parent))
 
       cls.show_md("Symlink: \n%s <- %s" % (kitti_root, cls.FIXTURES.ROOT))

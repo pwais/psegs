@@ -43,6 +43,7 @@ NUSC_DEPS = [
 
 KITT_360_DEPS = [
   'xmltodict',
+  'open3d',
 ]
 
 # SPARK_DEPS = [
