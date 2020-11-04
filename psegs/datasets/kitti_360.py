@@ -287,21 +287,20 @@ class Calibration(object):
     cam_to_sRT = dict(l.split(':') for l in lines if l)
     calib.cam_left_rect_to_ego = datum.Transform.from_transformation_matrix(
               str_to_RT(cam_to_sRT['image_00']),
-              src_frame='camera|left_rect',
-              dest_frame='ego')
+              dest_frame='ego',
+              src_frame='camera|left_rect')
     calib.cam_right_rect_to_ego = datum.Transform.from_transformation_matrix(
               str_to_RT(cam_to_sRT['image_01']),
-              src_frame='camera|right_rect',
-              dest_frame='ego')
+              dest_frame='ego',
+              src_frame='camera|right_rect')
     calib.cam_left_fisheye_to_ego = datum.Transform.from_transformation_matrix(
               str_to_RT(cam_to_sRT['image_02']),
-              src_frame='camera|left_fisheye',
-              dest_frame='ego')
+              dest_frame='ego',
+              src_frame='camera|left_fisheye')
     calib.cam_right_fisheye_to_ego = datum.Transform.from_transformation_matrix(
               str_to_RT(cam_to_sRT['image_03']),
-              src_frame='camera|left_fisheye',
-              dest_frame='ego')
-    
+              dest_frame='ego',
+              src_frame='camera|left_fisheye')
 
     ## Intrinsics
 
@@ -544,9 +543,8 @@ class KITTI360SDTable(StampedDatumTableBase):
     frame_id = cls._get_frame_id(uri)
     calib = cls._get_calib()
 
-    velo_from_ego = (
-      calib.cam_left_rect_to_velo['lidar', 'camera|left_rect'] @ 
-      calib.cam_left_rect_to_ego['camera|left_rect', 'ego'])
+    velo_to_ego = (
+      calib.cam_left_rect_to_ego @ calib.cam_left_rect_to_velo.get_inverse())
 
     if uri.topic == 'lidar':
       vel_path = cls.FIXTURES.velodyne_cloud_path(
@@ -554,7 +552,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       cloud = np.fromfile(vel_path, dtype=np.float32)
       cloud = np.reshape(cloud, [-1, 4])
 
-      ego_to_sensor = velo_from_ego.get_inverse()
+      ego_to_sensor = velo_to_ego.get_inverse()
     
     elif uri.topic == 'laser|sick':
       sick_path = cls.FIXTURES.sick_cloud_path(
@@ -568,7 +566,7 @@ class KITTI360SDTable(StampedDatumTableBase):
                 ],
                 axis=1)
       
-      sick_from_ego = calib.sick_to_velo['laser|sick', 'lidar'] @ velo_from_ego
+      sick_from_ego = calib.sick_to_velo['laser|sick', 'lidar'] @ velo_to_ego
       ego_to_sensor = sick_from_ego.get_inverse()
     else:
       raise ValueError(uri)
@@ -688,7 +686,9 @@ class KITTI360SDTable(StampedDatumTableBase):
 
       T_obj_from_ego = (
         T_world_to_obj.get_inverse() @ T_world_to_ego).get_inverse()
-      
+      T_obj_from_ego.src_frame = 'ego' # fixme ... our names here are broken but matrix is right? ~~~~~~~~~~~~~~~``
+      T_obj_from_ego.dest_frame = 'obj'
+
       cuboids.append(datum.Cuboid(
           track_id=obj['instanceId'],
           category_name=obj['k360_class_name'],

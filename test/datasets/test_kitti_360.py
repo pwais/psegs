@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from psegs import datum
 from psegs.datasets import kitti_360
 
+from test import testutil
 
 # NB: cv2 File Storage in _python_ does not support integers, only floats :(
 # import cv2
@@ -104,12 +106,27 @@ def kitti_360_get_parsed_node(d):
 
 def test_kitti360_uris():
   T = kitti_360.KITTI360SDTable
-  uris = T.get_uris_for_sequence('2013_05_28_drive_0000_sync')
-  uris = [u for u in uris if u.extra['kitti-360.frame_id'] == '106']
+  # uris = T.get_uris_for_sequence('2013_05_28_drive_0000_sync')
+  # uris = [u for u in uris if u.extra['kitti-360.frame_id'] == '106']
+  uris = [
+    # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=ego_pose&extra.kitti-360.frame_id=106',
+    'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|left_rect&extra.kitti-360.camera=image_00&extra.kitti-360.frame_id=106',
+    # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|right_rect&extra.kitti-360.camera=image_01&extra.kitti-360.frame_id=106',
+    # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|left_fisheye&extra.kitti-360.camera=image_02&extra.kitti-360.frame_id=106',
+    # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|right_fisheye&extra.kitti-360.camera=image_03&extra.kitti-360.frame_id=106',
+    'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=lidar&extra.kitti-360.frame_id=106',
+    # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=laser|sick&extra.kitti-360.frame_id=106',
+    'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=labels|cuboids&extra.kitti-360.frame_id=106',
+  ]
+  uris = [datum.URI.from_str(u) for u in uris]
 
-  for uri in uris:
-    sd = T.create_stamped_datum(uri)
-    print(sd.uri)
+  sample = datum.Sample(datums=[T.create_stamped_datum(uri) for uri in uris])
+
+  testutil.check_sample_debug_images(sample, 'no_exist_yet')
+
+  # for uri in uris:
+  #   sd = T.create_stamped_datum(uri)
+  #   print(sd.uri)
 
 def test_kitti350_play():
 

@@ -141,8 +141,9 @@ class PointCloud(object):
 
   @staticmethod
   def get_ortho_debug_image(
-        cloud,                  
+        cloud,
         cuboids=None,
+        ego_to_sensor=None,
         flatten_axis='+x',
         u_axis='+y',
         v_axis='+z',
@@ -160,8 +161,12 @@ class PointCloud(object):
       cloud (np.array): An nx3 array of points (in units of meters)
         draw this cloud.
       cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Optionally draw
-        these cuboids in the given debug image; cuboid points must be in the
-        same frame as `cloud`. FIXME ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        these cuboids in the given debug image; cuboids must either (a) be in
+        the ego frame (PSegs standard) and `ego_to_sensor` given, or (b) the
+        caller of this method must first transform `cuboids` to the point
+        sensor frame.
+      ego_to_sensor (:class:`~psegs.datum.transform.Transform`): Optional
+        transform for projecting ego points (`cuboids`) to the sensor frame.
       flatten_axis (str): Flatten this `cloud` axis and use it as the image
         plane. Use a positive sign and `filter_behind=True` to plot points in
         the positive half-space.
@@ -187,7 +192,7 @@ class PointCloud(object):
       AXIS_NAME_TO_IDX = {'x': 0, 'y': 1, 'z': 2}
       AXES = (u_axis, v_axis, flatten_axis)
 
-      uvd = np.zeros_like(pts)
+      uvd = np.zeros((pts.shape[0], 3))
       uid, vid, did = tuple(AXIS_NAME_TO_IDX[a[-1]] for a in AXES)
       us, vs, ds = tuple(-1. if a[0] == '-' else 1. for a in AXES)
 
@@ -222,6 +227,8 @@ class PointCloud(object):
   
     for c in cuboids or []:
       box_xyz = c.get_box3d()
+      if ego_to_sensor is not None:
+        box_xyz = ego_to_sensor.apply(box_xyz).T
       box_uvd = pts_to_uvd(box_xyz)
 
       if filter_behind:
@@ -272,6 +279,7 @@ class PointCloud(object):
     return PointCloud.get_ortho_debug_image(
               self.cloud,
               cuboids=cuboids,
+              ego_to_sensor=self.ego_to_sensor,
               flatten_axis='+x',
               u_axis='-y',
               v_axis='+z',
@@ -306,6 +314,7 @@ class PointCloud(object):
     return PointCloud.get_ortho_debug_image(
               self.cloud,
               cuboids=cuboids,
+              ego_to_sensor=self.ego_to_sensor,
               flatten_axis='-z',
               u_axis='+x',
               v_axis='+y',

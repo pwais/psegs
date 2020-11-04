@@ -16,7 +16,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from oarphpy import util as optuil
+from oarphpy import util as oputil
 from oarphpy.spark import SessionFactory
 
 import psegs
@@ -51,6 +51,7 @@ def assert_img_directories_equal(actual_dir, expected_dir):
   util.log.info("Inspecting artifacts in %s ..." % expected_dir)
   for actual in oputil.all_files_recursive(actual_dir):
     actual = Path(actual)
+    expected_dir = Path(expected_dir)
     expected = expected_dir / actual.name
 
     match = (open(actual, 'rb').read() == open(expected, 'rb').read())
