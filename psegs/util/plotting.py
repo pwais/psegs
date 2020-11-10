@@ -251,7 +251,11 @@ def draw_xy_depth_in_image(
   overlay = img.copy()
   h, w = overlay.shape[:2]
 
-  pts = pts.copy()
+  if user_colors is not None:
+    # Add color columns
+    pts = np.hstack([pts, user_colors])
+  else:
+    pts = pts.copy()
   
   # Map points to pixels and filter off-screen points
   pts_xy = np.rint(pts[:, :2])
@@ -260,16 +264,14 @@ def draw_xy_depth_in_image(
     (pts[:, 0] >= 0) & (pts[:, 0] < w) &
     (pts[:, 1] >= 0) & (pts[:, 1] < h) &
     (pts[:, 2] >= 0))]
-
-  # Sort by distance descending; let nearer points draw over farther points
-  pts = pts[-pts[:, -1].argsort()]
   if not pts.any():
     return
+
+  # Sort by distance descending; let nearer points draw over farther points
+  pts = pts[-pts[:, 2].argsort()]
   
   if user_colors is not None:
-    assert user_colors.shape[0] == pts.shape[0], \
-      "Need one color per point, have shapes %s %s" % (colors.shape, pts.shape)
-    colors = user_colors
+    colors = pts[:, 3:]
   else:
     colors = rgb_for_distance(pts[:, 2], period_meters=period_meters)
   colors = np.clip(colors, 0, 255).astype(int)
@@ -280,8 +282,11 @@ def draw_xy_depth_in_image(
   overlay[yy, xx] = colors
 
   if marker_radius < 0:
-    # Draw larger markers for fewer points to make them conspicuous
-    if pts.shape[0] <= 1e5:
+    # Draw larger markers for fewer points (or user_colors) to make points
+    # more conspicuous
+    if user_colors is not None:
+      marker_radius = 3
+    elif pts.shape[0] <= 1e5:
       marker_radius = 2
 
   if marker_radius >= 1:
@@ -301,8 +306,9 @@ def get_ortho_debug_image(
       min_u=0.,  min_v=0.,
       max_u=10., max_v=10.,
       pixels_per_meter=100,
-      marker_radius=1,
-      period_meters=10.):
+      marker_radius=-1,
+      period_meters=10.,
+      user_colors=None):
   """Create and return an orthographic debug image for the given cloud of
   `(u, v, d)` points (in meters) rasterized at `pixels_per_meters`.
   Useful for visualizing a raw point cloud (or a half-space of one) as a
@@ -326,6 +332,8 @@ def get_ortho_debug_image(
     marker_radius (int): Draw a marker with this size (in pixels).
     period_meters (float) : Choose a distinct hue every `period_meters` and
       interpolate between hues.
+    user_colors (np.array): (Optional) instead of coloring by distance, use
+      this array of nx3 colors.
   Returns:
     np.array: A HWC RGB debug image.
   """
@@ -365,7 +373,8 @@ def get_ortho_debug_image(
     uvd,
     marker_radius=marker_radius,
     period_meters=period_meters,
-    alpha=1.0)
+    alpha=1.0,
+    user_colors=user_colors)
   
   # image vertical axis is flipped
   img = np.flipud(img)

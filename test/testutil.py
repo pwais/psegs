@@ -87,6 +87,14 @@ def check_sample_debug_images(sample, expected_dir, testname=''):
     path = outdir / ('%s_rv.png' % pc.sensor_name)
     save(path, pc.get_front_rv_debug_image(cuboids=cuboids))
 
+    path = outdir / ('%s_bev_painted.png' % pc.sensor_name)
+    save(path, pc.get_bev_debug_image(
+                    camera_images=sample.camera_images))
+    
+    path = outdir / ('%s_rv_painted.png' % pc.sensor_name)
+    save(path, pc.get_front_rv_debug_image(
+                    camera_images=sample.camera_images))
+
   for ci in sample.camera_images:
     path = outdir / ('%s_debug.png' % ci.sensor_name)
     save(

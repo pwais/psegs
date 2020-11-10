@@ -140,6 +140,7 @@ class PointCloud(object):
 
   @staticmethod
   def paint_ego_cloud(cloud, camera_images=None):
+    """ TODO """
     xyzrgb = np.ones((cloud.shape[0], 3 + 3)) * 128.
     xyzrgb[:, :3] = cloud[:, :3]
 
@@ -170,8 +171,8 @@ class PointCloud(object):
   @staticmethod
   def get_ortho_debug_image(
         cloud,
-        colors=None,
         cuboids=None,
+        camera_images=None,
         ego_to_sensor=None,
         flatten_axis='+x',
         u_axis='+y',
@@ -197,8 +198,13 @@ class PointCloud(object):
         the ego frame (PSegs standard) and `ego_to_sensor` given, or (b) the
         caller of this method must first transform `cuboids` to the point
         sensor frame.
+      camera_images (List[:class:`~psegs.datum.camera_image.CameraImage`]): 
+        Optionally paint the cloud points using pixels from these camera
+        images.  By default, color points based upon distance from the sensor
+        origin.
       ego_to_sensor (:class:`~psegs.datum.transform.Transform`): Optional
-        transform for projecting ego points (`cuboids`) to the sensor frame.
+        transform for projecting ego points (`cuboids` corners and
+        `camera_image` rays) to the sensor frame.
       flatten_axis (str): Flatten this `cloud` axis and use it as the image
         plane. Use a positive sign and `filter_behind=True` to plot points in
         the positive half-space.
@@ -221,6 +227,8 @@ class PointCloud(object):
     """
 
     def pts_to_uvd(pts):
+      # Return a copy of `pts` changing axis ordering to reflect the desired
+      # `u`, `v`, and `d` axes (new x y and z).
       AXIS_NAME_TO_IDX = {'x': 0, 'y': 1, 'z': 2}
       AXES = (u_axis, v_axis, flatten_axis)
 
@@ -237,8 +245,10 @@ class PointCloud(object):
     # Map cloud to (u, v, d) space
     uvd = pts_to_uvd(cloud)
 
+    unfiltered = None
     if filter_behind:
-      uvd = uvd[uvd[:, 2] >= 0]
+      unfiltered = uvd[:, 2] >= 0
+      uvd = uvd[unfiltered]
 
     # Decide bounds
     if u_bounds is None:
@@ -248,6 +258,19 @@ class PointCloud(object):
     if depth_values is not None:
       uvd[:, 2] = depth_values
 
+    # Maybe paint the cloud
+    user_colors = None
+    if camera_images:
+      to_paint = (
+        ego_to_sensor.get_inverse().apply(cloud).T
+        if ego_to_sensor
+        else cloud)
+      if unfiltered is not None:
+        to_paint = to_paint[unfiltered]
+      xyzrgb = PointCloud.paint_ego_cloud(to_paint, camera_images=camera_images)
+      user_colors = xyzrgb[:, 3:]
+
+    # Draw!
     img = pspl.get_ortho_debug_image(
             uvd,
             min_u=u_bounds[0],
@@ -255,7 +278,8 @@ class PointCloud(object):
             min_v=v_bounds[0],
             max_v=v_bounds[1],
             pixels_per_meter=pixels_per_meter,
-            period_meters=10.)
+            period_meters=10.,
+            user_colors=user_colors)
   
     for c in cuboids or []:
       box_xyz = c.get_box3d()
@@ -289,6 +313,7 @@ class PointCloud(object):
   def get_front_rv_debug_image(
           self,
           cuboids=None,
+          camera_images=None,
           z_bounds_meters=(-3, 3),
           y_bounds_meters=(-20, 20),
           pixels_per_meter=200):
@@ -296,8 +321,11 @@ class PointCloud(object):
     for this point cloud (in the +x direction).
 
     Args:
-      cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
-        cuboids in the given debug image.
+      cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): (Optional) draw
+        these cuboids in the given debug image.
+      camera_images (List[:class:`~psegs.datum.camera_image.CameraImage`]): 
+        (Optional) paint the cloud points using pixels from these camera
+        images.
       z_bounds_meters (Tuple[int, int]): Filter points to to this min/max
         z-value in point cloud frame.
       y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
@@ -311,6 +339,7 @@ class PointCloud(object):
     return PointCloud.get_ortho_debug_image(
               self.cloud,
               cuboids=cuboids,
+              camera_images=camera_images,
               ego_to_sensor=self.ego_to_sensor,
               flatten_axis='+x',
               u_axis='-y',
@@ -324,6 +353,7 @@ class PointCloud(object):
   def get_bev_debug_image(
           self,
           cuboids=None,
+          camera_images=None,
           x_bounds_meters=(-80, 80),
           y_bounds_meters=(-80, 80),
           pixels_per_meter=20):
@@ -333,6 +363,9 @@ class PointCloud(object):
     Args:
       cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
         cuboids in the given debug image.
+      camera_images (List[:class:`~psegs.datum.camera_image.CameraImage`]): 
+        (Optional) paint the cloud points using pixels from these camera
+        images.
       z_bounds_meters (Tuple[int, int]): Filter points to to this min/max
         z-value in point cloud frame.
       y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
@@ -346,6 +379,7 @@ class PointCloud(object):
     return PointCloud.get_ortho_debug_image(
               self.cloud,
               cuboids=cuboids,
+              camera_images=camera_images,
               ego_to_sensor=self.ego_to_sensor,
               flatten_axis='-z',
               u_axis='+x',
