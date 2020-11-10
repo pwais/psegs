@@ -59,6 +59,12 @@ def test_draw_xy_depth_in_image():
   pspl.draw_xy_depth_in_image(actual_2, apts, marker_radius=1)
   check_img(actual_2, 'test_draw_xy_depth_in_image_radius_2.png')
 
+  # Test user colors
+  colors = 255 * np.cos(apts / 10)
+  actual_3 = np.zeros((h, w, 3))
+  pspl.draw_xy_depth_in_image(actual_3, apts, marker_radius=1, user_colors=colors)
+  check_img(actual_3, 'test_draw_xy_depth_in_image_user_colors.png')
+
 
 def test_draw_cuboid_xy_in_image():
   cube = np.array([

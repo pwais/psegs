@@ -610,8 +610,12 @@ class KITTI360SDTable(StampedDatumTableBase):
 
     frame_id_to_chan_to_path = cls._get_fused_scan_idx(base_uri.segment_id)
     for frame_id, chan_to_path in frame_id_to_chan_to_path.items():
-      for chan in chan_to_path.keys():
-        yield base_uri.replaced(
+      # Fused clouds are in the world frame, so they are only useful for frames
+      # where we have an ego pose
+      has_pose = (cls._get_ego_pose(base_uri.segment_id, frame_id) is not None)
+      if has_pose:
+        for chan in chan_to_path.keys():
+          yield base_uri.replaced(
               topic='lidar|fused_' + chan,
               timestamp=cls._frame_id_to_timestamp(frame_id),
               extra={
@@ -733,7 +737,6 @@ class KITTI360SDTable(StampedDatumTableBase):
       obj for obj in raw_cuboids
       if is_in_current_frame(obj)
     ]
-
 
     cuboids = []
     for obj in raw_cuboids:

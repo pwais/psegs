@@ -226,10 +226,12 @@ def draw_xy_depth_in_image(
       pts,
       marker_radius=-1,
       alpha=.4,
-      period_meters=10.):
+      period_meters=10.,
+      user_colors=None):
   """Draw a point cloud `pts` in `img`; *modifies* `img` in-place (so you can 
   compose this draw call with others). Point color interpolates between
-  standard colors for each 10-meter tick.
+  standard colors for each 10-meter tick.  Optionally override this
+  behavior using `user_colors`.
 
   Args:
     img (np.array): Draw in this image.
@@ -238,8 +240,10 @@ def draw_xy_depth_in_image(
     marker_radius (int): Draw a marker with this size (or a non-positive
       number to auto-choose based upon number of points).
     alpha (float): Blend point color using weight [0, 1].
-    period_meters (float) : Choose a distinct hue every `period_meters` and
+    period_meters (float): Choose a distinct hue every `period_meters` and
       interpolate between hues.
+    user_colors (np.array): Instead of coloring by distance, use this array
+      of nx3 colors.
   """
 
   # OpenCV can't draw transparent colors, so we use the 'overlay image' trick:
@@ -261,8 +265,13 @@ def draw_xy_depth_in_image(
   pts = pts[-pts[:, -1].argsort()]
   if not pts.any():
     return
-
-  colors = rgb_for_distance(pts[:, 2], period_meters=period_meters)
+  
+  if user_colors is not None:
+    assert user_colors.shape[0] == pts.shape[0], \
+      "Need one color per point, have shapes %s %s" % (colors.shape, pts.shape)
+    colors = user_colors
+  else:
+    colors = rgb_for_distance(pts[:, 2], period_meters=period_meters)
   colors = np.clip(colors, 0, 255).astype(int)
   
   # Draw the markers! NB: numpy assignment is very fast, even for 1M+ pts

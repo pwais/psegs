@@ -138,10 +138,39 @@ class PointCloud(object):
   #   img = np.frombuffer(img_str, np.uint8).reshape((height, width, 4))
   #   return img[:, :, :3] # Return RGB for easy interop
 
+  @staticmethod
+  def paint_ego_cloud(cloud, camera_images=None):
+    xyzrgb = np.ones((cloud.shape[0], 3 + 3)) * 128.
+    xyzrgb[:, :3] = cloud[:, :3]
+
+    camera_images = camera_images or []
+    alpha = 1. / len(camera_images) if camera_images else 1.
+    for i, ci in enumerate(camera_images):
+      uvd = ci.project_ego_to_image(xyzrgb[:, :3], omit_offscreen=False)
+      
+      img = ci.image
+      h, w = ci.image.shape[:2]
+      uvd[:, :2] = np.rint(uvd[:, :2])
+      to_paint = np.where(
+                (uvd[:, 0] >= 0) & 
+                (uvd[:, 0] < w) &
+                (uvd[:, 1] >= 0) & 
+                (uvd[:, 1] < h) &
+                (uvd[:, 2] >= 0.01))
+      px_xy = uvd[to_paint].astype(np.int)
+      painted = img[px_xy[:, 1], px_xy[:, 0], :]
+      if i == 0:
+        xyzrgb[to_paint[0], 3:] = painted
+      else:
+        xyzrgb[to_paint[0], 3:] = (
+          alpha * xyzrgb[painted[0], 3:] + alpha * painted)
+
+    return xyzrgb
 
   @staticmethod
   def get_ortho_debug_image(
         cloud,
+        colors=None,
         cuboids=None,
         ego_to_sensor=None,
         flatten_axis='+x',
@@ -160,6 +189,9 @@ class PointCloud(object):
     Args:
       cloud (np.array): An nx3 array of points (in units of meters)
         draw this cloud.
+      colors (np.array): Optionally color each point using this nx3 array of
+        RGB colors (with color values in [0, 255]).  By default, color
+        points based on distance from the origin.
       cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Optionally draw
         these cuboids in the given debug image; cuboids must either (a) be in
         the ego frame (PSegs standard) and `ego_to_sensor` given, or (b) the

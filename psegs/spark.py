@@ -29,6 +29,7 @@ class Spark(spark.SessionFactory):
 
   CONF_KV = {
     'spark.driver.memory': '8g',
+    'spark.driver.maxResultSize': '2g',
 
     'spark.files.overwrite': 'true',
       # Needed for notebook-based development; FMI see oarphpy.spark.NBSpark

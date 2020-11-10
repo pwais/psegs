@@ -103,22 +103,152 @@ def kitti_360_get_parsed_node(d):
   fill_cuboid(out)
   return out
 
+def test_kitti360_video():
+  T = kitti_360.KITTI360SDTable
+  uris = T.get_uris_for_sequence('2013_05_28_drive_0000_sync')
+  # uris = [u for u in uris if u.extra['kitti-360.frame_id'] == '5661']
+  # import pdb; pdb.set_trace()
+
+  sample_uris = []
+  from collections import defaultdict
+  kitti_fid_to_uris = defaultdict(list)
+  for uri in uris:
+    if 'right' in uri.topic:
+      continue
+    if 'sick' in uri.topic:
+      continue
+    if 'fisheye' in uri.topic:
+      continue
+    if 'dynamic' in uri.topic:
+      continue
+    # if 'fused' in uri.topic:
+    #   continue
+    if uri.topic == 'lidar':
+      continue
+    kitti_fid_to_uris[int(uri.extra['kitti-360.frame_id'])].append(uri)
+  
+  with testutil.LocalSpark.sess() as spark:
+    def entry_to_fid_mframe(entry):
+      import time
+      fid, uris = entry
+      sample_time = time.time()
+      sample = datum.Sample(datums=[T.create_stamped_datum(uri) for uri in uris])
+      sample_time = time.time() - sample_time
+      debug = None
+      for ci in sample.camera_images:
+        if not 'left' in ci.sensor_name:
+          continue
+        debug_time = time.time()
+        debug = ci.get_debug_image(
+                  clouds=sample.lidar_clouds,
+                  cuboids=sample.cuboid_labels)
+        debug_time = time.time() - debug_time
+      assert debug is not None
+      print('sample_time', sample_time, 'debug_time', debug_time)
+      return (fid, debug)
+    
+    tasks = sorted(kitti_fid_to_uris.items())[300:600]
+    print('tasks', len(tasks))
+    import imageio
+    writer = imageio.get_writer('/opt/psegs/psegs_test/debug.mp4', fps=10)
+    from oarphpy import util as oputil
+    for chunk in oputil.ichunked(tasks, 500):
+      entry_rdd = spark.sparkContext.parallelize(chunk)
+      fid_debug = sorted(entry_rdd.map(entry_to_fid_mframe).collect())
+      print('len(fid_debug)', len(fid_debug))
+
+      for fid, debug in fid_debug:
+          writer.append_data(debug)
+    writer.close()
+
 
 def test_kitti360_uris():
   T = kitti_360.KITTI360SDTable
-  # uris = T.get_uris_for_sequence('2013_05_28_drive_0000_sync')
-  # uris = [u for u in uris if u.extra['kitti-360.frame_id'] == '1206']
+  uris = T.get_uris_for_sequence('2013_05_28_drive_0000_sync')
+  # uris = [u for u in uris if u.extra['kitti-360.frame_id'] == '5661']
+  
+  from collections import defaultdict
+  kitti_fid_to_uris = defaultdict(list)
+  for uri in uris:
+    if 'right' in uri.topic:
+      continue
+    if 'sick' in uri.topic:
+      continue
+    if 'fisheye' in uri.topic:
+      continue
+    if 'dynamic' in uri.topic:
+      continue
+    if 'fused' in uri.topic:
+      continue
+    # if uri.topic == 'lidar':
+    #   continue
+    fid = int(uri.extra['kitti-360.frame_id'])
+    if not (99 <= fid <= 110):
+      continue
+    kitti_fid_to_uris[fid].append(uri)
+  
+  tasks = sorted(kitti_fid_to_uris.items())
+  with testutil.LocalSpark.sess() as spark:
+
+    def entry_to_wcloud(entry):
+      import time
+      fid, uris = entry
+      sample_time = time.time()
+      sample = datum.Sample(datums=[T.create_stamped_datum(uri) for uri in uris])
+      sample_time = time.time() - sample_time
+      debug = None
+      for pc in sample.lidar_clouds:
+        if not pc.ego_pose:
+          return None
+        # return pc.ego_to_sensor.get_inverse().apply(pc.cloud).T
+        cloud_ego = pc.ego_to_sensor.get_inverse().apply(pc.cloud[:, :3]).T
+        T_world_to_ego = pc.ego_pose
+        cloud_world = T_world_to_ego.apply(cloud_ego).T
+        return cloud_world
+        
+        # T_world_to_velo = (T_world_to_ego @ pc.ego_to_sensor.get_inverse()).get_inverse()
+        # wcloud = T_world_to_velo.get_inverse().apply(pc.cloud).T
+        # return wcloud
+    
+    tasks = sorted(kitti_fid_to_uris.items())
+    print('tasks', len(tasks))
+    entry_rdd = spark.sparkContext.parallelize(tasks)
+    wclouds = entry_rdd.map(entry_to_wcloud).filter(lambda x: x is not None).collect()
+    import numpy as np
+    wcloud = np.vstack(wclouds)
+    print('wcloud.shape', wcloud.shape)
+
+    sd = T.create_stamped_datum(datum.URI.from_str('psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|left_rect&extra.kitti-360.camera=image_00&extra.kitti-360.frame_id=106'))
+    ci = sd.camera_image
+    wcloud_ego = ci.ego_pose.apply(wcloud).T
+    xyzrgb = datum.PointCloud.paint_ego_cloud(
+                wcloud, camera_images=[ci])
+    
+    import open3d as o3d
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(xyzrgb[:, :3])
+    pcd.colors = o3d.utility.Vector3dVector(xyzrgb[:, 3:] / 256.)
+    o3d.io.write_point_cloud('/opt/psegs/psegs_test/painted-manual-fuse.ply', pcd)
+    return
+
+    # import open3d as o3d
+    # pcd = o3d.geometry.PointCloud()
+    # pcd.points = o3d.utility.Vector3dVector(wcloud)
+    # o3d.io.write_point_cloud('/opt/psegs/psegs_test/kitti_fused.ply', pcd)
+    # return
+
+  
 
   uris = [
     'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=ego_pose&extra.kitti-360.frame_id=106',
     'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|left_rect&extra.kitti-360.camera=image_00&extra.kitti-360.frame_id=106',
-    'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|right_rect&extra.kitti-360.camera=image_01&extra.kitti-360.frame_id=106',
+    # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|right_rect&extra.kitti-360.camera=image_01&extra.kitti-360.frame_id=106',
     # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|left_fisheye&extra.kitti-360.camera=image_02&extra.kitti-360.frame_id=106',
     # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=camera|right_fisheye&extra.kitti-360.camera=image_03&extra.kitti-360.frame_id=106',
     'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=lidar&extra.kitti-360.frame_id=106',
-    'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=laser|sick&extra.kitti-360.frame_id=106',
+    # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=laser|sick&extra.kitti-360.frame_id=106',
     'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=lidar|fused_static&extra.kitti-360.frame_id=106',
-    'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=lidar|fused_dynamic&extra.kitti-360.frame_id=106',
+    # 'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=lidar|fused_dynamic&extra.kitti-360.frame_id=106',
     'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&timestamp=1060000000&topic=labels|cuboids&extra.kitti-360.frame_id=106'
   ]
   uris = [datum.URI.from_str(u) for u in uris]
@@ -137,7 +267,18 @@ def test_kitti360_uris():
 
   sample = datum.Sample(datums=[T.create_stamped_datum(uri) for uri in uris])
 
-  testutil.check_sample_debug_images(sample, 'no_exist_yet')
+  for pc in sample.lidar_clouds:
+    cloud_ego = pc.ego_to_sensor.get_inverse().apply(pc.cloud).T
+    xyzrgb = datum.PointCloud.paint_ego_cloud(
+                cloud_ego, camera_images=sample.camera_images)
+    
+    import open3d as o3d
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(xyzrgb[:, :3])
+    pcd.colors = o3d.utility.Vector3dVector(xyzrgb[:, 3:] / 256.)
+    o3d.io.write_point_cloud('/opt/psegs/psegs_test/painted-%s.ply' % pc.sensor_name.replace('|', '_'), pcd)
+
+  # testutil.check_sample_debug_images(sample, 'no_exist_yet')
 
   # for uri in uris:
   #   sd = T.create_stamped_datum(uri)

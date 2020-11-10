@@ -24,7 +24,8 @@ from psegs import spark
 from psegs import util
 
 
-PS_TEST_TEMPDIR_ROOT = os.path.join(tempfile.gettempdir(), 'psegs_test')
+# PS_TEST_TEMPDIR_ROOT = os.path.join(tempfile.gettempdir(), 'psegs_test')
+PS_TEST_TEMPDIR_ROOT = '/opt/psegs/psegs_test'
 
 
 class LocalSpark(spark.Spark):
@@ -32,7 +33,6 @@ class LocalSpark(spark.Spark):
   per testing run"""
 
   SRC_ROOT_MODULES = ['psegs', 'test']
-
 
 def test_tempdir(name, clean=True):
   path = os.path.join(PS_TEST_TEMPDIR_ROOT, name)
