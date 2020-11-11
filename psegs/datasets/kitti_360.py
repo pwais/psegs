@@ -87,6 +87,10 @@ class Fixtures(object):
     ]
     return frame_ids
 
+  @classmethod
+  def camera_timestamps_path(cls, sequence, camera_name):
+    return (
+      cls.ROOT / 'data_2d_raw' / sequence / camera_name / 'timestamps.txt')
 
   @classmethod
   def velodyne_cloud_path(cls, sequence, frame_id):
@@ -111,8 +115,8 @@ class Fixtures(object):
   @classmethod
   def sick_timestamps_path(cls, sequence):
     return (
-      cls.ROOT / 'sick_points' / 
-        sequence / 'velodyne_points' / 'timestamps.txt')
+      cls.ROOT / 'data_3d_raw' / 
+        sequence / 'sick_points' / 'timestamps.txt')
 
   @classmethod
   def get_raw_scan_frame_ids(cls, sequence, sensor):
@@ -210,6 +214,18 @@ class Fixtures(object):
 
 ###############################################################################
 ### KITTI Parsing Utils
+
+def kitti_360_timestamps_to_nanostamps(txt):
+  def line_to_nanostamp(line):
+    # Timestamps are in the format:
+    # YYYY-MM-DD HH:MM::SS.fffffffff (ISO 8601 format)
+    # FMI https://github.com/autonomousvision/kitti360Scripts/blob/081c08b34a14960611f459f23a0ad049542205c6/kitti360scripts/devkits/accumuLaser/src/commons.cpp#L158
+    # Numpy can parse these directly!
+    t = np.datetime64(line.strip())
+    return t.astype(np.uint64)
+  
+  lines = txt.split('\n')
+  return [line_to_nanostamp(l) for l in lines if l]
 
 def kitti_360_3d_bboxes_get_parsed_node(d):
   """Parse a node in a data_3d_bboxes XML file"""
@@ -448,6 +464,48 @@ class KITTI360SDTable(StampedDatumTableBase):
     'image_03': 'camera|right_fisheye',
   }
 
+  @classmethod
+  def _get_calib(cls):
+    if not hasattr(cls, '_calib'):
+      def open_and_read(rpath):
+        return open(cls.FIXTURES.filepath(rpath)).read()
+
+      calib_cam_to_pose = open_and_read('calibration/calib_cam_to_pose.txt')
+      calib_cam_to_velo = open_and_read('calibration/calib_cam_to_velo.txt')
+      calib_sick_to_velo = open_and_read('calibration/calib_sick_to_velo.txt')
+      perspective = open_and_read('calibration/perspective.txt')
+
+      cls._calib = Calibration.from_kitti_360_strs(
+                    calib_cam_to_pose,
+                    calib_cam_to_velo,
+                    calib_sick_to_velo,
+                    perspective)
+    return cls._calib
+
+  @classmethod
+  def _get_nanostamp(cls, sequence, channel, frame_id):
+    if not hasattr(cls, '_seq_to_chan_to_ts'):
+      cls._seq_to_chan_to_ts = {}
+    
+    if sequence not in cls._seq_to_chan_to_ts:
+      def read_ts(chan):
+        if chan in cls.CAMERA_NAME_TO_TOPIC.keys():
+          path = cls.FIXTURES.camera_timestamps_path(sequence, chan)
+        elif chan == 'velodyne':
+          path = cls.FIXTURES.velodyne_timestamps_path(sequence)
+        elif chan == 'sick':
+          path = cls.FIXTURES.sick_timestamps_path(sequence)
+        else:
+          raise ValueError(chan)
+        txt = open(path, 'r').read()
+        return kitti_360_timestamps_to_nanostamps(txt)
+      
+      cls._seq_to_chan_to_ts[sequence] = dict(
+        (chan, read_ts(chan))
+        for chan in (
+          ['velodyne', 'sick'] + list(cls.CAMERA_NAME_TO_TOPIC.keys())))
+    
+    return cls._seq_to_chan_to_ts[sequence][channel][frame_id]
 
   ## Private API: Ego Pose
 
@@ -491,24 +549,6 @@ class KITTI360SDTable(StampedDatumTableBase):
                 dest_frame='ego')
 
 
-  @classmethod
-  def _get_calib(cls):
-    if not hasattr(cls, '_calib'):
-      def open_and_read(rpath):
-        return open(cls.FIXTURES.filepath(rpath)).read()
-
-      calib_cam_to_pose = open_and_read('calibration/calib_cam_to_pose.txt')
-      calib_cam_to_velo = open_and_read('calibration/calib_cam_to_velo.txt')
-      calib_sick_to_velo = open_and_read('calibration/calib_sick_to_velo.txt')
-      perspective = open_and_read('calibration/perspective.txt')
-
-      cls._calib = Calibration.from_kitti_360_strs(
-                    calib_cam_to_pose,
-                    calib_cam_to_velo,
-                    calib_sick_to_velo,
-                    perspective)
-    return cls._calib
-
   ## Private API: Camera Images
 
   @classmethod
@@ -522,6 +562,10 @@ class KITTI360SDTable(StampedDatumTableBase):
                 extra={
                   'kitti-360.frame_id': str(frame_id),
                   'kitti-360.camera': camera,
+                  'kitti-360.nanostamp': 
+                    cls._get_nanostamp(base_uri.segment_id, camera, frame_id),
+                    # NB: we don't have *real* timestamps for all datums, so we
+                    # only provide this nanostamp as extra context
                 })
 
   @classmethod
@@ -594,6 +638,11 @@ class KITTI360SDTable(StampedDatumTableBase):
               timestamp=cls._frame_id_to_timestamp(frame_id),
               extra={
                 'kitti-360.frame_id': str(frame_id),
+                'kitti-360.nanostamp': 
+                    cls._get_nanostamp(
+                      base_uri.segment_id, 'velodyne', frame_id),
+                    # NB: we don't have *real* timestamps for all datums, so we
+                    # only provide this nanostamp as extra context
               })
 
     frame_ids = cls.FIXTURES.get_raw_scan_frame_ids(
@@ -606,6 +655,11 @@ class KITTI360SDTable(StampedDatumTableBase):
               timestamp=cls._frame_id_to_timestamp(frame_id),
               extra={
                 'kitti-360.frame_id': str(frame_id),
+                'kitti-360.nanostamp': 
+                    cls._get_nanostamp(
+                      base_uri.segment_id, 'sick', frame_id),
+                    # NB: we don't have *real* timestamps for all datums, so we
+                    # only provide this nanostamp as extra context
               })
 
     frame_id_to_chan_to_path = cls._get_fused_scan_idx(base_uri.segment_id)
@@ -620,6 +674,11 @@ class KITTI360SDTable(StampedDatumTableBase):
               timestamp=cls._frame_id_to_timestamp(frame_id),
               extra={
                 'kitti-360.frame_id': str(frame_id),
+                'kitti-360.nanostamp': 
+                    cls._get_nanostamp(
+                      base_uri.segment_id, 'velodyne', frame_id),
+                    # NB: we don't have *real* timestamps for all datums, so we
+                    # only provide this nanostamp as extra context
               })
 
   @classmethod

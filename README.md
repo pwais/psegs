@@ -6,6 +6,11 @@ notes about extensions and links to them
 
 readme!
 
+Things to finalize:
+ * Transforms: want some unit tests of chaining and demo of that
+ * frames: maybe | -> .
+
+
  * trailer: 
      * show a histogram with examples of distance / orientation with samples over ALL datasets
      * show perf!  show time to fetch frames using Spark + Parquet
