@@ -268,6 +268,9 @@ class PSegsNuScenes(BASE):
 
   #### PSegs Adhoc Utils
 
+  def has_lidarseg(self):
+    return hasattr(self, 'lidarseg')
+
   @classmethod
   def get_split_for_scene(cls, scene):
     if not hasattr(cls, '_scene_to_split'):
@@ -620,6 +623,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
   entire segments read into this many Spark partitions. Tuned for approx
   2GB RAM per core."""
 
+  INCLUDE_LIDARSEG = True
+  """bool: For every lidar cloud, include a column of nuscenes-lidarseg
+  labels (where available-- only training set keyframes)"""
+
   ## Subclass API
   
   @classmethod
@@ -695,57 +702,6 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     return datum_rdds
 
 
-    #         start = time.time()
-    #         yield cls.create_stamped_datum(uri)
-    #         total_sd_time += time.time() - start
-
-
-    #   # Are we trying to resume? Convert to URIs and filter those tasks if necessary ...
-
-
-    # # Are we resuming? We need to filter existing datums *before* computing
-    # # them for resume mode to save time.
-    # existing_ids = []
-    # def to_nusc_datum_id(row):
-    #   return (
-    #     row.dataset,
-    #     row.split,
-    #     row.segment_id,
-    #     row.topic,
-    #     row.timestamp)
-    # if existing_uri_df:
-    #   existing_ids = set(existing_uri_df.rdd.map(to_nusc_datum_id).collect())
-    #   util.log.info("Resume mode: have %s datums" % len(existing_ids))
-
-    # segment_ids = cls.get_segment_ids()
-    # if only_segments:
-    #   segment_ids = [s for s in segment_ids if s in only_segments]
-
-    # datum_rdds = []
-    # iter_tasks = itertools.chain.from_iterable(
-    #   ((segment_id, p) for p in range(PARTITIONS_PER_SEGMENT))
-    #   for segment_id in segment_ids)
-    # for task_chunk in oputil.ichunked(iter_tasks, TASKS_PER_RDD):
-    #   task_rdd = spark.sparkContext.parallelize(task_chunk)
-
-    #   def gen_partition_datums(task):
-    #     import time
-    #     total_sd_time = 0
-    #     segment_id, partition = task
-    #     for i, uri in enumerate(cls.iter_uris_for_segment(segment_id)):
-    #       if to_nusc_datum_id(uri) in existing_ids:
-    #         continue
-    #       if (i % PARTITIONS_PER_SEGMENT) == partition:
-    #         start = time.time()
-    #         yield cls.create_stamped_datum(uri)
-    #         total_sd_time += time.time() - start
-    #     print('total_sd_time', total_sd_time)
-        
-    #   datum_rdd = task_rdd.flatMap(gen_partition_datums)
-    #   datum_rdds.append(datum_rdd)
-    # return datum_rdds
-
-  
   ## Public API
 
   @classmethod
@@ -973,9 +929,29 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     pc.translate(-np.array(poserecord['translation']))
     pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
 
-    n_xyz = pc.points[:3, :].T
-      # Throw out intensity (lidar) and ... other stuff (radar) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    
+    # n_xyz = pc.points[:3, :].T
+    #   # Throw out intensity (lidar) and ... other stuff (radar) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    n_xyz = pc.points.T
+
+    add_lidarseg = (cls.INCLUDE_LIDARSEG and 
+                      nusc.has_lidarseg() and
+                      sample_data['sensor_modality'] == 'lidar' and
+                      sample_data['is_key_frame'])
+    if add_lidarseg:
+      sample_record = nusc.get('sample', sample_data['sample_token'])
+      pointsensor_token = sample_record['data'][sample_data['channel']]
+      lidarseg_datum = nusc.get('lidarseg', pointsensor_token)
+      lidarseg_labels_filename = os.path.join(
+                                        nusc.dataroot,
+                                        lidarseg_datum['filename'])
+      # Load labels from .bin file.
+      labels = np.fromfile(lidarseg_labels_filename, dtype=np.uint8)
+      labels = np.reshape(labels, [-1, 1])
+      assert n_xyz.shape[0] == labels.shape[0], \
+        "Expected one label per point, have %s vs %s" % (
+          n_xyz.shape, labels.shape)
+      n_xyz = np.hstack([n_xyz, labels])
+
     # if sample_data['sensor_modality'] == 'lidar':
     #   n_xyz = n_xyz[:, [1, 0, 2]]
     #   n_xyz[:, 0] *= -1

@@ -160,11 +160,11 @@ class PointCloud(object):
                 (uvd[:, 2] >= 0.01))
       px_xy = uvd[to_paint].astype(np.int)
       painted = img[px_xy[:, 1], px_xy[:, 0], :]
-      if i == 0:
-        xyzrgb[to_paint[0], 3:] = painted
-      else:
-        xyzrgb[to_paint[0], 3:] = (
-          alpha * xyzrgb[painted[0], 3:] + alpha * painted)
+      # if i == 0:
+      xyzrgb[to_paint[0], 3:] = painted
+      # else:
+      #   xyzrgb[to_paint[0], 3:] = (
+      #     alpha * xyzrgb[to_paint[0], 3:] + alpha * painted)
 
     return xyzrgb
 
@@ -261,6 +261,7 @@ class PointCloud(object):
     # Maybe paint the cloud
     user_colors = None
     if camera_images:
+      cloud = cloud[:, :3] # Ignore any non-position columns
       to_paint = (
         ego_to_sensor.get_inverse().apply(cloud).T
         if ego_to_sensor

@@ -445,13 +445,6 @@ class KITTI360SDTable(StampedDatumTableBase):
 
 
   ## Private API: Utils
-  
-  @classmethod
-  def _frame_id_to_timestamp(cls, frame_id):
-    # KITTI-360 has not yet released all timestamps; for now
-    # pretend all data captured at 10Hz.
-    TEN_MS_IN_NS = 10000000
-    return int(frame_id * TEN_MS_IN_NS)
 
   @classmethod
   def _get_frame_id(cls, uri):
@@ -514,9 +507,13 @@ class KITTI360SDTable(StampedDatumTableBase):
     poses = np.loadtxt(cls.FIXTURES.ego_poses_path(base_uri.segment_id))
     frame_ids = poses[:,0]
     for frame_id in frame_ids:
+      # KITTI-360 poses are derived from their own lidar-heavy SLAM;
+      # we'll use lidar timestamps for ego poses for convenience.
+      timestamp = cls._get_nanostamp(
+                      base_uri.segment_id, 'velodyne', frame_id)
       yield base_uri.replaced(
               topic='ego_pose',
-              timestamp=cls._frame_id_to_timestamp(frame_id),
+              timestamp=timestamp,
               extra={'kitti-360.frame_id': str(int(frame_id))})
 
   @classmethod
@@ -538,8 +535,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       cls._ego_pose_cache[sequence] = frame_to_RT
     
     if frame_id not in cls._ego_pose_cache[sequence]:
-      # Poses are incomplete :(
-      # TODO see if we can interpolate ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      # Poses are incomplete :(  There are even gaps for several seconds.
       return None
     
     RT_world_to_ego = cls._ego_pose_cache[sequence][frame_id]
@@ -558,14 +554,11 @@ class KITTI360SDTable(StampedDatumTableBase):
       for frame_id in frame_ids:
         yield base_uri.replaced(
                 topic=cls.CAMERA_NAME_TO_TOPIC[camera],
-                timestamp=cls._frame_id_to_timestamp(frame_id),
+                timestamp=
+                  cls._get_nanostamp(base_uri.segment_id, camera, frame_id),
                 extra={
                   'kitti-360.frame_id': str(frame_id),
                   'kitti-360.camera': camera,
-                  'kitti-360.nanostamp': 
-                    cls._get_nanostamp(base_uri.segment_id, camera, frame_id),
-                    # NB: we don't have *real* timestamps for all datums, so we
-                    # only provide this nanostamp as extra context
                 })
 
   @classmethod
@@ -606,7 +599,7 @@ class KITTI360SDTable(StampedDatumTableBase):
           image_png=bytearray(image_png),
           width=width,
           height=height,
-          timestamp=cls._frame_id_to_timestamp(frame_id),
+          timestamp=uri.timestamp,
           ego_pose=
             cls._get_ego_pose(uri.segment_id, frame_id) or datum.Transform(),
           K=K,
@@ -630,19 +623,13 @@ class KITTI360SDTable(StampedDatumTableBase):
   def _iter_point_cloud_uris(cls, base_uri):
     frame_ids = cls.FIXTURES.get_raw_scan_frame_ids(
                     base_uri.segment_id, 'velodyne_points')
-    timestamps_path = cls.FIXTURES.velodyne_timestamps_path(base_uri.segment_id)
-    # TODO Use timestamps ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     for frame_id in frame_ids:
       yield base_uri.replaced(
               topic='lidar',
-              timestamp=cls._frame_id_to_timestamp(frame_id),
+              timestamp=
+                cls._get_nanostamp(base_uri.segment_id, 'velodyne', frame_id),
               extra={
                 'kitti-360.frame_id': str(frame_id),
-                'kitti-360.nanostamp': 
-                    cls._get_nanostamp(
-                      base_uri.segment_id, 'velodyne', frame_id),
-                    # NB: we don't have *real* timestamps for all datums, so we
-                    # only provide this nanostamp as extra context
               })
 
     frame_ids = cls.FIXTURES.get_raw_scan_frame_ids(
@@ -652,14 +639,10 @@ class KITTI360SDTable(StampedDatumTableBase):
     for frame_id in frame_ids:
       yield base_uri.replaced(
               topic='laser|sick',
-              timestamp=cls._frame_id_to_timestamp(frame_id),
+              timestamp=
+                cls._get_nanostamp(base_uri.segment_id, 'sick', frame_id),
               extra={
                 'kitti-360.frame_id': str(frame_id),
-                'kitti-360.nanostamp': 
-                    cls._get_nanostamp(
-                      base_uri.segment_id, 'sick', frame_id),
-                    # NB: we don't have *real* timestamps for all datums, so we
-                    # only provide this nanostamp as extra context
               })
 
     frame_id_to_chan_to_path = cls._get_fused_scan_idx(base_uri.segment_id)
@@ -671,14 +654,10 @@ class KITTI360SDTable(StampedDatumTableBase):
         for chan in chan_to_path.keys():
           yield base_uri.replaced(
               topic='lidar|fused_' + chan,
-              timestamp=cls._frame_id_to_timestamp(frame_id),
+              timestamp=
+                cls._get_nanostamp(base_uri.segment_id, 'velodyne', frame_id),
               extra={
                 'kitti-360.frame_id': str(frame_id),
-                'kitti-360.nanostamp': 
-                    cls._get_nanostamp(
-                      base_uri.segment_id, 'velodyne', frame_id),
-                    # NB: we don't have *real* timestamps for all datums, so we
-                    # only provide this nanostamp as extra context
               })
 
   @classmethod
@@ -735,7 +714,7 @@ class KITTI360SDTable(StampedDatumTableBase):
 
     pc = datum.PointCloud(
           sensor_name=uri.topic,
-          timestamp=cls._frame_id_to_timestamp(frame_id),
+          timestamp=uri.timestamp,
           cloud=cloud,
           ego_to_sensor=ego_to_sensor,
           ego_pose=
@@ -772,9 +751,14 @@ class KITTI360SDTable(StampedDatumTableBase):
         range(c['start_frame'], c['end_frame'] + 1)
         for c in raw_cuboids)))
     for frame_id in frame_ids:
+      # KITTI-360 poses are derived from their own lidar-heavy SLAM;
+      # we'll use lidar timestamps for cuboid labels because we believe
+      # they are posed in this SLAM-based world frame.
+      timestamp = cls._get_nanostamp(
+                      base_uri.segment_id, 'velodyne', frame_id)
       yield base_uri.replaced(
               topic='labels|cuboids',
-              timestamp=cls._frame_id_to_timestamp(frame_id),
+              timestamp=timestamp,
               extra={
                 'kitti-360.frame_id': str(frame_id),
               })
@@ -854,7 +838,7 @@ class KITTI360SDTable(StampedDatumTableBase):
           track_id=obj['instanceId'],
           category_name=obj['k360_class_name'],
           ps_category='TODO', # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
-          timestamp=cls._frame_id_to_timestamp(frame_id),
+          timestamp=uri.timestamp,
           length_meters=l,
           width_meters=w,
           height_meters=h,

@@ -9,7 +9,8 @@ readme!
 Things to finalize:
  * Transforms: want some unit tests of chaining and demo of that
  * frames: maybe | -> .
-
+ * maybe drop the timestamp member from cuboids, camera images, point clouds etc
+ * For a segment debug: fused painted cloud in plotly! sampeled to 100k pts obvi
 
  * trailer: 
      * show a histogram with examples of distance / orientation with samples over ALL datasets
