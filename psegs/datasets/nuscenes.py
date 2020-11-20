@@ -789,6 +789,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       for sample in scene_samples:
         for channel, sample_data_token in sample['data'].items():
           sd = nusc.get('sample_data', sample_data_token)
+          sample_token = sd['sample_token']
           yield datum.URI(
                   dataset=nusc.DATASET,
                   split=scene_split,

@@ -11,6 +11,10 @@ Things to finalize:
  * frames: maybe | -> .
  * maybe drop the timestamp member from cuboids, camera images, point clouds etc
  * For a segment debug: fused painted cloud in plotly! sampeled to 100k pts obvi
+ * PointCloud: have column names for cloud (x, y, z, intensity, semantic [, instance])
+  * for nusc and mebbe others: should cloud labels be separate URIs?
+
+
 
  * trailer: 
      * show a histogram with examples of distance / orientation with samples over ALL datasets
