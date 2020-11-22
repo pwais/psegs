@@ -766,12 +766,13 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                 dataset=nusc.DATASET,
                 split=scene_split,
                 segment_id=segment_id,
-                timestamp=to_nanostamp(row['timestamp']),
+                timestamp=to_nanostamp(sd['timestamp']),
                 topic='labels|cuboids',
                 extra={
                   'nuscenes-token': 'sample_data|' + sd['token'],
                   'nuscenes-sample-token': sample_token,
                   'nuscenes-is-keyframe': is_key_frame,
+                  'nuscenes-label-channel': sd['channel'],
                 })
 
     ## Get labels (keyframes only, but interpolated for each sensor
@@ -988,7 +989,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     # NB: This helper always does motion correction (interpolation) unless
     # `sample_data_token` refers to a keyframe.
     boxes = nusc.get_boxes(sample_data_token)
-  
+
     # Boxes are in world frame.  Move all to ego frame.
     from pyquaternion import Quaternion
     sd_record = nusc.get('sample_data', sample_data_token)
@@ -1014,12 +1015,13 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       
       cuboid.ps_category = 'todo' # ~~~~~~~~~~~~~~~~~~~~~~~`NUSCENES_CATEGORY_TO_AU_AV_CATEGORY[box.name]
       
-      # Try to give bikes riders
-      # NB: In Lyft Level 5, they appear to *not* label bikes without riders
       attribs = [
         nusc.get('attribute', attrib_token)['name']
         for attrib_token in sample_anno['attribute_tokens']
       ]
+
+      # Try to give bikes riders
+      # NB: In Lyft Level 5, they appear to *not* label bikes without riders
       if 'cycle.with_rider' in attribs:
         if cuboid.ps_category == 'bike_no_rider':
           cuboid.ps_category = 'bike_with_rider'
@@ -1050,9 +1052,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
           rotation=box.orientation.rotation_matrix,
           translation=box.center,
           src_frame='ego',
-          dest_frame='obj')
+          dest_frame='obj') # TODO: this naming is backwards???~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       cuboid.ego_pose = ego_pose
       cuboids.append(cuboid)
+
     return datum.StampedDatum(uri=uri, cuboids=cuboids)
 
   @classmethod
@@ -1069,7 +1072,8 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       # broken, but the sensor timestamps look corect.
       # https://github.com/lyft/nuscenes-devkit/issues/73
 
-
+class NuscStampedDatumTableLabelsAllFrames(NuscStampedDatumTableBase):
+  LABELS_KEYFRAMES_ONLY = False
 
 
 
