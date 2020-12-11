@@ -441,6 +441,121 @@ class KITTI360SDTable(StampedDatumTableBase):
 
   ## Subclass API
 
+  @classmethod
+  def _get_all_segment_uris(cls):
+    uris = [
+      datum.URI(
+        dataset='kitti-360',
+        split='train',
+        segment_id=seq)
+      for seq in cls.FIXTURES.TRAIN_SEQUENCES
+    ]
+    return uris
+
+  @classmethod
+  def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
+    
+    ## First build a set of sequences to read ...
+
+    # from psegs.spark import Spark
+    # from oarphpy.spark import cluster_cpu_count
+    
+
+    seg_uris = cls.get_all_segment_uris()
+    if only_segments:
+      util.log.info(
+        "Filtering to only %s segments" % len(only_segments))
+      seg_uris = [
+        uri for uri in seg_uris
+        if any(
+          suri.soft_matches_segment(uri) for suri in only_segments)
+      ]
+    
+    ## ... now construct datum RDDS in chunks.
+    URIS_PER_PARTITION = 50
+
+    # from oarphpy import util as oputil
+    datum_rdds = []
+    for seg_uri in seg_uris:
+      uris = cls.get_uris_for_sequence(seg_uri.segment_id)
+
+      # Some datums are more expensive to create than others, so distribute
+      # them evenly across the RDDs
+      import random
+      rand = random.Random(1337)
+      # rand.shuffle(uris)
+      uris = sorted(uris, key=lambda u: u.timestamp)
+      uris = uris[:5000]
+      print("HACK")
+
+      util.log.info(
+        "... sequence %s has %s URIs ..." % (seg_uri.segment_id, len(uris)))
+      
+      n_partitions = max(1, int(len(uris) / URIS_PER_PARTITION))
+      uri_rdd = spark.sparkContext.parallelize(uris, numSlices=n_partitions)
+      # uri_rdd = uri_rdd.repartition(n_partitions)
+
+      from pyspark import StorageLevel
+      uri_rdd = uri_rdd.persist(StorageLevel.OFF_HEAP)
+      
+      # for uri_chunk in oputil.ichunked(uris, URIS_PER_RDD):
+      #   uri_rdd = spark.sparkContext.parallelize(
+      #     uri_chunk, numSlices=cluster_cpu_count(spark))
+
+      # Are we trying to resume? Filter URIs if necessary.
+      if existing_uri_df is not None:
+        def to_datum_id(obj):
+          return (
+            obj.dataset,
+            obj.split,
+            obj.segment_id,
+            obj.topic,
+            obj.timestamp)
+        key_uri_rdd = uri_rdd.map(lambda u: (to_datum_id(u), u))
+        existing_keys = existing_uri_df.rdd.map(to_datum_id)
+        uri_rdd = key_uri_rdd.subtractByKey(existing_keys).map(
+                                        lambda kv: kv[0])
+
+      datum_rdd = uri_rdd.map(cls.create_stamped_datum)
+      datum_rdds.append(datum_rdd)
+    
+    util.log.info("... partitioned datums into %s RDDs" % len(datum_rdds))
+    return datum_rdds
+
+
+    #   URIS_PER_TASK
+
+
+
+    # import itertools
+    # iter_tasks = itertools.chain.from_iterable(
+    #   ((seg_uri, p) for p in range(cls.PARTITIONS_PER_SEGMENT))
+    #   for seg_uri in seg_uris)
+    
+    
+    # for task_chunk in oputil.ichunked(iter_tasks, TASKS_PER_RDD):
+    #   util.log.info([(str(u), p) for u, p in task_chunk])
+    #   task_rdd = spark.sparkContext.parallelize(task_chunk)
+    #   def iter_uris_for_task(task):
+    #     seg_uri, partition = task
+    #     uris = cls.get_uris_for_sequence(seg_uri.segment_id)
+    #     for i, uri in enumerate(uris):
+    #       if (i % cls.PARTITIONS_PER_SEGMENT) == partition:
+    #         yield uri
+      
+    #   uri_rdd = task_rdd.flatMap(iter_uris_for_task)
+
+      
+      
+    #   # Some datums are more expensive to materialize than others.  Force
+    #   # a repartition to avoid stragglers.
+    #   uri_rdd = uri_rdd.repartition(TASKS_PER_RDD)
+    #   util.log.info(uri_rdd.count())
+
+    #   datum_rdd = uri_rdd.map(cls.create_stamped_datum)
+    #   datum_rdds.append(datum_rdd)
+    # return datum_rdds
+
 
 
 
@@ -506,6 +621,7 @@ class KITTI360SDTable(StampedDatumTableBase):
   def _iter_ego_pose_uris(cls, base_uri):
     poses = np.loadtxt(cls.FIXTURES.ego_poses_path(base_uri.segment_id))
     frame_ids = poses[:,0]
+    frame_ids = [int(f) for f in frame_ids]
     for frame_id in frame_ids:
       # KITTI-360 poses are derived from their own lidar-heavy SLAM;
       # we'll use lidar timestamps for ego poses for convenience.
@@ -514,7 +630,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       yield base_uri.replaced(
               topic='ego_pose',
               timestamp=timestamp,
-              extra={'kitti-360.frame_id': str(int(frame_id))})
+              extra={'kitti-360.frame_id': str(frame_id)})
 
   @classmethod
   def _create_ego_pose(cls, uri):
@@ -645,20 +761,20 @@ class KITTI360SDTable(StampedDatumTableBase):
                 'kitti-360.frame_id': str(frame_id),
               })
 
-    frame_id_to_chan_to_path = cls._get_fused_scan_idx(base_uri.segment_id)
-    for frame_id, chan_to_path in frame_id_to_chan_to_path.items():
-      # Fused clouds are in the world frame, so they are only useful for frames
-      # where we have an ego pose
-      has_pose = (cls._get_ego_pose(base_uri.segment_id, frame_id) is not None)
-      if has_pose:
-        for chan in chan_to_path.keys():
-          yield base_uri.replaced(
-              topic='lidar|fused_' + chan,
-              timestamp=
-                cls._get_nanostamp(base_uri.segment_id, 'velodyne', frame_id),
-              extra={
-                'kitti-360.frame_id': str(frame_id),
-              })
+    # frame_id_to_chan_to_path = cls._get_fused_scan_idx(base_uri.segment_id)
+    # for frame_id, chan_to_path in frame_id_to_chan_to_path.items():
+    #   # Fused clouds are in the world frame, so they are only useful for frames
+    #   # where we have an ego pose
+    #   has_pose = (cls._get_ego_pose(base_uri.segment_id, frame_id) is not None)
+    #   if has_pose:
+    #     for chan in chan_to_path.keys():
+    #       yield base_uri.replaced(
+    #           topic='lidar|fused_' + chan,
+    #           timestamp=
+    #             cls._get_nanostamp(base_uri.segment_id, 'velodyne', frame_id),
+    #           extra={
+    #             'kitti-360.frame_id': str(frame_id),
+    #           })
 
   @classmethod
   def _create_point_cloud(cls, uri):

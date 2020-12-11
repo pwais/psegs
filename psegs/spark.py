@@ -28,8 +28,10 @@ class Spark(spark.SessionFactory):
   SRC_ROOT_MODULES = ['psegs']
 
   CONF_KV = {
-    'spark.driver.memory': '8g',
     'spark.driver.maxResultSize': '2g',
+    'spark.driver.memory': '8g',
+    'spark.memory.offHeap.enabled': 'true',
+    'spark.memory.offHeap.size': '64g',
 
     'spark.files.overwrite': 'true',
       # Needed for notebook-based development; FMI see oarphpy.spark.NBSpark
