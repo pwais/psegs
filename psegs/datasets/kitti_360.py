@@ -35,7 +35,8 @@ class Fixtures(object):
 
   ROOT = C.EXT_DATA_ROOT / 'kitti-360'
 
-  CAMERAS = ('image_00', 'image_01', 'image_02', 'image_03')
+  FRONT_CAMERAS = ('image_00', 'image_01')
+  FISHEYE_CAMERAS = ('image_02', 'image_03')
 
   TRAIN_SEQUENCES = (
     '2013_05_28_drive_0000_sync',
@@ -401,6 +402,20 @@ class KITTI360SDTable(StampedDatumTableBase):
 
   FIXTURES = Fixtures
 
+
+  INCLUDE_FISHEYES = False
+  """bool: Should we emit label datums for the fisheye / side cameras?
+  At the time of writing, the distortion parameters for the fisheyes are
+  not available, so we can't make much use of the images / labels for
+  these cameras.
+  """
+
+  INCLUDE_FUSED_CLOUDS = False
+  """bool: Should we emit label datums for the kitti-360 fused lidar clouds?
+  Note: these are the fused clouds in the `data_3d_semantics` portion of
+  KITTI-360.
+  """
+
   ## Dataset API
 
   @classmethod
@@ -472,7 +487,8 @@ class KITTI360SDTable(StampedDatumTableBase):
       ]
     
     ## ... now construct datum RDDS in chunks.
-    URIS_PER_PARTITION = 50
+    URIS_PER_PARTITION = 256
+      # Requires about 256 Megabytes of memory per chunk
 
     # from oarphpy import util as oputil
     datum_rdds = []
@@ -481,22 +497,21 @@ class KITTI360SDTable(StampedDatumTableBase):
 
       # Some datums are more expensive to create than others, so distribute
       # them evenly across the RDDs
-      import random
-      rand = random.Random(1337)
+      # import random
+      # rand = random.Random(1337)
       # rand.shuffle(uris)
       uris = sorted(uris, key=lambda u: u.timestamp)
-      uris = uris[:5000]
-      print("HACK")
+      # uris = uris[:50000]
+      # print("HACK")
+
+      n_partitions = max(1, int(len(uris) / URIS_PER_PARTITION))
 
       util.log.info(
-        "... sequence %s has %s URIs ..." % (seg_uri.segment_id, len(uris)))
+        "... sequence %s has %s URIs, creating %s slices ..." % (
+          seg_uri.segment_id, len(uris), n_partitions))
       
-      n_partitions = max(1, int(len(uris) / URIS_PER_PARTITION))
       uri_rdd = spark.sparkContext.parallelize(uris, numSlices=n_partitions)
       # uri_rdd = uri_rdd.repartition(n_partitions)
-
-      from pyspark import StorageLevel
-      uri_rdd = uri_rdd.persist(StorageLevel.OFF_HEAP)
       
       # for uri_chunk in oputil.ichunked(uris, URIS_PER_RDD):
       #   uri_rdd = spark.sparkContext.parallelize(
@@ -517,6 +532,9 @@ class KITTI360SDTable(StampedDatumTableBase):
                                         lambda kv: kv[0])
 
       datum_rdd = uri_rdd.map(cls.create_stamped_datum)
+      
+      from pyspark import StorageLevel
+      datum_rdd = datum_rdd.persist(StorageLevel.DISK_ONLY)
       datum_rdds.append(datum_rdd)
     
     util.log.info("... partitioned datums into %s RDDs" % len(datum_rdds))
@@ -665,7 +683,10 @@ class KITTI360SDTable(StampedDatumTableBase):
 
   @classmethod
   def _iter_camera_image_uris(cls, base_uri):
-    for camera in cls.FIXTURES.CAMERAS:
+    cameras = list(cls.FIXTURES.FRONT_CAMERAS)
+    if cls.INCLUDE_FISHEYES:
+      cameras += list(cls.FIXTURES.FISHEYE_CAMERAS)
+    for camera in cameras:
       frame_ids = cls.FIXTURES.get_camera_frame_ids(base_uri.segment_id, camera)
       for frame_id in frame_ids:
         yield base_uri.replaced(
@@ -710,16 +731,17 @@ class KITTI360SDTable(StampedDatumTableBase):
     else:
       raise ValueError(uri)
 
+    ego_pose = cls._get_ego_pose(uri.segment_id, frame_id)
     ci = datum.CameraImage(
           sensor_name=uri.topic,
           image_png=bytearray(image_png),
           width=width,
           height=height,
           timestamp=uri.timestamp,
-          ego_pose=
-            cls._get_ego_pose(uri.segment_id, frame_id) or datum.Transform(),
+          ego_pose=ego_pose or datum.Transform(),
           K=K,
-          ego_to_sensor=ego_to_sensor)
+          ego_to_sensor=ego_to_sensor,
+          extra={'kitti-360.has-valid-ego-pose': str(bool(ego_pose))})
     return datum.StampedDatum(uri=uri, camera_image=ci)
 
 
@@ -761,20 +783,22 @@ class KITTI360SDTable(StampedDatumTableBase):
                 'kitti-360.frame_id': str(frame_id),
               })
 
-    # frame_id_to_chan_to_path = cls._get_fused_scan_idx(base_uri.segment_id)
-    # for frame_id, chan_to_path in frame_id_to_chan_to_path.items():
-    #   # Fused clouds are in the world frame, so they are only useful for frames
-    #   # where we have an ego pose
-    #   has_pose = (cls._get_ego_pose(base_uri.segment_id, frame_id) is not None)
-    #   if has_pose:
-    #     for chan in chan_to_path.keys():
-    #       yield base_uri.replaced(
-    #           topic='lidar|fused_' + chan,
-    #           timestamp=
-    #             cls._get_nanostamp(base_uri.segment_id, 'velodyne', frame_id),
-    #           extra={
-    #             'kitti-360.frame_id': str(frame_id),
-    #           })
+    if cls.INCLUDE_FUSED_CLOUDS:
+      frame_id_to_chan_to_path = cls._get_fused_scan_idx(base_uri.segment_id)
+      for frame_id, chan_to_path in frame_id_to_chan_to_path.items():
+        # Fused clouds are in the world frame, so they are only useful for
+        # frames where we have an ego pose
+        has_pose = (
+          cls._get_ego_pose(base_uri.segment_id, frame_id) is not None)
+        if has_pose:
+          for chan in chan_to_path.keys():
+            yield base_uri.replaced(
+                topic='lidar|fused_' + chan,
+                timestamp=
+                  cls._get_nanostamp(base_uri.segment_id, 'velodyne', frame_id),
+                extra={
+                  'kitti-360.frame_id': str(frame_id),
+                })
 
   @classmethod
   def _create_point_cloud(cls, uri):
@@ -828,13 +852,15 @@ class KITTI360SDTable(StampedDatumTableBase):
     else:
       raise ValueError(uri)
 
+    ego_pose = cls._get_ego_pose(uri.segment_id, frame_id)
+
     pc = datum.PointCloud(
           sensor_name=uri.topic,
           timestamp=uri.timestamp,
           cloud=cloud,
           ego_to_sensor=ego_to_sensor,
-          ego_pose=
-            cls._get_ego_pose(uri.segment_id, frame_id) or datum.Transform())
+          ego_pose=ego_pose or datum.Transform(),
+          extra={'kitti-360.has-valid-ego-pose': str(bool(ego_pose))})
     return datum.StampedDatum(uri=uri, point_cloud=pc)
 
 
@@ -848,6 +874,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       import xmltodict
       path = cls.FIXTURES.cuboids_path(sequence)
       d = xmltodict.parse(open(path).read())
+        # NB: this parse() takes 4-6 sec and we can't make it any faster
       objects = d['opencv_storage']
       obj_name_to_value = dict(
         (k, kitti_360_3d_bboxes_get_parsed_node(v))
@@ -950,8 +977,13 @@ class KITTI360SDTable(StampedDatumTableBase):
       T_obj_from_ego.src_frame = 'ego' # fixme ... our names here are broken but matrix is right? ~~~~~~~~~~~~~~~``
       T_obj_from_ego.dest_frame = 'obj'
 
+      # Instance IDs are only distinct within each class:
+      # https://github.com/autonomousvision/kitti360Scripts/issues/5#issuecomment-722217758
+      # https://github.com/autonomousvision/kitti360Scripts/blob/feb142bd8d99df6cbde77ae46b17e912cb3a633b/kitti360scripts/helpers/annotation.py#L37
+      track_id = 1000 * obj['semanticId'] + obj['instanceId']
+
       cuboids.append(datum.Cuboid(
-          track_id=obj['instanceId'],
+          track_id=track_id,
           category_name=obj['k360_class_name'],
           ps_category='TODO', # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
           timestamp=uri.timestamp,
@@ -967,7 +999,6 @@ class KITTI360SDTable(StampedDatumTableBase):
             'kitt-360.cuboid.start_frame': str(obj['start_frame']),
             'kitt-360.cuboid.end_frame': str(obj['end_frame']),
           }))
-
     return datum.StampedDatum(uri=uri, cuboids=cuboids)
 
 

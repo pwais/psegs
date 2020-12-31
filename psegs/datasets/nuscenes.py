@@ -967,6 +967,12 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     #                   cs_record,
     #                   src_frame='ego',
     #                   dest_frame=sample_data['channel']) # ?????????????????????????
+    real_ego_to_sensor = transform_from_record(
+                      cs_record,
+                      src_frame='ego',
+                      dest_frame=sample_data['channel'])
+    print('real_ego_to_sensor', real_ego_to_sensor)
+            # TODO FIXME
     # TODO save this xform as context ................................................
     ego_to_sensor = datum.Transform(
       src_frame='ego', dest_frame=sample_data['channel'])

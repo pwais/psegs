@@ -147,7 +147,7 @@ class CameraImage(object):
 
     debug_img = np.copy(self.image)
     for pc in clouds:
-      xyz = pc.ego_to_sensor.get_inverse().apply(pc.cloud[:, :3]).T
+      xyz = pc.ego_to_sensor.get_inverse().apply(pc.cloud[:, :3]).T # err why inv~~~~
       uvd = self.project_ego_to_image(xyz, omit_offscreen=True)
       pspl.draw_xy_depth_in_image(debug_img, uvd, alpha=0.7)
     
