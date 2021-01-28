@@ -971,7 +971,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                       cs_record,
                       src_frame='ego',
                       dest_frame=sample_data['channel'])
-    print('real_ego_to_sensor', real_ego_to_sensor)
+    # print('real_ego_to_sensor', real_ego_to_sensor) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
             # TODO FIXME
     # TODO save this xform as context ................................................
     ego_to_sensor = datum.Transform(
@@ -1036,7 +1036,8 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
         else:
           # raise ValueError(
             # "Don't know how to give a rider to %s %s" % (cuboid, attribs))
-          print("""TODO "Don't know how to give a rider """)#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+          # print("""TODO "Don't know how to give a rider """)#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+          pass
 
       cuboid.extra = {
         'nuscenes_token': box.token,
