@@ -129,6 +129,13 @@ def get_png_wh(png_bytes):
 #   assert obj_cls
 #   return obj_cls
 
+_LAZY_SLOTS = (
+  # '__pyclass',
+  '__thunktor_bytes',
+  # '__pyclass_bytes',
+  '__value',
+  '__lock',
+)
 
 class LazyThunktor(object):
   """
@@ -138,13 +145,7 @@ class LazyThunktor(object):
     * the big value is never serialized ...
   """
 
-  __slots__ = (
-    # '__pyclass',
-    '__thunktor_bytes',
-    # '__pyclass_bytes',
-    '__value',
-    '__lock',
-  )
+  __slots__ = _LAZY_SLOTS
 
   def __init__(self, thunktor):#, embed_cls=True):
     self.__value = None
@@ -182,13 +183,19 @@ class LazyThunktor(object):
     return self.__value
 
   def __getattribute__(self, name):
-    o = self if name in self.__slots__ else self.impl
-    return object.__getattribute__(o, name)
+    if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
+      return object.__getattribute__(self, name)
+    else:
+      return object.__getattribute__(self.impl, name)
            
   def __setattr__(self, name, value):
-    o = self if name in self.__slots__ else self.impl
-    return object.__setattr__(o, name, value)
+    if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
+      return object.__setattr__(self, name)
+    else:
+      return object.__setattr__(self.impl, name)
   
   def __delattr__(self, name, value):
-    o = self if name in self.__slots__ else self.impl
-    return object.__delattr__(o, name, value)
+    if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
+      return object.__delattr__(self, name)
+    else:
+      return object.__delattr__(self.impl, name)
