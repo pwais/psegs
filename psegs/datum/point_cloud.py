@@ -37,7 +37,7 @@ class PointCloud(object):
 
   cloud = attr.ib(type=np.ndarray, default=None)
   """numpy.ndarray: Lidar points as an n-by-3 matrix of `(x, y, z)` points.
-  Nominally, these points are in **ego** frame, not point sensor frame."""
+  Nominally, these points are in **ego** frame, not point sensor frame."""#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
   ego_to_sensor = attr.ib(type=Transform, default=Transform())
   """Transform: From ego / robot frame to the sensor frame (typically a static
