@@ -81,7 +81,10 @@ class Fixtures(object):
   # https://github.com/PRBonn/semantic-kitti-api/blob/c2d7712964a9541ed31900c925bf5971be2107c2/auxiliary/SSCDataset.py#L20
   SK_SPLIT_SEQUENCES = {
       "train": [
-        "00", "01", "02", "03", "04", "05", "06", "07", "09", "10"],
+        "00", "01", "02", "03", 
+        # "04", -- We ignore sequence 04 because it has no clouds with only
+        #            static points
+        "05", "06", "07", "09", "10"],
       "valid": ["08"],
       "test": [
         "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21"]
@@ -229,7 +232,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
       datum_rdds.append(datum_rdd)
       
       # Emit velodyne cloud RDD
-      pctask_rdd = spark.sparkContext.parallelize(tasks[:10])
+      pctask_rdd = spark.sparkContext.parallelize(tasks)
       datum_rdd = pctask_rdd.map(lambda t: cls.create_point_cloud_in_world(*t))
       datum_rdds.append(datum_rdd)
   

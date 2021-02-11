@@ -192,7 +192,11 @@ class FusedWorldCloudTableBase(StampedDatumTableBase):
       iclouds = world_cloud_rdd.toLocalIterator(prefetchPartitions=True)
       iclouds = oputil.ThruputObserver.to_monitored_generator(
                   iclouds, name='ComputeWorldClouds', log_freq=500)
-      world_cloud = np.vstack(list(iclouds))
+      clouds = list(iclouds)
+      if len(clouds) > 0:
+        world_cloud = np.vstack(clouds)
+      else:
+        world_cloud = np.zeros((0, 3))
       util.log.info(
         "... computed world cloud for %s of shape %s (%.2f GB) ..." % (
           suri.segment_id, world_cloud.shape,
