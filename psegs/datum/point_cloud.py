@@ -17,6 +17,8 @@ import typing
 import attr
 import numpy as np
 
+from oarphpy.spark import CloudpickeledCallable
+
 from psegs.datum.transform import Transform
 from psegs.util import misc
 from psegs.util import plotting as pspl
@@ -38,6 +40,20 @@ class PointCloud(object):
   cloud = attr.ib(type=np.ndarray, default=None)
   """numpy.ndarray: Lidar points as an n-by-3 matrix of `(x, y, z)` points.
   Nominally, these points are in **ego** frame, not point sensor frame."""#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # TODO rename to cloud_array once we can dump SD parquet ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  cloud_factory = attr.ib(
+    type=CloudpickeledCallable,
+    converter=CloudpickeledCallable,
+    default=CloudpickeledCallable.empty())
+  """CloudpickeledCallable: A serializable factory function that emits an HWC
+    numpy array image"""
+
+  # then start using get_cloud() in call sites.  could rename cloud to cloud_array and then just dump
+  # the nuscenes SDTable that we built...
+  # for SDTable and impls, lets:
+  #  * default to callable use in the code for big assets
+  #  * give SDTable a base class flag if the class to_row() should expand the data or not ! 
 
   ego_to_sensor = attr.ib(type=Transform, default=Transform())
   """Transform: From ego / robot frame to the sensor frame (typically a static
@@ -51,6 +67,14 @@ class PointCloud(object):
 
   def __eq__(self, other):
     return misc.attrs_eq(self, other)
+
+  def get_cloud(self):
+    if self.cloud is not None:
+      return self.cloud
+    elif self.cloud_factory != CloudpickeledCallable.empty():
+      return self.cloud_factory()
+    else:
+      raise ValueError("No cloud data!")
 
   # @
   # def _get_2d_debug_image(
@@ -376,9 +400,10 @@ class PointCloud(object):
     Returns:
       np.array: A HWC RGB debug image.
     """
-    depth_values = np.linalg.norm(self.cloud[:, (0, 1)], axis=-1)
+    cloud = self.get_cloud()
+    depth_values = np.linalg.norm(cloud[:, (0, 1)], axis=-1)
     return PointCloud.get_ortho_debug_image(
-              self.cloud,
+              cloud,
               cuboids=cuboids,
               camera_images=camera_images,
               ego_to_sensor=self.ego_to_sensor,
@@ -480,9 +505,10 @@ class PointCloud(object):
     ]
 
     # TODO: BEV / RV cloud
+    cloud = self.get_cloud()
     table.extend([
       ['Cloud', ''],
-      ['Num Points', len(self.cloud)]
+      ['Num Points', cloud.shape[0]]
     ])
 
     html = tabulate.tabulate(table, tablefmt='html')
@@ -493,7 +519,8 @@ class PointCloud(object):
     import plotly.graph_objects as go
     import pandas as pd
 
-    cloud_df = pd.DataFrame(self.cloud, columns=['x', 'y', 'z'])
+    cloud = self.get_cloud()
+    cloud_df = pd.DataFrame(cloud, columns=['x', 'y', 'z'])
 
     from psegs.util.plotting import rgb_for_distance
     cloud_df['color'] = [
@@ -507,7 +534,7 @@ class PointCloud(object):
                 x=cloud_df['x'], y=cloud_df['y'], z=cloud_df['z'],
                 mode='markers',
                 marker=dict(size=1, color=cloud_df['color'], opacity=0.8),)
-    print('plotted %s' % len(self.cloud))
+    # print('plotted %s' % len(cloud))
 
     lines = []
     colors = []

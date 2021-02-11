@@ -475,6 +475,7 @@ class KITTI360SDTable(StampedDatumTableBase):
     # from psegs.spark import Spark
     # from oarphpy.spark import cluster_cpu_count
     
+    util.log.info("Creating datums for KITTI-360 ...")
 
     seg_uris = cls.get_all_segment_uris()
     if only_segments:
@@ -496,13 +497,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       uris = cls.get_uris_for_sequence(seg_uri.segment_id)
 
       # Some datums are more expensive to create than others, so distribute
-      # them evenly across the RDDs
-      # import random
-      # rand = random.Random(1337)
-      # rand.shuffle(uris)
       uris = sorted(uris, key=lambda u: u.timestamp)
-      # uris = uris[:50000]
-      # print("HACK")
 
       n_partitions = max(1, int(len(uris) / URIS_PER_PARTITION))
 
@@ -511,11 +506,6 @@ class KITTI360SDTable(StampedDatumTableBase):
           seg_uri.segment_id, len(uris), n_partitions))
       
       uri_rdd = spark.sparkContext.parallelize(uris, numSlices=n_partitions)
-      # uri_rdd = uri_rdd.repartition(n_partitions)
-      
-      # for uri_chunk in oputil.ichunked(uris, URIS_PER_RDD):
-      #   uri_rdd = spark.sparkContext.parallelize(
-      #     uri_chunk, numSlices=cluster_cpu_count(spark))
 
       # Are we trying to resume? Filter URIs if necessary.
       if existing_uri_df is not None:
@@ -533,11 +523,11 @@ class KITTI360SDTable(StampedDatumTableBase):
 
       datum_rdd = uri_rdd.map(cls.create_stamped_datum)
       
-      from pyspark import StorageLevel
-      datum_rdd = datum_rdd.persist(StorageLevel.DISK_ONLY)
+      # from pyspark import StorageLevel
+      # datum_rdd = datum_rdd.persist(StorageLevel.DISK_ONLY) # hacks? ~~~~~~~~~~~~~~~~~~~
       datum_rdds.append(datum_rdd)
     
-    util.log.info("... partitioned datums into %s RDDs" % len(datum_rdds))
+    util.log.info("... partitioned datums into %s RDDs." % len(datum_rdds))
     return datum_rdds
 
 

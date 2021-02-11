@@ -124,7 +124,8 @@ def pc_to_ros_pcl(pc):
   header.frame_id = 'ego' # fixme? ~~~~~~~~~~~~~~~~~~~~~~~~` to_ros_frame(pc.sensor_name)
   header.stamp = nanostamp_to_rostime(pc.timestamp)
 
-  xyz = pc.cloud.astype(np.float32)
+  cloud = pc.get_cloud()
+  xyz = cloud.astype(np.float32)
   assert xyz.shape[-1] == 3
 
   from psegs.util.plotting import rgb_for_distance
