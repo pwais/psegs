@@ -700,10 +700,12 @@ class KITTI360SDTable(StampedDatumTableBase):
                   uri.segment_id,
                   uri.extra['kitti-360.camera'],
                   cls._get_frame_id(uri))
-    image_png = open(img_path, 'rb').read()
+    # image_png = open(img_path, 'rb').read()
+    import imageio
+    image_factory = lambda: imageio.imread(img_path)
     
     from psegs.util import misc
-    width, height = misc.get_png_wh(image_png)
+    width, height = misc.get_png_wh(open(img_path, 'rb').read(100))
 
     K = np.eye(3, 3)
     if uri.topic == 'camera|left_rect':
@@ -724,7 +726,8 @@ class KITTI360SDTable(StampedDatumTableBase):
     ego_pose = cls._get_ego_pose(uri.segment_id, frame_id)
     ci = datum.CameraImage(
           sensor_name=uri.topic,
-          image_png=bytearray(image_png),
+          # image_png=bytearray(image_png),
+          image_factory=image_factory,
           width=width,
           height=height,
           timestamp=uri.timestamp,
@@ -801,41 +804,55 @@ class KITTI360SDTable(StampedDatumTableBase):
     if uri.topic == 'lidar':
       vel_path = cls.FIXTURES.velodyne_cloud_path(
                       uri.segment_id, cls._get_frame_id(uri))
-      cloud = np.fromfile(vel_path, dtype=np.float32)
-      cloud = np.reshape(cloud, [-1, 4])
+      def _get_vel_cloud(path):
+        cloud = np.fromfile(path, dtype=np.float32)
+        cloud = np.reshape(cloud, [-1, 4])
+        return cloud
+
+      cloud_factory = lambda: _get_vel_cloud(vel_path)
 
       ego_to_sensor = velo_to_ego.get_inverse()
     
     elif uri.topic == 'laser|sick':
       sick_path = cls.FIXTURES.sick_cloud_path(
                       uri.segment_id, cls._get_frame_id(uri))
-      cloud = np.fromfile(sick_path, dtype=np.float32)
-      cloud = np.reshape(cloud, [-1, 2])
-      cloud = np.concatenate([
-                  np.zeros_like(cloud[:, 0:1]), # ? no x-dimension?
-                  -cloud[:, 0:1],
-                  cloud[:, 1:2],
-                ],
-                axis=1)
+      
+      def _get_sick_cloud(path):
+        cloud = np.fromfile(path, dtype=np.float32)
+        cloud = np.reshape(cloud, [-1, 2])
+        cloud = np.concatenate([
+                    np.zeros_like(cloud[:, 0:1]), # ? no x-dimension?
+                    -cloud[:, 0:1],
+                    cloud[:, 1:2],
+                  ],
+                  axis=1)
+        return cloud
+      
+      cloud_factory = lambda: _get_sick_cloud(sick_path)
       
       sick_from_ego = calib.sick_to_velo['laser|sick', 'lidar'] @ velo_to_ego
       ego_to_sensor = sick_from_ego.get_inverse()
     
     elif uri.topic in ('lidar|fused_static', 'lidar|fused_dynamic'):
       
-      T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
-      assert T_world_to_ego is not None, "Programming error: no pose %s" % uri
-      # T_world_to_velo = (velo_to_ego.get_inverse() @ T_world_to_ego).get_inverse()
-      T_world_to_velo = (T_world_to_ego @ velo_to_ego).get_inverse()
-      
-      chan = 'static' if 'static' in uri.topic else 'dynamic'
-      frame_id_to_chan_to_path = cls._get_fused_scan_idx(uri.segment_id)
-      path = frame_id_to_chan_to_path[frame_id][chan]
+      def _get_fused_cloud(uri, frame_id):
+        T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
+        assert T_world_to_ego is not None, "Programming error: no pose %s" % uri
+        # T_world_to_velo = (velo_to_ego.get_inverse() @ T_world_to_ego).get_inverse()
+        T_world_to_velo = (T_world_to_ego @ velo_to_ego).get_inverse()
+        
+        chan = 'static' if 'static' in uri.topic else 'dynamic'
+        frame_id_to_chan_to_path = cls._get_fused_scan_idx(uri.segment_id)
+        path = frame_id_to_chan_to_path[frame_id][chan]
 
-      import open3d
-      pcd = open3d.io.read_point_cloud(str(path))
-      cloud = np.asarray(pcd.points)
-      cloud = T_world_to_velo.apply(cloud).T
+        import open3d
+        pcd = open3d.io.read_point_cloud(str(cpath))
+        cloud = np.asarray(pcd.points)
+        cloud = T_world_to_velo.apply(cloud).T
+
+        return cloud
+
+      cloud_factory = lambda: _get_fused_cloud(uri, frame_id)
 
       ego_to_sensor = velo_to_ego.get_inverse()
 
@@ -847,7 +864,8 @@ class KITTI360SDTable(StampedDatumTableBase):
     pc = datum.PointCloud(
           sensor_name=uri.topic,
           timestamp=uri.timestamp,
-          cloud=cloud,
+          # cloud=cloud,
+          cloud_factory=cloud_factory,
           ego_to_sensor=ego_to_sensor,
           ego_pose=ego_pose or datum.Transform(),
           extra={'kitti-360.has-valid-ego-pose': str(bool(ego_pose))})

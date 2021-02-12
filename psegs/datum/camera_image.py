@@ -53,7 +53,7 @@ class CameraImage(object):
   image_factory = attr.ib(
       type=CloudpickeledCallable,
       converter=CloudpickeledCallable,
-      default=CloudpickeledCallable.empty())
+      default=None)
   """CloudpickeledCallable: A serializable factory function that emits an HWC
   numpy array image"""
 

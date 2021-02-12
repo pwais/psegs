@@ -40,7 +40,7 @@ def get_point_idx_in_cuboid(cuboid, pc=None, cloud_ego=None):
   
   # Filter to just object
   hl, hw, hh = .5 * cuboid.length_meters, .5 * cuboid.width_meters, .5 * cuboid.height_meters
-  in_box = np.where(
+  in_box = (#np.where(
       (cloud_obj[:, 0] >= -hl) & (cloud_obj[:, 0] <= hl) &
       (cloud_obj[:, 1] >= -hw) & (cloud_obj[:, 1] <= hw) &
       (cloud_obj[:, 2] >= -hh) & (cloud_obj[:, 2] <= hh))
@@ -113,12 +113,20 @@ class FusedWorldCloudTableBase(StampedDatumTableBase):
     assert False, "need RDD of Row(task_id | list[Point_cloud] | list[cuboids])"
 
   @classmethod
+  def _filter_ego_vehicle(cls, cloud_ego):
+    """Optionally filter self-returns in cloud in the ego frame for some
+    datasets (e.g. NuScenes)"""
+    return cloud_ego
+
+  @classmethod
   def _get_cleaned_world_cloud(cls, point_clouds, cuboids):
     cleaned_clouds = []
     for pc in point_clouds:
       cloud = pc.get_cloud()[:, :3] # TODO: can we keep colors?
       cloud_ego = pc.ego_to_sensor.get_inverse().apply(cloud).T
     
+      cloud_ego = cls._filter_ego_vehicle(cloud_ego)
+
       # Filter out all cuboids
       n_before = cloud_ego.shape[0]
       for cuboid in cuboids:
