@@ -105,6 +105,7 @@ class FusedWorldCloudTableBase(StampedDatumTableBase):
 
   FUSER_ALGO_NAME = 'naive_cuboid_scrubber'
 
+  SPLITS = ['train']
 
   # Subclass API
 
@@ -222,8 +223,9 @@ class FusedWorldCloudTableBase(StampedDatumTableBase):
 
   @classmethod
   def _get_all_segment_uris(cls):
-    return cls.SRC_SD_TABLE.get_all_segment_uris()
-
+    uris = cls.SRC_SD_TABLE.get_all_segment_uris()
+    uris = [u for u in uris if u.split in cls.SPLITS]
+    return uris
 
   @classmethod
   def _create_datum_rdds(
