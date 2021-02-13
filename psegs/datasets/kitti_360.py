@@ -497,13 +497,17 @@ class KITTI360SDTable(StampedDatumTableBase):
       uris = cls.get_uris_for_sequence(seg_uri.segment_id)
 
       # Some datums are more expensive to create than others, so distribute
+      # them evenly in the RDD
       uris = sorted(uris, key=lambda u: u.timestamp)
+      uris = uris[:1500]
+
+      seg_span_sec = 1e-9 * (uris[-1].timestamp - uris[0].timestamp)
 
       n_partitions = max(1, int(len(uris) / URIS_PER_PARTITION))
 
       util.log.info(
-        "... sequence %s has %s URIs, creating %s slices ..." % (
-          seg_uri.segment_id, len(uris), n_partitions))
+        "... seq %s has %s URIs spanning %2.f sec, creating %s slices ..." % (
+          seg_uri.segment_id, len(uris), seg_span_sec, n_partitions))
       
       uri_rdd = spark.sparkContext.parallelize(uris, numSlices=n_partitions)
 

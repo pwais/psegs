@@ -177,10 +177,10 @@ class SemanticKITTISDTable(StampedDatumTableBase):
   def _get_all_segment_uris(cls):
     return [
       datum.URI(
-        dataset='semantikitti-psegs-fused',
+        dataset='semantikitti',
         split='train',
         segment_id=str(seq))
-      for seq in cls.FIXTURES.get_seq_to_nscans()
+      for seq in cls.FIXTURES.get_seq_to_nscans().keys()
     ]
 
   @classmethod
@@ -204,7 +204,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
         util.log.info(
           "Finding scans for sequence %s with no movering points ..." % seq)
         n_scans = SK_SEQ_TO_NSCANS[seq]
-        slices = n_scans // 100
+        slices = max(1, n_scans // 100)
         task_rdd = spark.sparkContext.parallelize(
           range(n_scans), numSlices=slices)
         scan_has_no_movers = (
@@ -218,7 +218,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
       else:
         scan_ids = list(range(SK_SEQ_TO_NSCANS[seq]))
       
-      
+      # for testing scan_ids = scan_ids[:500]
       tasks = [(seg_uri, scan_id) for scan_id in scan_ids]
       
       # Emit camera_image RDD
@@ -306,9 +306,21 @@ class SemanticKITTISDTable(StampedDatumTableBase):
     uri.topic = 'ego_pose'
     uri.timestamp = int(scan_id) # HACK!
     
+    # Move cloud into the world frame
+    calib = cls._get_calib(seq)
+    Tr = calib["Tr"]
+    Tr_inv = np.linalg.inv(Tr)
+    cam2_pose = poses[scan_id]
+    pose = np.matmul(Tr_inv, np.matmul(cam2_pose, Tr))
+
+    # # Hack! believe ego frame is lidar here?
+    # poses = cls._get_poses(seq)
+    # ego_pose = datum.Transform.from_transformation_matrix(
+    #     poses[scan_id], src_frame='world', dest_frame='ego')
+
     # Hack! believe ego frame is lidar here?
     ego_pose = datum.Transform.from_transformation_matrix(
-        poses[scan_id], src_frame='world', dest_frame='ego')
+        pose, src_frame='world', dest_frame='ego')
 
     return datum.StampedDatum(uri=uri, transform=ego_pose)
   
@@ -322,6 +334,9 @@ class SemanticKITTISDTable(StampedDatumTableBase):
     
     sd_ego_pose = cls.create_ego_pose(base_uri, scan_id)
     ego_pose = sd_ego_pose.transform
+
+    # # The cloud is in world coords so the ego pose is effectively null
+    # ego_pose = datum.Transform()
     
     def _get_cloud(seq, sid):
       cloud = cls.FIXTURES.read_scan_get_cloud(
@@ -329,14 +344,14 @@ class SemanticKITTISDTable(StampedDatumTableBase):
             sid,
             remove_movers=cls.ONLY_FRAMES_WITH_NO_MOVERS)
       
-      # Move cloud into the world frame
-      calib = cls._get_calib(seq)
-      all_poses = cls._get_poses(seq)
-      Tr = calib["Tr"]
-      Tr_inv = np.linalg.inv(Tr)
-      cam2_pose = all_poses[sid]
-      pose = np.matmul(Tr_inv, np.matmul(cam2_pose, Tr))
-      cloud = np.matmul(pose, cloud.T).T
+      # # Move cloud into the world frame
+      # calib = cls._get_calib(seq)
+      # all_poses = cls._get_poses(seq)
+      # Tr = calib["Tr"]
+      # Tr_inv = np.linalg.inv(Tr)
+      # cam2_pose = all_poses[sid]
+      # pose = np.matmul(Tr_inv, np.matmul(cam2_pose, Tr))
+      # cloud = np.matmul(pose, cloud.T).T
       
       return cloud
 
@@ -344,7 +359,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
       sensor_name=uri.topic,
       timestamp=uri.timestamp,
       cloud_factory=lambda: _get_cloud(base_uri.segment_id, scan_id),
-      ego_to_sensor=datum.Transform(), # Hack! cloud is in world frame
+      ego_to_sensor=datum.Transform(), # Hack! ego frame is lidar frame
       ego_pose=ego_pose,
       extra={'semantic_kitti.scan_id': str(scan_id)})
     return datum.StampedDatum(uri=uri, point_cloud=pc)

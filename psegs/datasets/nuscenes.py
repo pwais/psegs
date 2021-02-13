@@ -628,6 +628,17 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
   """bool: For every lidar cloud, include a column of nuscenes-lidarseg
   labels (where available-- only training set keyframes)"""
 
+  @classmethod
+  def dataset_name(cls):
+    name = cls.API_CLS.DATASET
+    if cls.SENSORS_KEYFRAMES_ONLY:
+      name = name + '-Skfo'
+    if cls.LABELS_KEYFRAMES_ONLY:
+      name = name + '-Lkfo'
+    if cls.INCLUDE_LIDARSEG:
+      name = name + '+lseg'
+    return name
+
   ## Subclass API
   
   @classmethod
@@ -635,7 +646,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     nusc = cls.get_nusc()
     segment_ids = (s['name'] for s in nusc.scene)
     return [datum.URI(
-              dataset=nusc.DATASET,
+              dataset=cls.dataset_name(),
               split=nusc.get_split_for_scene(segment_id),
               segment_id=segment_id)
       for segment_id in segment_ids
@@ -732,7 +743,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       # broken, but the sensor timestamps look corect.
       # https://github.com/lyft/nuscenes-devkit/issues/73
       yield datum.URI(
-              dataset=nusc.DATASET,
+              dataset=cls.dataset_name(),
               split=scene_split,
               segment_id=segment_id,
               timestamp=to_nanostamp(sd['timestamp']),
@@ -749,7 +760,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
           continue
 
       yield datum.URI(
-              dataset=nusc.DATASET,
+              dataset=cls.dataset_name(),
               split=scene_split,
               segment_id=segment_id,
               timestamp=to_nanostamp(sd['timestamp']),
@@ -764,7 +775,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       # for every sample datum
       if not cls.LABELS_KEYFRAMES_ONLY:
         yield datum.URI(
-                dataset=nusc.DATASET,
+                dataset=cls.dataset_name(),
                 split=scene_split,
                 segment_id=segment_id,
                 timestamp=to_nanostamp(sd['timestamp']),
@@ -793,7 +804,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
           sd = nusc.get('sample_data', sample_data_token)
           sample_token = sd['sample_token']
           yield datum.URI(
-                  dataset=nusc.DATASET,
+                  dataset=cls.dataset_name(),
                   split=scene_split,
                   segment_id=segment_id,
                   timestamp=to_nanostamp(sd['timestamp']),

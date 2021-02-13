@@ -193,6 +193,8 @@ class StampedDatumTableBase(object):
     # TODO do we need this method or can we add partition keys in a dataframe step ? ~~~~~~~~~~~~~~~~~~~~~
     row = RowAdapter.to_row(sd)
     row = row.asDict()
+
+    # TODO: ditch these partition things and do it in the df writer?
     for k in StampedDatumTableBase.PARTITION_KEYS:
       row[k] = getattr(sd.uri, k)
     return Row(**row)

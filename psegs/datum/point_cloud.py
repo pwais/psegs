@@ -352,17 +352,17 @@ class PointCloud(object):
         (Optional) paint the cloud points using pixels from these camera
         images.
       z_bounds_meters (Tuple[int, int]): Filter points to to this min/max
-        z-value in point cloud frame.
+        z-value in point cloud frame.  Use `None` to auto-size.
       y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
-        y-value in point cloud frame.
+        y-value in point cloud frame.  Use `None` to auto-size.
       pixels_per_meter (int): Rasterize debug image at this resolution.
 
     Returns:
       np.array: A HWC RGB debug image.
     """
-    
+    cloud = self.get_cloud()
     return PointCloud.get_ortho_debug_image(
-              self.cloud,
+              cloud,
               cuboids=cuboids,
               camera_images=camera_images,
               ego_to_sensor=self.ego_to_sensor,
@@ -391,10 +391,10 @@ class PointCloud(object):
       camera_images (List[:class:`~psegs.datum.camera_image.CameraImage`]): 
         (Optional) paint the cloud points using pixels from these camera
         images.
-      z_bounds_meters (Tuple[int, int]): Filter points to to this min/max
-        z-value in point cloud frame.
+      x_bounds_meters (Tuple[int, int]): Filter points to to this min/max
+        x-value in point cloud frame.  Use `None` to auto-size.
       y_bounds_meters (Tuple[int, int]): Filter points to to this min/max
-        y-value in point cloud frame.
+        y-value in point cloud frame.  Use `None` to auto-size.
       pixels_per_meter (int): Rasterize debug image at this resolution.
 
     Returns:

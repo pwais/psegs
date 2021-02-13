@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import copy
-import os
+
 import numpy as np
+import pandas as pd
 
 from oarphpy import util as oputil
 
@@ -116,6 +117,10 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
   FUSER_ALGO_NAME = 'naive_cuboid_scrubber'
 
+  # Some datasets are not amenable to fused object clouds; use this member
+  # to opt those datasets out of object clouds.
+  HAS_OBJ_CLOUDS = True
+
   SPLITS = ['train']
 
   ### Subclass API
@@ -127,10 +132,12 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
   @classmethod
   def _should_build_world_cloud(cls, segment_uri):
-    return cls.world_cloud_path(segment_uri).exist()
+    return not cls.world_cloud_path(segment_uri).exists()
 
   @classmethod
   def _should_build_obj_clouds(cls, segment_uri):
+    if not cls.HAS_OBJ_CLOUDS:
+      return False
     seg_basepath = cls.obj_cloud_seg_basepath(segment_uri)
     return oputil.missing_or_empty(str(seg_basepath))
 
@@ -195,9 +202,10 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     
     cloud_ego = _move_clouds_to_ego_and_concat(pcs)
     for cuboid in cuboids:
-      obj_cloud = cls._get_obj_cloud(cuboid, cloud_ego=cloud_ego)
+      obj_cloud = cls._get_object_cloud(cuboid, cloud_ego=cloud_ego)
       from pyspark import Row
-      yield T.to_row(
+      from oarphpy.spark import RowAdapter
+      yield RowAdapter.to_row(
               Row(
                 track_id=cuboid.track_id,
                 task_id=task_row.task_id,
@@ -225,15 +233,21 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
   @classmethod
   def _build_world_cloud(cls, spark, segment_uri, culi_tasks_rdd):
+    if not cls._should_build_world_cloud(segment_uri):
+      return
+    
     dest_path = cls.world_cloud_path(segment_uri)
     oputil.mkdir(dest_path.parent)
     util.log.info("Building world cloud to %s ..." % dest_path)
 
+    n_tasks = culi_tasks_rdd.count()
+    util.log.info("... have %s fusion tasks ..." % n_tasks)
     world_cloud_rdd = culi_tasks_rdd.map(cls._task_to_clean_world_cloud)
 
     iclouds = world_cloud_rdd.toLocalIterator(prefetchPartitions=True)
     iclouds = oputil.ThruputObserver.to_monitored_generator(
-                iclouds, name='ComputeWorldClouds', log_freq=500)
+                iclouds, name='ComputeWorldClouds',
+                log_freq=500, n_total=n_tasks, log_on_del=True) # fixme log_on_del!~~~~~~~~~
     clouds = list(iclouds)
     if len(clouds) > 0:
       world_cloud = np.vstack(clouds)
@@ -266,15 +280,24 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
   @classmethod
   def obj_cloud_path(cls, segment_uri, track_id):
     base_path = cls.obj_cloud_seg_basepath(segment_uri)
-    fname = 'fused_obj_%s.ply' % track_id
+    track_id = track_id.replace(':', '-') # slugify ................................
+    fname = 'fused_obj.%s.ply' % track_id
     return base_path / fname
 
   @classmethod
+  def obj_cloud_idx_path(cls, segment_uri):
+    base_path = cls.obj_cloud_seg_basepath(segment_uri)
+    return base_path / "cloud_idx.csv"
+
+  @classmethod
   def _build_object_clouds(cls, spark, segment_uri, culi_tasks_rdd):
+    if not cls._should_build_obj_clouds(segment_uri):
+      return
+
     # Map task rows to rows of (partial) obj cloud s.  We create a dataframe
     # from the result because it will better help Spark budget memory.
     util.log.info("Pruning object clouds ...")
-    obj_cloud_row_rdd = culi_tasks_rdd.rdd.flatMap(cls._task_to_obj_cloud_rows)
+    obj_cloud_row_rdd = culi_tasks_rdd.flatMap(cls._task_to_obj_cloud_rows)
     obj_cloud_df = spark.createDataFrame(obj_cloud_row_rdd)
     obj_cloud_df = obj_cloud_df.persist()
     n_rows = obj_cloud_df.count()
@@ -284,52 +307,45 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     
     
     # Now fuse object clouds and save to disk
+    seg_basepath = cls.obj_cloud_seg_basepath(segment_uri)
     util.log.info("... doing fusion, saving to %s ..." % seg_basepath)
     grouped = obj_cloud_df.rdd.groupBy(lambda r: r.track_id)
     
     def _fuse_and_save(track_id_irows):
       track_id, irows = track_id_irows
       obj_cloud = cls._get_fused_cloud(irows)
-      
-      dest_path = cls.obj_cloud_path(segment_uri, track_id)
-      import open3d as o3d
-      pcd = o3d.geometry.PointCloud()
-      pcd.points = o3d.utility.Vector3dVector(obj_cloud)
-      o3d.io.write_point_cloud(str(dest_path), pcd)
+      n_points = obj_cloud.shape[0]
 
-      stats = {
-        'track_id': track_id,
-        'cloud_shape': str(obj_cloud.shape),
-        'cloud_MBytes': str(1e-6 * oputil.get_size_of_deep(obj_cloud)),
+      dest_path = cls.obj_cloud_path(segment_uri, track_id)
+      oputil.mkdir(dest_path.parent)
+      
+      if n_points > 0:
+        import open3d as o3d
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(obj_cloud)
+        o3d.io.write_point_cloud(str(dest_path), pcd)
+
+      idx_row = {
+        'track_id': str(track_id),
+        'n_points': n_points,
+        'cloud_shape': obj_cloud.shape,
+        'cloud_MBytes': 1e-6 * oputil.get_size_of_deep(obj_cloud),
         'path': dest_path,
       }
-      return stats
+      return idx_row
 
-    all_stats = grouped.map(_fuse_and_save).collect()
+    all_idx_rows = grouped.map(_fuse_and_save).collect()
     util.log.info("Saved fused clouds to %s. Stats:" % seg_basepath)
 
-    import pandas as pd
-    stats_df = pd.DataFrame(all_stats)
-    util.log.info(str(stats_df))
+    idx_df = pd.DataFrame(all_idx_rows)
+    with pd.option_context('display.max_colwidth', None):
+      util.log.info(str(idx_df))
+    
+    idx_df.to_csv(cls.obj_cloud_idx_path(segment_uri))
 
   @classmethod
   def _build_fused_clouds(cls, spark, segment_uris=None):
-    """
-    to do painted lidar: just pre-paint clouds in DF?
-
-    make a dir dataroot / fused_world_clouds / dataset / split / segment_id
-    for segment in segments:
-      culi_tasks_df = cls._get_task_lidar_cuboid_df(segment)
-    
-      import numpy as np
-      cfcloud = np.vstack(clouds)
-      print('cleaned_fcloud', cfcloud.shape)
-
-      
-
-    """
-
-    util.log.info("%s building fused world clouds ..." % cls.__name__)
+    util.log.info("%s building fused clouds ..." % cls.__name__)
 
     segment_uris = segment_uris or cls.SRC_SD_TABLE.get_all_segment_uris()
     n_segs = len(segment_uris)
@@ -340,11 +356,14 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
       util.log.info("... working on %s ..." % suri.segment_id)
 
       need_to_work = (
-        cls._should_build_world_cloud() or cls._should_build_obj_clouds())
+        cls._should_build_world_cloud(suri) or 
+        cls._should_build_obj_clouds(suri))
       if not need_to_work:
-        util.log.info("... skipping %s; world and obj clouds done")
+        util.log.info(
+          "... skipping %s; world and obj clouds done" % suri.segment_id)
         util.log.info("World Cloud: %s" % cls.world_cloud_path(suri))
         util.log.info("Obj Clouds: %s" % cls.obj_cloud_seg_basepath(suri))
+        return
 
       culi_tasks_rdd = cls._get_task_lidar_cuboid_rdd(spark, suri)
       cls._build_world_cloud(spark, suri, culi_tasks_rdd)
@@ -352,6 +371,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
     util.log.info("... %s done fusing clouds." % cls.__name__)
 
+  ### StampedDatumTable Impl
 
   @classmethod
   def _get_all_segment_uris(cls):
@@ -377,32 +397,65 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     
     cls._build_fused_clouds(spark, segment_uris=seg_uris)
 
-    world_cloud_sds = []
+    sds = []
     for seg_uri in seg_uris:
-      uri = copy.deepcopy(seg_uri)
-      uri.topic = 'lidar|world_fused|' + cls.FUSER_ALGO_NAME
+      sds.append(cls._create_world_cloud_sd(seg_uri))
+      if cls.HAS_OBJ_CLOUDS:
+        sds.extend(cls._create_obj_cloud_sds(seg_uri))
+    datum_rdds = [spark.sparkContext.parallelize(sds)]
+    return datum_rdds
+
+  @classmethod
+  def _create_world_cloud_sd(cls, segment_uri):
+    uri = copy.deepcopy(segment_uri)
+    uri.topic = 'lidar|world_fused|' + cls.FUSER_ALGO_NAME
       
-      wcloud_path = cls.world_cloud_path(seg_uri)
+    wcloud_path = cls.world_cloud_path(segment_uri)
       
-      def _load_cloud(path):
+    def _load_cloud(path):
+      import open3d as o3d
+      import numpy as np
+      pcd = o3d.io.read_point_cloud(str(path))
+      return np.asarray(pcd.points)
+
+    pc = datum.PointCloud(
+      sensor_name=uri.topic,
+      timestamp=uri.timestamp,
+      cloud_factory=lambda: _load_cloud(wcloud_path),
+      ego_to_sensor=datum.Transform(), # Hack! cloud is in world frame
+      ego_pose=datum.Transform())
+    return datum.StampedDatum(uri=uri, point_cloud=pc)
+
+  @classmethod
+  def _create_obj_cloud_sds(cls, segment_uri):
+    idx_df = pd.read_csv(cls.obj_cloud_idx_path(segment_uri))
+    for _, row in idx_df.iterrows():
+      track_id = str(row['track_id'])
+      cloud_path = row['path']
+      n_points = row['n_points']
+
+      uri = copy.deepcopy(segment_uri)
+      uri.topic = 'lidar|objects_fused|' + cls.FUSER_ALGO_NAME
+      uri.track_id = track_id
+
+      def _load_cloud(path=cloud_path): # force capture by copy
         import open3d as o3d
         import numpy as np
         pcd = o3d.io.read_point_cloud(str(path))
         return np.asarray(pcd.points)
 
+      if n_points > 0:
+        cloud_factory = _load_cloud
+      else:
+        cloud_factory = lambda: np.zeros((0, 3))
+
       pc = datum.PointCloud(
-        sensor_name=uri.topic,
+        sensor_name=track_id,
         timestamp=uri.timestamp,
-        cloud_factory=lambda: _load_cloud(wcloud_path),
+        cloud_factory=cloud_factory,
         ego_to_sensor=datum.Transform(), # Hack! cloud is in world frame
         ego_pose=datum.Transform())
-      world_cloud_sds.append(datum.StampedDatum(uri=uri, point_cloud=pc))
-
-
-      # TODO object clouds !!!!
-
-    datum_rdds = [spark.sparkContext.parallelize(world_cloud_sds)]
-    return datum_rdds
+      yield datum.StampedDatum(uri=uri, point_cloud=pc)
 
 
 
