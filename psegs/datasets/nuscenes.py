@@ -95,7 +95,8 @@ class LyftFixtures(FixturesBase):
   DATASET_VERSIONS = ('train',)
 
 
-# nuscenes is a soft dependency
+# nuscenes is a soft dependency.
+# To enable: pip3 install nuscenes-devkit==1.1.2
 try:
   from nuscenes.nuscenes import NuScenes
   BASE = NuScenes
@@ -860,6 +861,9 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     #   from au.fixtures.datasets import common
     #   viewport = datum.BBox2D.of_size(w, h)
 
+    import imageio
+    image_factory = lambda: imageio.imread(data_path)
+
     timestamp = sample_data['timestamp']
 
     ego_from_cam = transform_from_record(
@@ -877,7 +881,8 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     sensor_name = sample_data['channel']
     ci = datum.CameraImage(
             sensor_name=sensor_name,
-            image_jpeg=bytearray(open(data_path, 'rb').read()),
+            # image_jpeg=bytearray(open(data_path, 'rb').read()),
+            image_factory=image_factory,
             height=h,
             width=w,
             # viewport=viewport,~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -897,91 +902,99 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     from nuscenes.utils.data_classes import LidarPointCloud
     from nuscenes.utils.data_classes import RadarPointCloud
 
-    nusc = cls.get_nusc()
+    def _get_cloud(sd):
+      nusc = cls.get_nusc()
 
-    target_pose_token = sample_data['ego_pose_token']
+      target_pose_token = sd['ego_pose_token']
 
-    pcl_path = os.path.join(nusc.dataroot, sample_data['filename'])
-    if 'host-a011_lidar1_1233090652702363606.bin' in pcl_path:
-      util.log.warn('Kaggle download has a broken file') #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if sample_data['sensor_modality'] == 'lidar':
-      pc = LidarPointCloud.from_file(pcl_path)
-        # NB: In NuScenes, lidar is +y = forward, +x = right, +z = up
-    else:
-      pc = RadarPointCloud.from_file(pcl_path)
-        # NB: In NuScenes, radar is +x = forward, +y = left, +z = up
+      pcl_path = os.path.join(nusc.dataroot, sd['filename'])
+      if 'host-a011_lidar1_1233090652702363606.bin' in pcl_path:
+        util.log.warn('Lyft Level 5: Kaggle download has a broken file') #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      if sample_data['sensor_modality'] == 'lidar':
+        pc = LidarPointCloud.from_file(pcl_path)
+          # NB: In NuScenes, lidar is +y = forward, +x = right, +z = up
+      else:
+        pc = RadarPointCloud.from_file(pcl_path)
+          # NB: In NuScenes, radar is +x = forward, +y = left, +z = up
 
-    # Step 1: Points live in the point sensor frame.  First transform to
-    # world frame:
-    # 1a transform to ego
-    # First step: transform the point-cloud to the ego vehicle frame for the
-    # timestamp of the sweep.
-    cs_record = nusc.get(
-                  'calibrated_sensor', sample_data['calibrated_sensor_token'])
-    pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
-    pc.translate(np.array(cs_record['translation']))
+      # Step 1: Points live in the point sensor frame.  First transform to
+      # world frame:
+      # 1a transform to ego
+      # First step: transform the point-cloud to the ego vehicle frame for the
+      # timestamp of the sweep.
+      cs_record = nusc.get(
+                    'calibrated_sensor', sd['calibrated_sensor_token'])
+      pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
+      pc.translate(np.array(cs_record['translation']))
 
-    # 1b transform to the global frame.
-    poserecord = nusc.get('ego_pose', sample_data['ego_pose_token'])
-    pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
-    pc.translate(np.array(poserecord['translation']))
+      # 1b transform to the global frame.
+      poserecord = nusc.get('ego_pose', sd['ego_pose_token'])
+      pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
+      pc.translate(np.array(poserecord['translation']))
 
-    # Step 2: Send points into the ego frame at the target timestamp
-    poserecord = nusc.get('ego_pose', target_pose_token)
-    pc.translate(-np.array(poserecord['translation']))
-    pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
+      # Step 2: Send points into the ego frame at the target timestamp
+      poserecord = nusc.get('ego_pose', target_pose_token)
+      pc.translate(-np.array(poserecord['translation']))
+      pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
 
-    # n_xyz = pc.points[:3, :].T
-    #   # Throw out intensity (lidar) and ... other stuff (radar) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    n_xyz = pc.points.T
+      # n_xyz = pc.points[:3, :].T
+      #   # Throw out intensity (lidar) and ... other stuff (radar) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      n_xyz = pc.points.T
 
-    add_lidarseg = (cls.INCLUDE_LIDARSEG and 
-                      nusc.has_lidarseg() and
-                      sample_data['sensor_modality'] == 'lidar' and
-                      sample_data['is_key_frame'])
-    if add_lidarseg:
-      sample_record = nusc.get('sample', sample_data['sample_token'])
-      pointsensor_token = sample_record['data'][sample_data['channel']]
-      lidarseg_datum = nusc.get('lidarseg', pointsensor_token)
-      lidarseg_labels_filename = os.path.join(
-                                        nusc.dataroot,
-                                        lidarseg_datum['filename'])
-      # Load labels from .bin file.
-      labels = np.fromfile(lidarseg_labels_filename, dtype=np.uint8)
-      labels = np.reshape(labels, [-1, 1])
-      assert n_xyz.shape[0] == labels.shape[0], \
-        "Expected one label per point, have %s vs %s" % (
-          n_xyz.shape, labels.shape)
-      n_xyz = np.hstack([n_xyz, labels])
+      add_lidarseg = (cls.INCLUDE_LIDARSEG and 
+                        nusc.has_lidarseg() and
+                        sd['sensor_modality'] == 'lidar' and
+                        sd['is_key_frame'])
+      if add_lidarseg:
+        sample_record = nusc.get('sample', sd['sample_token'])
+        pointsensor_token = sample_record['data'][sd['channel']]
+        lidarseg_datum = nusc.get('lidarseg', pointsensor_token)
+        lidarseg_labels_filename = os.path.join(
+                                          nusc.dataroot,
+                                          lidarseg_datum['filename'])
+        # Load labels from .bin file.
+        labels = np.fromfile(lidarseg_labels_filename, dtype=np.uint8)
+        labels = np.reshape(labels, [-1, 1])
+        assert n_xyz.shape[0] == labels.shape[0], \
+          "Expected one label per point, have %s vs %s" % (
+            n_xyz.shape, labels.shape)
+        n_xyz = np.hstack([n_xyz, labels])
+      
+      return n_xyz.astype(np.float32)
+    #cloud = _get_cloud(sample_data)
+    cloud_factory = lambda: _get_cloud(sample_data)
 
     # if sample_data['sensor_modality'] == 'lidar':
     #   n_xyz = n_xyz[:, [1, 0, 2]]
     #   n_xyz[:, 0] *= -1
     #   # .............. shouldnt these be in ego because of above? ~~~~~~~~~~~``
-
+    nusc = cls.get_nusc()
+    cs_record = nusc.get(
+                  'calibrated_sensor', sample_data['calibrated_sensor_token'])
     ego_pose = transform_from_record(
                       nusc.get('ego_pose', sample_data['ego_pose_token']),
                       dest_frame='city',
                       src_frame='ego')
-    # ego_to_sensor = transform_from_record(
-    #                   cs_record,
-    #                   src_frame='ego',
-    #                   dest_frame=sample_data['channel']) # ?????????????????????????
-    real_ego_to_sensor = transform_from_record(
+    ego_to_sensor = transform_from_record(
                       cs_record,
                       src_frame='ego',
-                      dest_frame=sample_data['channel'])
+                      dest_frame=sample_data['channel']) # ?????????????????????????
+    
+    # real_ego_to_sensor = transform_from_record(
+    #                   cs_record,
+    #                   src_frame='ego',
+    #                   dest_frame=sample_data['channel'])
     # print('real_ego_to_sensor', real_ego_to_sensor) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
             # TODO FIXME
     # TODO save this xform as context ................................................
-    ego_to_sensor = datum.Transform(
-      src_frame='ego', dest_frame=sample_data['channel'])
-    motion_corrected = (sample_data['ego_pose_token'] != target_pose_token)
+    # ego_to_sensor = datum.Transform(
+    #   src_frame='ego', dest_frame=sample_data['channel'])
 
     pc = datum.PointCloud(
             sensor_name=sample_data['channel'],
             timestamp=to_nanostamp(sample_data['timestamp']),
-            cloud=n_xyz.astype(np.float32),
+            # cloud=cloud,#n_xyz.astype(np.float32),
+            cloud_factory=cloud_factory,
             # motion_corrected=motion_corrected,~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             ego_to_sensor=ego_to_sensor,
             ego_pose=ego_pose,

@@ -475,6 +475,7 @@ class KITTI360SDTable(StampedDatumTableBase):
     # from psegs.spark import Spark
     # from oarphpy.spark import cluster_cpu_count
     
+    util.log.info("Creating datums for KITTI-360 ...")
 
     seg_uris = cls.get_all_segment_uris()
     if only_segments:
@@ -496,13 +497,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       uris = cls.get_uris_for_sequence(seg_uri.segment_id)
 
       # Some datums are more expensive to create than others, so distribute
-      # them evenly across the RDDs
-      # import random
-      # rand = random.Random(1337)
-      # rand.shuffle(uris)
       uris = sorted(uris, key=lambda u: u.timestamp)
-      # uris = uris[:50000]
-      # print("HACK")
 
       n_partitions = max(1, int(len(uris) / URIS_PER_PARTITION))
 
@@ -511,11 +506,6 @@ class KITTI360SDTable(StampedDatumTableBase):
           seg_uri.segment_id, len(uris), n_partitions))
       
       uri_rdd = spark.sparkContext.parallelize(uris, numSlices=n_partitions)
-      # uri_rdd = uri_rdd.repartition(n_partitions)
-      
-      # for uri_chunk in oputil.ichunked(uris, URIS_PER_RDD):
-      #   uri_rdd = spark.sparkContext.parallelize(
-      #     uri_chunk, numSlices=cluster_cpu_count(spark))
 
       # Are we trying to resume? Filter URIs if necessary.
       if existing_uri_df is not None:
@@ -533,11 +523,11 @@ class KITTI360SDTable(StampedDatumTableBase):
 
       datum_rdd = uri_rdd.map(cls.create_stamped_datum)
       
-      from pyspark import StorageLevel
-      datum_rdd = datum_rdd.persist(StorageLevel.DISK_ONLY)
+      # from pyspark import StorageLevel
+      # datum_rdd = datum_rdd.persist(StorageLevel.DISK_ONLY) # hacks? ~~~~~~~~~~~~~~~~~~~
       datum_rdds.append(datum_rdd)
     
-    util.log.info("... partitioned datums into %s RDDs" % len(datum_rdds))
+    util.log.info("... partitioned datums into %s RDDs." % len(datum_rdds))
     return datum_rdds
 
 
@@ -710,10 +700,12 @@ class KITTI360SDTable(StampedDatumTableBase):
                   uri.segment_id,
                   uri.extra['kitti-360.camera'],
                   cls._get_frame_id(uri))
-    image_png = open(img_path, 'rb').read()
+    # image_png = open(img_path, 'rb').read()
+    import imageio
+    image_factory = lambda: imageio.imread(img_path)
     
     from psegs.util import misc
-    width, height = misc.get_png_wh(image_png)
+    width, height = misc.get_png_wh(open(img_path, 'rb').read(100))
 
     K = np.eye(3, 3)
     if uri.topic == 'camera|left_rect':
@@ -734,7 +726,8 @@ class KITTI360SDTable(StampedDatumTableBase):
     ego_pose = cls._get_ego_pose(uri.segment_id, frame_id)
     ci = datum.CameraImage(
           sensor_name=uri.topic,
-          image_png=bytearray(image_png),
+          # image_png=bytearray(image_png),
+          image_factory=image_factory,
           width=width,
           height=height,
           timestamp=uri.timestamp,
@@ -811,41 +804,55 @@ class KITTI360SDTable(StampedDatumTableBase):
     if uri.topic == 'lidar':
       vel_path = cls.FIXTURES.velodyne_cloud_path(
                       uri.segment_id, cls._get_frame_id(uri))
-      cloud = np.fromfile(vel_path, dtype=np.float32)
-      cloud = np.reshape(cloud, [-1, 4])
+      def _get_vel_cloud(path):
+        cloud = np.fromfile(path, dtype=np.float32)
+        cloud = np.reshape(cloud, [-1, 4])
+        return cloud
+
+      cloud_factory = lambda: _get_vel_cloud(vel_path)
 
       ego_to_sensor = velo_to_ego.get_inverse()
     
     elif uri.topic == 'laser|sick':
       sick_path = cls.FIXTURES.sick_cloud_path(
                       uri.segment_id, cls._get_frame_id(uri))
-      cloud = np.fromfile(sick_path, dtype=np.float32)
-      cloud = np.reshape(cloud, [-1, 2])
-      cloud = np.concatenate([
-                  np.zeros_like(cloud[:, 0:1]), # ? no x-dimension?
-                  -cloud[:, 0:1],
-                  cloud[:, 1:2],
-                ],
-                axis=1)
+      
+      def _get_sick_cloud(path):
+        cloud = np.fromfile(path, dtype=np.float32)
+        cloud = np.reshape(cloud, [-1, 2])
+        cloud = np.concatenate([
+                    np.zeros_like(cloud[:, 0:1]), # ? no x-dimension?
+                    -cloud[:, 0:1],
+                    cloud[:, 1:2],
+                  ],
+                  axis=1)
+        return cloud
+      
+      cloud_factory = lambda: _get_sick_cloud(sick_path)
       
       sick_from_ego = calib.sick_to_velo['laser|sick', 'lidar'] @ velo_to_ego
       ego_to_sensor = sick_from_ego.get_inverse()
     
     elif uri.topic in ('lidar|fused_static', 'lidar|fused_dynamic'):
       
-      T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
-      assert T_world_to_ego is not None, "Programming error: no pose %s" % uri
-      # T_world_to_velo = (velo_to_ego.get_inverse() @ T_world_to_ego).get_inverse()
-      T_world_to_velo = (T_world_to_ego @ velo_to_ego).get_inverse()
-      
-      chan = 'static' if 'static' in uri.topic else 'dynamic'
-      frame_id_to_chan_to_path = cls._get_fused_scan_idx(uri.segment_id)
-      path = frame_id_to_chan_to_path[frame_id][chan]
+      def _get_fused_cloud(uri, frame_id):
+        T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
+        assert T_world_to_ego is not None, "Programming error: no pose %s" % uri
+        # T_world_to_velo = (velo_to_ego.get_inverse() @ T_world_to_ego).get_inverse()
+        T_world_to_velo = (T_world_to_ego @ velo_to_ego).get_inverse()
+        
+        chan = 'static' if 'static' in uri.topic else 'dynamic'
+        frame_id_to_chan_to_path = cls._get_fused_scan_idx(uri.segment_id)
+        path = frame_id_to_chan_to_path[frame_id][chan]
 
-      import open3d
-      pcd = open3d.io.read_point_cloud(str(path))
-      cloud = np.asarray(pcd.points)
-      cloud = T_world_to_velo.apply(cloud).T
+        import open3d
+        pcd = open3d.io.read_point_cloud(str(cpath))
+        cloud = np.asarray(pcd.points)
+        cloud = T_world_to_velo.apply(cloud).T
+
+        return cloud
+
+      cloud_factory = lambda: _get_fused_cloud(uri, frame_id)
 
       ego_to_sensor = velo_to_ego.get_inverse()
 
@@ -857,7 +864,8 @@ class KITTI360SDTable(StampedDatumTableBase):
     pc = datum.PointCloud(
           sensor_name=uri.topic,
           timestamp=uri.timestamp,
-          cloud=cloud,
+          # cloud=cloud,
+          cloud_factory=cloud_factory,
           ego_to_sensor=ego_to_sensor,
           ego_pose=ego_pose or datum.Transform(),
           extra={'kitti-360.has-valid-ego-pose': str(bool(ego_pose))})

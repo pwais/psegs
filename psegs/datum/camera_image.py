@@ -18,6 +18,8 @@ import typing
 import attr
 import numpy as np
 
+from oarphpy.spark import CloudpickeledCallable
+
 from psegs.datum.transform import Transform
 from psegs.util import misc
 from psegs.util import plotting as pspl
@@ -47,6 +49,13 @@ class CameraImage(object):
 
   image_png = attr.ib(type=bytearray, default=bytearray())
   """bytearray: Buffer of image PNG data"""
+
+  image_factory = attr.ib(
+      type=CloudpickeledCallable,
+      converter=CloudpickeledCallable,
+      default=None)
+  """CloudpickeledCallable: A serializable factory function that emits an HWC
+  numpy array image"""
 
   width = attr.ib(type=int, default=0, validator=None)
   """int: Width of image in pixels"""
@@ -107,11 +116,14 @@ class CameraImage(object):
     """
     buf = self.image_buffer
     if not buf:
-      raise ValueError("No image data!")
+      if self.image_factory != CloudpickeledCallable.empty():
+        return self.image_factory()
+      else:
+        raise ValueError("No image data!")
       
     from io import BytesIO
     import imageio
-    return imageio.imread(BytesIO(buf))  
+    return imageio.imread(BytesIO(buf))
   
   @property
   def image_buffer(self):

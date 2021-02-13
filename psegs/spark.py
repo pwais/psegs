@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import os
 
 from oarphpy import spark
@@ -28,8 +29,9 @@ class Spark(spark.SessionFactory):
   SRC_ROOT_MODULES = ['psegs']
 
   CONF_KV = {
-    'spark.driver.maxResultSize': '2g',
+    'spark.driver.maxResultSize': '10g',
     'spark.driver.memory': '16g',
+    # 'spark.driver.cores': '18',
     # 'spark.memory.offHeap.enabled': 'true',
     # 'spark.memory.offHeap.size': '100g',
 
@@ -80,3 +82,9 @@ class Spark(spark.SessionFactory):
       
       t.stop_block(n=1, num_bytes=num_bytes)
       t.maybe_log_progress(every_n=1)
+
+# Expose a NBSpark "subclass" configured for PSegs
+NBSpark = copy.deepcopy(spark.NBSpark)
+NBSpark.SRC_ROOT = Spark.SRC_ROOT
+NBSpark.SRC_ROOT_MODULES = Spark.SRC_ROOT_MODULES
+NBSpark.CONF_KV.update(Spark.CONF_KV)
