@@ -26,6 +26,9 @@ from psegs.table.sd_table import StampedDatumTableBase
 
 import numpy as np
 
+###############################################################################
+### Lidar Fusion
+
 
 ### Utils & Core Fusion Algo Pieces
 
@@ -113,6 +116,12 @@ class TaskLidarCuboidCameraDFFactory(object):
   these as "frames"; we use the word "task" to distinguish these groupings
   from the unrelated frames-of-reference e.g. lidar frame, world frame, etc).
 
+  The Task IDs implicitly represent numerical timestamps (but need not be
+  real timestamps-- the Stamped Datum URIs have real timestamps).  Task IDs
+  must be in chronological order: task T+1 should be an event after task T.
+  The IDs need not be dense (there can be gaps e.g. 1, 2, 3, 7, 8, 9) but
+  any gaps may impact synthetic flow generation.
+
   Create a DataFrame here so that it's cheap to omit columns when needed.
   """
 
@@ -181,6 +190,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
   @classmethod
   def _get_cleaned_world_cloud(cls, point_clouds, cuboids):
     cleaned_clouds = []
+    pruned_counts = []
     for pc in point_clouds:
       cloud = pc.get_cloud()[:, :3] # TODO: can we keep colors?
       cloud_ego = pc.ego_to_sensor.get_inverse().apply(cloud).T
@@ -197,16 +207,16 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
       T_world_to_ego = pc.ego_pose
       cloud_world = T_world_to_ego.apply(cloud_ego).T # why is this name backwards?? -- hmm works for nusc too
 
-      # util.log.info("Filtered %s -> %s" % (n_before, n_after))
       cleaned_clouds.append(cloud_world)
-    return np.vstack(cleaned_clouds)
+      pruned_counts.append(n_before - n_after)
+    return np.vstack(cleaned_clouds), pruned_counts
 
   @classmethod
   def _task_to_clean_world_cloud(cls, task_row):
     pcs = task_row.point_clouds
     cuboids = task_row.cuboids
-    world_cloud = cls._get_cleaned_world_cloud(pcs, cuboids)
-    return world_cloud
+    world_cloud, pruned_counts = cls._get_cleaned_world_cloud(pcs, cuboids)
+    return world_cloud, pruned_counts
 
 
   # Object Cloud Fusion
@@ -270,15 +280,20 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     util.log.info("... fusing %s tasks ..." % n_tasks)
     world_cloud_rdd = culi_tasks_rdd.map(cls._task_to_clean_world_cloud)
     
+    # Force fusion before we pull clouds to the driver (prevent an OOM)
     from pyspark import StorageLevel
     world_cloud_rdd = world_cloud_rdd.persist(StorageLevel.MEMORY_AND_DISK)
-
-    # Force fusion before we pull clouds to the driver (prevent an OOM)
     t = oputil.ThruputObserver(name='FuseWorldClouds', n_total=n_tasks)
     t.start_block()
-    n_bytes = sum(world_cloud_rdd.map(oputil.get_size_of_deep).collect())
-    t.stop_block(n=n_tasks, num_bytes=n_bytes)
+    n_bytes_n_pruned_rdd = world_cloud_rdd.map(
+      lambda c_pc: (oputil.get_size_of_deep(c_pc[0]), c_pc[1]))
+    n_bytes_n_pruned = n_bytes_n_pruned_rdd.collect()
+    n_bytes = sum(nn[0] for nn in n_bytes_n_pruned)
+    t.stop_block(n=n_tasks, num_bytes=n_bytes)    
     t.maybe_log_progress(every_n=1)
+    n_pruned = np.array([nn[1] for nn in n_bytes_n_pruned])
+    util.log.info("Total points pruned: %s" % np.sum(n_pruned))
+    util.log.info("Avg pts pruned per cloud: %s" % np.mean(n_pruned))
 
     iclouds = world_cloud_rdd.toLocalIterator(prefetchPartitions=True)
     iclouds = oputil.ThruputObserver.to_monitored_generator(
@@ -503,14 +518,20 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
 
 
-class FusedObjectFromCuboidTable(StampedDatumTableBase):
-  """
+###############################################################################
+### Optical Flow from Fused Lidar
 
-  read SD table and emit a topic lidar|obj_clouds; write plys to disk
+class OpticalFlowRender(object):
 
-  """
-  
+  TASK_DF_FACTORY = None
+
+  RENDERER_ALGO_NAME = 'naive_shortest_ray'
+
+  MAX_TASKS_SEED = 1337
+  MAX_TASKS_PER_SEGMENT = -1
+  TASK_OFFSETS = (1, 5)
+
+  render_func = None # TODO for python notebook drafting .........................
+
   @classmethod
-  def get_cleaned(cls):
-    pass
-
+  def 
