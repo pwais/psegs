@@ -499,7 +499,6 @@ class KITTI360SDTable(StampedDatumTableBase):
       # Some datums are more expensive to create than others, so distribute
       # them evenly in the RDD
       uris = sorted(uris, key=lambda u: u.timestamp)
-      uris = uris[:1500]
 
       seg_span_sec = 1e-9 * (uris[-1].timestamp - uris[0].timestamp)
 

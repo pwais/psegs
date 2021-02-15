@@ -241,14 +241,26 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     util.log.info("Building world cloud to %s ..." % dest_path)
 
     n_tasks = culi_tasks_rdd.count()
-    util.log.info("... have %s fusion tasks ..." % n_tasks)
+    util.log.info("... fusing %s tasks ..." % n_tasks)
     world_cloud_rdd = culi_tasks_rdd.map(cls._task_to_clean_world_cloud)
+    
+    from pyspark import StorageLevel
+    world_cloud_rdd = world_cloud_rdd.persist(StorageLevel.MEMORY_AND_DISK)
+
+    # Force fusion before we pull clouds to the driver (prevent an OOM)
+    t = oputil.ThruputObserver(name='FuseWorldClouds', n_total=n_tasks)
+    t.start_block()
+    n_bytes = sum(world_cloud_rdd.map(oputil.get_size_of_deep).collect())
+    t.stop_block(n=n_tasks, num_bytes=n_bytes)
+    t.maybe_log_progress(every_n=1)
 
     iclouds = world_cloud_rdd.toLocalIterator(prefetchPartitions=True)
     iclouds = oputil.ThruputObserver.to_monitored_generator(
-                iclouds, name='ComputeWorldClouds',
+                iclouds, name='CollectWorldClouds',
                 log_freq=500, n_total=n_tasks, log_on_del=True) # fixme log_on_del!~~~~~~~~~
-    clouds = list(iclouds)
+    
+    # Pull one partition at a time to avoid a driver OOM
+    clouds = list(iclouds)#world_cloud_rdd.collect()
     if len(clouds) > 0:
       world_cloud = np.vstack(clouds)
     else:
@@ -308,7 +320,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     
     # Now fuse object clouds and save to disk
     seg_basepath = cls.obj_cloud_seg_basepath(segment_uri)
-    util.log.info("... doing fusion, saving to %s ..." % seg_basepath)
+    util.log.info("... fusing obj clouds, saving to %s ..." % seg_basepath)
     grouped = obj_cloud_df.rdd.groupBy(lambda r: r.track_id)
     
     def _fuse_and_save(track_id_irows):
@@ -335,9 +347,12 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
       return idx_row
 
     all_idx_rows = grouped.map(_fuse_and_save).collect()
-    util.log.info("Saved fused clouds to %s. Stats:" % seg_basepath)
-
     idx_df = pd.DataFrame(all_idx_rows)
+
+    util.log.info("Saved fused clouds to %s. Wrote %2.f MBytes" % (
+      seg_basepath, idx_df['cloud_MBytes'].sum()))
+    util.log.info("Stats:")
+
     with pd.option_context('display.max_colwidth', None):
       util.log.info(str(idx_df))
     
@@ -350,24 +365,27 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     segment_uris = segment_uris or cls.SRC_SD_TABLE.get_all_segment_uris()
     n_segs = len(segment_uris)
     util.log.info("... have %s segments to fuse ..." % n_segs)
-    isegs = oputil.ThruputObserver.to_monitored_generator(
-              iter(segment_uris), name='FuseSegments', n_total=n_segs)
-    for suri in isegs:
+
+    t = oputil.ThruputObserver(name='FuseEachSegment', n_total=n_segs)
+    for suri in segment_uris:
+      t.start_block()# TODO add a log to stop block or give a loop body wrapper ....
       util.log.info("... working on %s ..." % suri.segment_id)
 
       need_to_work = (
         cls._should_build_world_cloud(suri) or 
         cls._should_build_obj_clouds(suri))
-      if not need_to_work:
+      if need_to_work:
+        culi_tasks_rdd = cls._get_task_lidar_cuboid_rdd(spark, suri)
+        cls._build_world_cloud(spark, suri, culi_tasks_rdd)
+        cls._build_object_clouds(spark, suri, culi_tasks_rdd)
+      else:
         util.log.info(
           "... skipping %s; world and obj clouds done" % suri.segment_id)
         util.log.info("World Cloud: %s" % cls.world_cloud_path(suri))
         util.log.info("Obj Clouds: %s" % cls.obj_cloud_seg_basepath(suri))
-        return
-
-      culi_tasks_rdd = cls._get_task_lidar_cuboid_rdd(spark, suri)
-      cls._build_world_cloud(spark, suri, culi_tasks_rdd)
-      cls._build_object_clouds(spark, suri, culi_tasks_rdd)
+      
+      t.stop_block(n=1)
+      t.maybe_log_progress(every_n=1)
 
     util.log.info("... %s done fusing clouds." % cls.__name__)
 
