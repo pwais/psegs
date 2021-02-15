@@ -116,11 +116,11 @@ class TaskLidarCuboidCameraDFFactory(object):
   these as "frames"; we use the word "task" to distinguish these groupings
   from the unrelated frames-of-reference e.g. lidar frame, world frame, etc).
 
-  The Task IDs implicitly represent numerical timestamps (but need not be
-  real timestamps-- the Stamped Datum URIs have real timestamps).  Task IDs
-  must be in chronological order: task T+1 should be an event after task T.
-  The IDs need not be dense (there can be gaps e.g. 1, 2, 3, 7, 8, 9) but
-  any gaps may impact synthetic flow generation.
+  The (integer) Task IDs implicitly represent numerical timestamps (but need
+  not be real timestamps-- the Stamped Datum URIs have real timestamps).  
+  Task IDs must be in chronological order: task T+1 should be an event one 
+  time-step after task T. The IDs need not be dense (there can be gaps
+  e.g. 1, 2, 3, 7, 8, 9) but any gaps may impact synthetic flow generation.
 
   Create a DataFrame here so that it's cheap to omit columns when needed.
   """
@@ -528,10 +528,55 @@ class OpticalFlowRender(object):
   RENDERER_ALGO_NAME = 'naive_shortest_ray'
 
   MAX_TASKS_SEED = 1337
-  MAX_TASKS_PER_SEGMENT = -1
+  MAX_TASKS_PER_SEGMENT = 10
   TASK_OFFSETS = (1, 5)
 
   render_func = None # TODO for python notebook drafting .........................
 
   @classmethod
-  def 
+  def _get_oflow_task_df(cls, spark, segment_id):
+    task_df = cls.TASK_DF_FACTORY.build_df_for_segment(spark, segment_id)
+
+    task_id_filter_clause = ''
+    if cls.MAX_TASKS_PER_SEGMENT > 0:
+      task_ids = [r.task_id for r in task_df.select('task_id').collect()]
+      from random import Random
+      r = Random(cls.MAX_TASKS_SEED)
+      r.shuffle(task_ids)
+      task_ids = task_ids[:cls.MAX_TASKS_PER_SEGMENT]
+      tid_str = ", ".join(str(tid) for tid in task_ids)
+      task_id_filter_clause = "AND task_id1 in ( %s )" % tid_str
+
+    task_id_join_clauses = [
+      "( task_id_1 = (task_id_2 + %s) )" % offset
+      for offset in cls.TASK_OFFSETS
+    ]
+    task_id_join_clause = " OR ".join(task_id_join_clauses)
+
+    spark.catalog.dropTempView('oflow_culici_tasks_df')
+    task_df.registerTempTable('oflow_culici_tasks_df')
+    oflow_task_df = spark.sql(
+      """
+        SELECT
+          CONCAT(cuci_1.task_id, '->', cuci_1.task_id) AS oflow_task_id,
+          
+          cuci_1.task_id AS task_id_1,
+          cuci_1.cuboids AS cuboids_t1,
+          cuci_1.camera_images AS camera_images_t1,
+
+          cuci_2.task_id AS task_id_2,
+          cuci_2.cuboids AS cuboids_t2,
+          cuci_2.camera_images AS camera_images_t2
+        
+        FROM
+          oflow_culici_tasks_df AS cuci_1, oflow_culici_tasks_df AS cuci_2
+        
+        WHERE
+          SIZE(camera_images_t1) > 0 AND
+          SIZE(camera_images_t2) > 0 AND
+          ( {task_id_join_clause} ) {task_id_filter_clause}
+      """.format(
+            task_id_join_clause=task_id_join_clause,
+            task_id_filter_clause=task_id_filter_clause))
+    
+    return oflow_task_df
