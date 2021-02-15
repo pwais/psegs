@@ -106,6 +106,24 @@ def _move_clouds_to_ego_and_concat(point_clouds):
     
 # # iclouds = culi_tasks_df.repartition(5000).rdd.flatMap(iter_cleaned_world_clouds).toLocalIterator(prefetchPartitions=True) # KITTI EDIT iterator
 
+class TaskLidarCuboidCameraDFFactory(object):
+  """Adapt a `StampedDatumTable` to a table of "tasks" where each task has
+  all point clouds, cuboids, and camera images associated with a specific
+  time point or event.  (Some datasets, like KITTI and Waymo OD, refer to
+  these as "frames"; we use the word "task" to distinguish these groupings
+  from the unrelated frames-of-reference e.g. lidar frame, world frame, etc).
+
+  Create a DataFrame here so that it's cheap to omit columns when needed.
+  """
+
+  SRC_SD_TABLE = None
+
+  def build_df_for_segment(cls, spark, segment_uri):
+    """The DF should have rows like:
+    Row(task_id | list[Point_cloud] | list[cuboids] | list[camera_image])"""
+    raise NotImplementedError()
+
+
 
 class FusedLidarCloudTableBase(StampedDatumTableBase):
   """
@@ -113,7 +131,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
   """
 
-  SRC_SD_TABLE = None
+  TASK_DF_FACTORY = None
 
   FUSER_ALGO_NAME = 'naive_cuboid_scrubber'
 
@@ -126,11 +144,6 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
   ### Subclass API
 
   @classmethod
-  def _get_task_lidar_cuboid_rdd(cls, spark, segment_uri):
-    # "need RDD of Row(task_id | list[Point_cloud] | list[cuboids])"
-    return None
-
-  @classmethod
   def _should_build_world_cloud(cls, segment_uri):
     return not cls.world_cloud_path(segment_uri).exists()
 
@@ -141,6 +154,21 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     seg_basepath = cls.obj_cloud_seg_basepath(segment_uri)
     return oputil.missing_or_empty(str(seg_basepath))
 
+
+  ## Utils
+
+  @classmethod
+  def SRC_SD_T(cls):
+    return cls.TASK_DF_FACTORY.SRC_SD_TABLE
+
+  @classmethod
+  def _get_task_lidar_cuboid_rdd(cls, spark, segment_uri):
+    # "need RDD of Row(task_id | list[Point_cloud] | list[cuboids])"
+    df = cls.TASK_DF_FACTORY.build_df_for_segment(spark, segment_uri)
+    df = df.select('task_id', 'point_clouds', 'cuboids')
+    T = cls.SRC_SD_T()
+    unpacked_rdd = df.rdd.map(T.from_row)
+    return unpacked_rdd
 
   ## World Cloud Fusion
 
@@ -175,9 +203,8 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
   @classmethod
   def _task_to_clean_world_cloud(cls, task_row):
-    T = cls.SRC_SD_TABLE
-    pcs = [T.from_row(rr) for rr in task_row.point_clouds]
-    cuboids = [T.from_row(c) for c in task_row.cuboids]
+    pcs = task_row.point_clouds
+    cuboids = task_row.cuboids
     world_cloud = cls._get_cleaned_world_cloud(pcs, cuboids)
     return world_cloud
 
@@ -196,10 +223,9 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
   
   @classmethod
   def _task_to_obj_cloud_rows(cls, task_row):
-    T = cls.SRC_SD_TABLE
-    pcs = [T.from_row(rr) for rr in task_row.point_clouds]
-    cuboids = [T.from_row(c) for c in task_row.cuboids]
-    
+    pcs = task_row.point_clouds
+    cuboids = task_row.cuboids
+
     cloud_ego = _move_clouds_to_ego_and_concat(pcs)
     for cuboid in cuboids:
       obj_cloud = cls._get_object_cloud(cuboid, cloud_ego=cloud_ego)
@@ -213,7 +239,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
   @classmethod
   def _get_fused_cloud(cls, obj_cloud_rows):
-    T = cls.SRC_SD_TABLE
+    T = cls.SRC_SD_T()
     obj_clouds = [T.from_row(r.obj_cloud) for r in obj_cloud_rows]
     return np.vstack(obj_clouds)
 
@@ -362,7 +388,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
   def _build_fused_clouds(cls, spark, segment_uris=None):
     util.log.info("%s building fused clouds ..." % cls.__name__)
 
-    segment_uris = segment_uris or cls.SRC_SD_TABLE.get_all_segment_uris()
+    segment_uris = segment_uris or cls.SRC_SD_T().get_all_segment_uris()
     n_segs = len(segment_uris)
     util.log.info("... have %s segments to fuse ..." % n_segs)
 
