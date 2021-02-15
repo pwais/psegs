@@ -193,6 +193,11 @@ class Sample(object):
     return list(itertools.chain.from_iterable(
       sd.cuboids for sd in self.topic_datums(topic='labels|cuboids')))
 
+  ## Utils
+
+  def get_topics(self):
+    return sorted(set(sd.uri.topic for sd in self.datums))
+
 
 ###
 ### Prototypes

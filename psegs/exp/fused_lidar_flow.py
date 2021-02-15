@@ -22,6 +22,7 @@ from oarphpy import util as oputil
 from psegs import datum
 from psegs import util
 from psegs.conf import C
+from psegs.spark import Spark
 from psegs.table.sd_table import StampedDatumTableBase
 
 import numpy as np
@@ -521,9 +522,438 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 ###############################################################################
 ### Optical Flow from Fused Lidar
 
+
+###############################################################################
+## FROM PAPER SCRATCH
+
+
+## PSEGS
+
+
+def color_to_opencv(color):
+  r, g, b = np.clip(color, 0, 255).astype(int).tolist()
+  return b, g, r
+
+def rgb_for_distance(d_meters, period_meters=10.):
+  """Given a distance `d_meters` or an array of distances, return an
+  `np.array([r, g, b])` color array for the given distance (or a 2D array
+  of colors if the input is an array)).  We choose a distinct hue every
+  `period_meters` and interpolate between hues for `d_meters`.
+  """
+  from oarphpy.plotting import hash_to_rbg
+
+  if not isinstance(d_meters, np.ndarray):
+    d_meters = np.array([d_meters])
+  
+  SEED = 10 # Colors for 0 and 1 look too similar otherwise
+  max_bucket = int(np.ceil(d_meters.max() / period_meters))
+  bucket_to_color = np.array(
+    [hash_to_rbg(bucket + SEED) for bucket in range(max_bucket + 2)])
+
+  # Use numpy's indexing for fast "table lookup" of bucket ids (bids) in
+  # the "table" bucket_to_color
+  bucket_below = np.floor(d_meters / period_meters)
+  bucket_above = bucket_below + 1
+
+  color_below = bucket_to_color[bucket_below.astype(int)]
+  color_above = bucket_to_color[bucket_above.astype(int)]
+
+  # For each distance, interpolate to *nearest* color based on L1 distance
+  d_relative = d_meters / period_meters
+  l1_dist_below = np.abs(d_relative - bucket_below)
+  l1_dist_above = np.abs(d_relative - bucket_above)
+
+  colors = (
+    (1. - l1_dist_below) * color_below.T + 
+    (1. - l1_dist_above) * color_above.T)
+
+  colors = colors.T
+  if len(d_meters) == 1:
+    return colors[0]
+  else:
+    return colors
+
+def draw_xy_depth_px_in_image(img, pts, alpha=.7):
+  """
+  new!
+  Draw a point cloud `pts` in `img`. Point color interpolates between
+  standard colors for each 10-meter tick.
+
+  Args:
+    img (np.array): Draw in this image.
+    pts (np.array): An array of N by 3 points in form
+      (pixel x, pixel y, depth meters).
+    dot_size (int): Size of the dot to draw for each point.
+    alpha (float): Blend point color using weight [0, 1].
+  """
+
+  import cv2
+
+  # OpenCV can't draw transparent colors, so we use the 'overlay image' trick:
+  # First draw dots an an overlay...
+  overlay = img.copy()
+
+  pts = pts.copy()
+  pts = pts[-pts[:, -1].argsort()]
+    # short by distance descending; let colors of nearer points
+    # override colors of farther points
+  print(pts.shape)
+
+  colors = rgb_for_distance(pts[:, 2])
+  print(colors.shape)
+  colors = np.clip(colors, 0, 255).astype(int)
+  print(colors.shape)
+  for i, ((x, y), color) in enumerate(zip(pts[:, :2].tolist(), colors.tolist())):
+    x = int(round(x))
+    y = int(round(y))
+    if y >= overlay.shape[0] or x >= overlay.shape[1]:
+        continue
+    overlay[y, x, :] = color
+#     print(color)
+    
+    if i > 0 and ((i % 500000) == 0):
+        print(i, flush=True)
+
+  # Now blend!
+  img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+
+
+
+
+
+
+
+
+
+
+
+## Common Support
+
+# collect img1, pose1
+# collect img2, pose2
+# collect all clouds (save in RAM)
+# collect all labels / cuboids
+
+def make_homo(cloud):
+  if cloud.shape[-1] == 4:
+    return cloud
+  else:
+    out = np.ones((cloud.shape[0], 4))
+    out[:, :3] = cloud[:, :3]
+    return out
+
+import numba
+from numba import jit
+
+@jit(nopython=True)
+def get_nearest_idx(uvd):
+  max_u = int(np.rint(np.max(uvd[:, 0])))
+  max_v = int(np.rint(np.max(uvd[:, 1])))
+  nearest = np.full((max_u + 1, max_v + 1, 2), np.Inf)
+  for r in range(uvd.shape[0]):
+    d = uvd[r, 2]
+    u = int(np.rint(uvd[r, 0]))
+    v = int(np.rint(uvd[r, 1]))
+    if d < nearest[u, v, 1]:
+      nearest[u, v, 1] = d
+      nearest[u, v, 0] = r
+
+  rs = nearest[:, :, 0].flatten()
+  return rs[rs != np.Inf].astype(np.int64)
+
+
+def compute_optical_flows(
+      world_cloud=np.zeros((0, 3)),
+      T_ego2lidar=np.eye(4),
+      T_lidar2cam=np.eye(4),
+      P=np.eye(4),
+      cam_height_pixels=0,
+      cam_width_pixels=0,
+
+      ego_pose1=np.eye(4),
+      ego_pose2=np.eye(4),
+      moving_1=np.zeros((0, 3)),
+      moving_2=np.zeros((0, 3)),
+
+      img1_factory=lambda: np.zeros((1, 1, 3)),
+      img2_factory=lambda: np.zeros((1, 1, 3)),
+      debug_title=''):
+  
+  h, w = cam_height_pixels, cam_width_pixels
+  
+  pose1 = np.linalg.inv(ego_pose1) # FIXME for Semantic KITTI ??
+  pose2 = np.linalg.inv(ego_pose2) # FIXME for Semantic KITTI ??
+  print('diff Tx_pose1->Tx_pose2', pose2[:, -1] - pose1[:, -1])
+  
+  hfused_world_cloud = make_homo(world_cloud)
+  is_moving_ignore = np.zeros((hfused_world_cloud.shape[0], 1))
+  
+
+  # Add all moving things at t1 and t2 to environment; we'll mask them
+  # TODO NO MASK!! ?? ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
+  hfused_world_cloud = np.vstack([
+    hfused_world_cloud,
+    make_homo(moving_1),
+    make_homo(moving_2),
+  ])
+#     is_moving_ignore = np.vstack([
+#       is_moving_ignore,
+#       np.ones((m1.shape[0], 1)),
+#       np.ones((m2.shape[0], 1)),
+#     ])
+
+  def world_to_uvdij_visible_t(pose):
+    import time
+    start = time.time()
+    
+    xyz_ego_t = np.matmul(pose, hfused_world_cloud.T)
+    print(time.time() - start, 'projected to xyz_ego_t')
+#     print('xyz_ego_t mean min max', np.mean(xyz_ego_t, axis=1), np.min(xyz_ego_t, axis=1), np.max(xyz_ego_t, axis=1))
+
+
+    uvd = P.dot(T_lidar2cam.dot( T_ego2lidar.dot( xyz_ego_t ) ) )
+    uvd[0:2, :] /= uvd[2, :]
+    uvd = uvd.T
+    uvd = uvd[:, :3]
+    ij = np.rint(uvd[:, (0, 1)]) # Group by rounded pixel coord; need orig (u, v) for sub-pixel flow
+    uvdij = np.hstack([uvd, ij])
+    print(time.time() - start, 'projected to uvd')
+
+    in_cam_frustum = np.where(
+        (uvdij[:, 0] >= 0) & 
+        (uvdij[:, 0] <= w - 1) &
+        (uvdij[:, 1] >= 0) & 
+        (uvdij[:, 1] <= h - 1) &
+        (uvdij[:, 2] >= 0.01))
+
+    uvdij_in_cam = uvdij[in_cam_frustum]
+#     uvdij, uvdij_in_cam = project_to_uvd(P, pose, hfused_world_cloud, T_lidar2cam, T_ego2lidar, w, h)
+    print(time.time() - start, 'projected to uvd in cam')
+
+    
+#     print('render using pandas %s ...' % (uvdij_in_cam.shape,))
+#     import pandas as pd
+#     start = time.time()
+#     df = pd.DataFrame(uvdij_in_cam[:, 2:], columns=['d', 'i', 'j'])
+#     df['id'] = df.index
+#     nearest_idx = df.groupby(['i', 'j'])['d'].idxmin().to_numpy()
+#     print(time.time() - start, 'done pandas, %s winners' % (nearest_idx.shape,))
+#     print(nearest_idx[:10])
+    
+    print('render using numba %s ...' % (uvdij_in_cam.shape,))
+    start = time.time()
+    nearest_idx = get_nearest_idx(uvdij_in_cam)
+    print(time.time() - start, 'done numba, %s winners' % (nearest_idx.shape,))
+#     print(nearest_idx[:10])
+    
+    uvdij_visible = np.hstack([uvdij, np.zeros((uvdij.shape[0], 1))])
+    idx = np.arange(uvdij_visible.shape[0])[in_cam_frustum][nearest_idx]
+    uvdij_visible[idx, -1] += 1
+       # visible: in the camera frustum, AND is nearest point for the pixel.
+       # then we'll flow from that pt. TODO: try to average flows for a single pixel?
+
+
+    # OK next task is to allow fused tables to have mask / ignore clouds
+    # that blot out stuff in the flow.  add that and then we can run this junk
+    if len(all_moving_clouds_t1t2): # TODO NEED THIS FOR SEMANTIC KITTI ~~~~~~~~~~~~~~~~~
+      uvdij_visible[np.where(is_moving_ignore == 1)[0], -1] = 0
+    
+    return uvdij_visible
+    
+    
+  uvdij_visible1 = world_to_uvdij_visible_t(pose1)
+  uvdij_visible2 = world_to_uvdij_visible_t(pose2)
+  
+  if debug_title:
+    debug = img1_factory().copy()
+    draw_xy_depth_px_in_image(debug, uvdij_visible1[uvdij_visible1[:, -1] == 1][:, :3])
+    print('project1')
+    imshow(debug)
+    
+    debug = img2_factory().copy()
+    draw_xy_depth_px_in_image(debug, uvdij_visible2[uvdij_visible2[:, -1] == 1][:, :3])
+    print('project2')
+    imshow(debug)
+  
+  visible_both = ((uvdij_visible1[:, -1] == 1) & (uvdij_visible2[:, -1] == 1))
+  
+  visboth_uv1 = uvdij_visible1[visible_both, :2]
+  visboth_uv2 = uvdij_visible2[visible_both, :2]
+  ij_flow = np.hstack([
+    uvdij_visible1[visible_both, 3:5], visboth_uv2 - visboth_uv1
+  ])
+  v2v_flow = np.zeros((h, w, 2))
+  xx = ij_flow[:, 0].astype(np.int)
+  yy = ij_flow[:, 1].astype(np.int)
+  v2v_flow[yy, xx] = ij_flow[:, 2:4]
+  
+  v2o_flow = np.zeros((h, w, 2)) # ignore for now TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  o2v_flow = np.zeros((h, w, 2)) # ignore for now TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  return v2v_flow, v2o_flow, o2v_flow
+  
+  # build array, each row is a 3d point at times t1 and t2
+  # xyz t1 | xyz t2 | (is_moving - are xyz diff?) | img1 uvd | img2 uvd | is visible img1 | is visible img2
+  # ** for moving stuff, careful to append correct xyz ...
+  # ** for semantic kitti, need to make moving stuff verboten at both timesteps ...
+  
+  # then compute:
+  # vis change | uvd img1 | uvd img2
+  
+  # the break that above into 3 flows
+  
+  # create fused unproj for img1
+  # place moving objs for img1
+  
+  # create fused unproj for img2
+  # place moving objs for img2
+
+
+# def compute_optical_flows(
+#     t1_i=0, img1=None, 
+#     t2_i=1, img2=None,
+#     pose1=None,
+#     pose2=None,
+#     fused_world_cloud=None, # pre-filter these to remove moving stuff !!
+#     all_moving_objs=[],
+#     all_moving_clouds_t1t2=[],
+#     P=None,
+#     T_lidar2cam=None,
+#     T_ego2lidar=None):
+  
+#   h, w, c = img1.shape
+  
+#   pose1 = np.linalg.inv(pose1) # FIXME for Semantic KITTI
+#   pose2 = np.linalg.inv(pose2) # FIXME for Semantic KITTI
+#   print('diff Tx_pose1->Tx_pose2', pose2[:, -1] - pose1[:, -1])
+  
+#   hfused_world_cloud = make_homo(fused_world_cloud)
+#   is_moving_ignore = np.zeros((hfused_world_cloud.shape[0], 1))
+  
+#   if len(all_moving_clouds_t1t2):
+#     # Add all moving things at t1 and t2 to environment; we'll mask them
+#     m1 = all_moving_clouds_t1t2[0]
+#     m2 = all_moving_clouds_t1t2[1]
+#     hfused_world_cloud = np.vstack([
+#       hfused_world_cloud,
+#       make_homo(m1),
+#       make_homo(m2),
+#     ])
+# #     is_moving_ignore = np.vstack([
+# #       is_moving_ignore,
+# #       np.ones((m1.shape[0], 1)),
+# #       np.ones((m2.shape[0], 1)),
+# #     ])
+
+#   def world_to_uvdij_visible_t(pose):
+#     import time
+#     start = time.time()
+    
+#     xyz_ego_t = np.matmul(pose, hfused_world_cloud.T)
+#     print(time.time() - start, 'projected to xyz_ego_t')
+# #     print('xyz_ego_t mean min max', np.mean(xyz_ego_t, axis=1), np.min(xyz_ego_t, axis=1), np.max(xyz_ego_t, axis=1))
+
+
+#     uvd = P.dot(T_lidar2cam.dot( T_ego2lidar.dot( xyz_ego_t ) ) )
+#     uvd[0:2, :] /= uvd[2, :]
+#     uvd = uvd.T
+#     uvd = uvd[:, :3]
+#     ij = np.rint(uvd[:, (0, 1)]) # Group by rounded pixel coord; need orig (u, v) for sub-pixel flow
+#     uvdij = np.hstack([uvd, ij])
+#     print(time.time() - start, 'projected to uvd')
+
+#     in_cam_frustum = np.where(
+#         (uvdij[:, 0] >= 0) & 
+#         (uvdij[:, 0] <= w - 1) &
+#         (uvdij[:, 1] >= 0) & 
+#         (uvdij[:, 1] <= h - 1) &
+#         (uvdij[:, 2] >= 0.01))
+
+#     uvdij_in_cam = uvdij[in_cam_frustum]
+# #     uvdij, uvdij_in_cam = project_to_uvd(P, pose, hfused_world_cloud, T_lidar2cam, T_ego2lidar, w, h)
+#     print(time.time() - start, 'projected to uvd in cam')
+
+    
+# #     print('render using pandas %s ...' % (uvdij_in_cam.shape,))
+# #     import pandas as pd
+# #     start = time.time()
+# #     df = pd.DataFrame(uvdij_in_cam[:, 2:], columns=['d', 'i', 'j'])
+# #     df['id'] = df.index
+# #     nearest_idx = df.groupby(['i', 'j'])['d'].idxmin().to_numpy()
+# #     print(time.time() - start, 'done pandas, %s winners' % (nearest_idx.shape,))
+# #     print(nearest_idx[:10])
+    
+#     print('render using numba %s ...' % (uvdij_in_cam.shape,))
+#     start = time.time()
+#     nearest_idx = get_nearest_idx(uvdij_in_cam)
+#     print(time.time() - start, 'done numba, %s winners' % (nearest_idx.shape,))
+# #     print(nearest_idx[:10])
+    
+#     uvdij_visible = np.hstack([uvdij, np.zeros((uvdij.shape[0], 1))])
+#     idx = np.arange(uvdij_visible.shape[0])[in_cam_frustum][nearest_idx]
+#     uvdij_visible[idx, -1] += 1
+#        # visible: in the camera frustum, AND is nearest point for the pixel.
+#        # then we'll flow from that pt. TODO: try to average flows for a single pixel?
+
+#     if len(all_moving_clouds_t1t2):
+#       uvdij_visible[np.where(is_moving_ignore == 1)[0], -1] = 0
+    
+#     return uvdij_visible
+    
+    
+#   uvdij_visible1 = world_to_uvdij_visible_t(pose1)
+#   uvdij_visible2 = world_to_uvdij_visible_t(pose2)
+  
+#   if True:
+#     debug = img1.copy()
+#     draw_xy_depth_px_in_image(debug, uvdij_visible1[uvdij_visible1[:, -1] == 1][:, :3])
+#     print('project1')
+#     imshow(debug)
+    
+#     debug = img2.copy()
+#     draw_xy_depth_px_in_image(debug, uvdij_visible2[uvdij_visible2[:, -1] == 1][:, :3])
+#     print('project2')
+#     imshow(debug)
+  
+#   visible_both = ((uvdij_visible1[:, -1] == 1) & (uvdij_visible2[:, -1] == 1))
+  
+#   visboth_uv1 = uvdij_visible1[visible_both, :2]
+#   visboth_uv2 = uvdij_visible2[visible_both, :2]
+#   ij_flow = np.hstack([
+#     uvdij_visible1[visible_both, 3:5], visboth_uv2 - visboth_uv1
+#   ])
+#   v2v_flow = np.zeros((h, w, 2))
+#   xx = ij_flow[:, 0].astype(np.int)
+#   yy = ij_flow[:, 1].astype(np.int)
+#   v2v_flow[yy, xx] = ij_flow[:, 2:4]
+  
+#   v2o_flow = np.zeros((h, w, 2)) # ignore for now
+#   o2v_flow = np.zeros((h, w, 2)) # ignore for now
+#   return v2v_flow, v2o_flow, o2v_flow
+  
+#   # build array, each row is a 3d point at times t1 and t2
+#   # xyz t1 | xyz t2 | (is_moving - are xyz diff?) | img1 uvd | img2 uvd | is visible img1 | is visible img2
+#   # ** for moving stuff, careful to append correct xyz ...
+#   # ** for semantic kitti, need to make moving stuff verboten at both timesteps ...
+  
+#   # then compute:
+#   # vis change | uvd img1 | uvd img2
+  
+#   # the break that above into 3 flows
+  
+#   # create fused unproj for img1
+#   # place moving objs for img1
+  
+#   # create fused unproj for img2
+#   # place moving objs for img2
+    
+    
+
+## END FROM PAPER SCRATCH
+###############################################################################
+
 class OpticalFlowRender(object):
 
-  TASK_DF_FACTORY = None
+  FUSED_LIDAR_SD_TABLE = None
 
   RENDERER_ALGO_NAME = 'naive_shortest_ray'
 
@@ -531,12 +961,36 @@ class OpticalFlowRender(object):
   MAX_TASKS_PER_SEGMENT = 10
   TASK_OFFSETS = (1, 5)
 
-  render_func = None # TODO for python notebook drafting .........................
+  render_func = compute_optical_flows # TODO for python notebook drafting .........................
 
   @classmethod
-  def _get_oflow_task_df(cls, spark, segment_id):
-    task_df = cls.TASK_DF_FACTORY.build_df_for_segment(spark, segment_id)
+  def TASK_DF_FACTORY(cls):
+    return cls.FUSED_LIDAR_SD_TABLE.TASK_DF_FACTORY
 
+  @classmethod
+  def SRC_SD_T(cls):
+    return cls.FUSED_LIDAR_SD_TABLE.SRC_SD_T()
+
+  @classmethod
+  def get_T_ego2lidar(cls, spark, segment_uri):
+    from pyspark.sql import functions as F
+    LIDAR_TOPIC = 'lidar'
+
+    # Hack! we just pick the first point cloud ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    task_df = cls.TASK_DF_FACTORY.build_df_for_segment(spark, segment_uri)
+    pc_df = task_df.select(F.explode(df.point_clouds).alias('point_cloud'))
+    row = pc_df.first()['point_cloud']
+    pc = cls.SRC_SD_T().from_row(row)
+    T_ego2lidar = pc.ego_to_sensor.get_transformation_matrix(homogeneous=True)
+    return T_ego2lidar
+
+  @classmethod
+  def _get_oflow_task_df(cls, spark, segment_uri):
+    task_df = cls.TASK_DF_FACTORY.build_df_for_segment(spark, segment_uri)
+
+    # Optionally limit by number of tasks.
+    # We do this by filtering on task_id because it's much cheaper than e.g.
+    # trying to sort the table below by rand() and then doing a LIMIT.
     task_id_filter_clause = ''
     if cls.MAX_TASKS_PER_SEGMENT > 0:
       task_ids = [r.task_id for r in task_df.select('task_id').collect()]
@@ -547,12 +1001,14 @@ class OpticalFlowRender(object):
       tid_str = ", ".join(str(tid) for tid in task_ids)
       task_id_filter_clause = "AND task_id1 in ( %s )" % tid_str
 
+    # Compute tasks pairs for flow
     task_id_join_clauses = [
       "( task_id_1 = (task_id_2 + %s) )" % offset
       for offset in cls.TASK_OFFSETS
     ]
     task_id_join_clause = " OR ".join(task_id_join_clauses)
 
+    # Build the flow pair task table
     spark.catalog.dropTempView('oflow_culici_tasks_df')
     task_df.registerTempTable('oflow_culici_tasks_df')
     oflow_task_df = spark.sql(
@@ -580,3 +1036,124 @@ class OpticalFlowRender(object):
             task_id_filter_clause=task_id_filter_clause))
     
     return oflow_task_df
+
+  @classmethod
+  def _render_oflow_tasks(cls, T_ego2lidar, fused_datum_sample, itask_rows):
+    FROM_ROW = cls.SRC_SD_T().from_row
+    
+    track_id_to_fused_cloud = {}
+    for p in fused_datum_sample.lidar_clouds:
+      if 'lidar|objects_fused' in p.uri.topic:
+        cucloud = FROM_ROW(p)
+        track_id = cucloud.sensor_name
+        track_id_to_fused_cloud[track_id] = cucloud.get_cloud()
+        print(track_id, track_id_to_fused_cloud[track_id].shape)
+    print('track_id_to_fused_cloud', len(track_id_to_fused_cloud))
+
+    world_cloud = None
+    for p in fused_datum_sample.lidar_clouds:
+      if 'lidar|world_fused' in p.uri.topic:
+        pc = FROM_ROW(p)
+        world_cloud = pc.get_cloud()
+    assert world_cloud is not None, fused_datum_sample.get_topics()
+    print('cfcloud', world_cloud.shape)
+    
+    
+    for trow in itask_rows:
+      cname_to_ci1 = dict((c.sensor_name, c) for c in trow.camera_images_t1)
+      cname_to_ci2 = dict((c.sensor_name, c) for c in trow.camera_images_t2)
+      all_cams = sorted(set(cname_to_ci1.keys()) & set(cname_to_ci2.keys()))
+      for sensor_name in all_cams:
+        import time
+        start = time.time()
+        
+        ci1 = FROM_ROW(cname_to_ci1[sensor_name])
+        ci2 = FROM_ROW(cname_to_ci2[sensor_name])
+        
+        cam_height_pixels = ci1.height
+        cam_width_pixels = ci1.width
+
+        # Pose all objects for t1 and t2
+        moving_1 = np.zeros((0, 3))
+        for cuboid in [FROM_ROW(c) for c in trow.cuboids_t1]:
+            cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
+            cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+            cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+            moving_1 = np.vstack([moving_1, cloud_world])
+        print('moving_1', moving_1.shape)
+        
+        moving_2 = np.zeros((0, 3))
+        for cuboid in [FROM_ROW(c) for c in trow.cuboids_t2]:
+            cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
+            cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+            cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+            moving_2 = np.vstack([moving_2, cloud_world])
+        print('moving_2', moving_2.shape)
+        
+    
+        movement = ci1.ego_pose.translation - ci2.ego_pose.translation
+        print('movement', movement)
+        if np.linalg.norm(movement) < 0.01:
+            print('less than 1cm movement...')
+            continue
+    
+        # T_ego2cam = ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True)
+        # T_lidar2cam = T_ego2cam @ np.linalg.inv(T_ego2lidar)
+    
+        P = np.eye(4)
+        P[:3, :3] = ci1.K[:3, :3]
+    
+        pose1 = ci1.ego_pose.get_transformation_matrix(homogeneous=True)
+        pose2 = ci2.ego_pose.get_transformation_matrix(homogeneous=True)
+        result = cls.render_func(
+                    world_cloud=world_cloud,
+                    T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
+            
+                    # KITTI-360 and nusc too wat i guess ego is lidar?
+                    T_lidar2cam=ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True),
+
+                    P=P,
+                    cam_height_pixels=cam_height_pixels,
+                    cam_width_pixels=cam_width_pixels,
+
+                    ego_pose1=pose1,
+                    ego_pose2=pose2,
+                    moving_1=moving_1,
+                    moving_2=moving_2,
+
+
+                    img1_factory=lambda: ci1.get_image(),
+                    img2_factory=lambda: ci2.get_image(),
+                    debug_title=trow.oflow_task_id)
+        
+        print('did in', time.time() - start)
+
+        yield result
+        
+        
+        # import pickle
+        # #path = "/opt/psegs/temp_out_fused/pair_%s_%s_%s.pkl" % (cam, t1, t2)
+        # path = "/outer_root/media/seagates-ext4/au_datas/temp_out_fused/pair_%s_%s_%s.pkl" % (cam, t1, t2)
+        # pickle.dump(data, open(path, 'wb'))
+        # print(path)
+
+    print()
+
+  @classmethod
+  def build(cls, spark=None, only_segments=None):
+    with Spark.sess(spark) as spark:
+      segment_uris = only_segments or cls.SRC_SD_T().get_all_segment_uris()
+      
+      for suri in segment_uris:
+        fused_datum_sample = cls.FUSED_LIDAR_SD_TABLE.get_sample(
+                                    suri, spark=spark)
+
+        T_ego2lidar = cls.get_T_ego2lidar(spark, suri)
+
+        oflow_task_df = cls._get_oflow_task_df(spark, suri)
+        rdd = oflow_task_df.rdd.mapPartitions(
+                lambda irows: cls._render_oflow_tasks(
+                      T_ego2lidar,
+                      fused_datum_sample,
+                      irows))
+        print(rdd.count())
