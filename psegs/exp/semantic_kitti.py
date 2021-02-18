@@ -202,7 +202,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
       seq = seg_uri.segment_id
       if cls.ONLY_FRAMES_WITH_NO_MOVERS:
         util.log.info(
-          "Finding scans for sequence %s with no movering points ..." % seq)
+          "Finding scans for sequence %s with no moving points ..." % seq) # FIXME we should keep these .... ?
         n_scans = SK_SEQ_TO_NSCANS[seq]
         slices = max(1, n_scans // 100)
         task_rdd = spark.sparkContext.parallelize(
@@ -262,6 +262,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
     uri = copy.deepcopy(base_uri)
     uri.topic = 'camera|left_rect'
     uri.timestamp = int(scan_id) # HACK!
+    uri.extra['semantic_kitti.scan_id'] = str(scan_id)
 
     scene_base = cls.FIXTURES.get_scene_basepath(seq)
     scan_name = str(scan_id).rjust(6, '0')
@@ -305,6 +306,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
     uri = copy.deepcopy(base_uri)
     uri.topic = 'ego_pose'
     uri.timestamp = int(scan_id) # HACK!
+    uri.extra['semantic_kitti.scan_id'] = str(scan_id)
     
     # Move cloud into the world frame
     calib = cls._get_calib(seq)
@@ -331,6 +333,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
     uri.topic = 'lidar|world' + (
       '_cleaned' if cls.ONLY_FRAMES_WITH_NO_MOVERS else '')
     uri.timestamp = int(scan_id) # HACK!
+    uri.extra['semantic_kitti.scan_id'] = str(scan_id)
     
     sd_ego_pose = cls.create_ego_pose(base_uri, scan_id)
     ego_pose = sd_ego_pose.transform

@@ -128,6 +128,25 @@ class TaskLidarCuboidCameraDFFactory(object):
 
   SRC_SD_TABLE = None
 
+  @classmethod
+  def table_schema(cls):
+    """Return a copy of the expected table schema.  Subclasses only need this
+    in rare cases, e.g. if one of the columns will always be empty / null"""
+    if not hasattr(cls, '_schema'):
+      from psegs.datum.stamped_datum import CAMERAIMAGE_PROTO
+      from psegs.datum.stamped_datum import CUBOID_PROTO
+      from psegs.datum.stamped_datum import POINTCLOUD_PROTO
+      from oarphpy.spark import RowAdapter
+      from pyspark.sql import Row
+      PROTO_ROW = Row(
+                    task_id=0,
+                    point_clouds=[POINTCLOUD_PROTO],
+                    cuboids=[CUBOID_PROTO],
+                    camera_images=[CAMERAIMAGE_PROTO])
+      cls._schema = RowAdapter.to_schema(PROTO_ROW)
+    return cls._schema
+
+  @classmethod
   def build_df_for_segment(cls, spark, segment_uri):
     """The DF should have rows like:
     Row(task_id | list[Point_cloud] | list[cuboids] | list[camera_image])"""
@@ -435,8 +454,8 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
   @classmethod
   def _get_all_segment_uris(cls):
-    uris = cls.SRC_SD_TABLE.get_all_segment_uris()
-    uris = [u for u in uris if u.split in cls.SPLITS]
+    uris = cls.SRC_SD_T().get_all_segment_uris()
+    uris = [u for u in uris if (u.split in cls.SPLITS)]
     return uris
 
   @classmethod
@@ -951,7 +970,7 @@ def compute_optical_flows(
 ## END FROM PAPER SCRATCH
 ###############################################################################
 
-class OpticalFlowRender(object):
+class OpticalFlowRenderBase(object):
 
   FUSED_LIDAR_SD_TABLE = None
 
@@ -972,22 +991,19 @@ class OpticalFlowRender(object):
     return cls.FUSED_LIDAR_SD_TABLE.SRC_SD_T()
 
   @classmethod
-  def get_T_ego2lidar(cls, spark, segment_uri):
+  def _get_T_ego2lidar(cls, task_df):
     from pyspark.sql import functions as F
     LIDAR_TOPIC = 'lidar'
 
-    # Hack! we just pick the first point cloud ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    task_df = cls.TASK_DF_FACTORY.build_df_for_segment(spark, segment_uri)
-    pc_df = task_df.select(F.explode(df.point_clouds).alias('point_cloud'))
+    # Hacky! we just pick the first point cloud ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    pc_df = task_df.select(F.explode(task_df.point_clouds).alias('point_cloud'))
     row = pc_df.first()['point_cloud']
     pc = cls.SRC_SD_T().from_row(row)
     T_ego2lidar = pc.ego_to_sensor.get_transformation_matrix(homogeneous=True)
     return T_ego2lidar
 
   @classmethod
-  def _get_oflow_task_df(cls, spark, segment_uri):
-    task_df = cls.TASK_DF_FACTORY.build_df_for_segment(spark, segment_uri)
-
+  def _get_oflow_task_df(cls, spark, task_df):
     # Optionally limit by number of tasks.
     # We do this by filtering on task_id because it's much cheaper than e.g.
     # trying to sort the table below by rand() and then doing a LIMIT.
@@ -999,11 +1015,11 @@ class OpticalFlowRender(object):
       r.shuffle(task_ids)
       task_ids = task_ids[:cls.MAX_TASKS_PER_SEGMENT]
       tid_str = ", ".join(str(tid) for tid in task_ids)
-      task_id_filter_clause = "AND task_id1 in ( %s )" % tid_str
+      task_id_filter_clause = "AND cuci_1.task_id in ( %s )" % tid_str
 
     # Compute tasks pairs for flow
     task_id_join_clauses = [
-      "( task_id_1 = (task_id_2 + %s) )" % offset
+      "( cuci_1.task_id = (cuci_2.task_id + %s) )" % offset
       for offset in cls.TASK_OFFSETS
     ]
     task_id_join_clause = " OR ".join(task_id_join_clauses)
@@ -1028,8 +1044,8 @@ class OpticalFlowRender(object):
           oflow_culici_tasks_df AS cuci_1, oflow_culici_tasks_df AS cuci_2
         
         WHERE
-          SIZE(camera_images_t1) > 0 AND
-          SIZE(camera_images_t2) > 0 AND
+          SIZE(cuci_1.camera_images) > 0 AND
+          SIZE(cuci_2.camera_images) > 0 AND
           ( {task_id_join_clause} ) {task_id_filter_clause}
       """.format(
             task_id_join_clause=task_id_join_clause,
@@ -1145,12 +1161,13 @@ class OpticalFlowRender(object):
       segment_uris = only_segments or cls.SRC_SD_T().get_all_segment_uris()
       
       for suri in segment_uris:
+        task_df = cls.TASK_DF_FACTORY().build_df_for_segment(spark, suri)
         fused_datum_sample = cls.FUSED_LIDAR_SD_TABLE.get_sample(
                                     suri, spark=spark)
 
-        T_ego2lidar = cls.get_T_ego2lidar(spark, suri)
+        T_ego2lidar = cls._get_T_ego2lidar(task_df)
 
-        oflow_task_df = cls._get_oflow_task_df(spark, suri)
+        oflow_task_df = cls._get_oflow_task_df(spark, task_df)
         rdd = oflow_task_df.rdd.mapPartitions(
                 lambda irows: cls._render_oflow_tasks(
                       T_ego2lidar,
