@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import os
 
 import numpy as np
 import pandas as pd
@@ -133,16 +134,14 @@ class TaskLidarCuboidCameraDFFactory(object):
     """Return a copy of the expected table schema.  Subclasses only need this
     in rare cases, e.g. if one of the columns will always be empty / null"""
     if not hasattr(cls, '_schema'):
-      from psegs.datum.stamped_datum import CAMERAIMAGE_PROTO
-      from psegs.datum.stamped_datum import CUBOID_PROTO
-      from psegs.datum.stamped_datum import POINTCLOUD_PROTO
+      from psegs.datum.stamped_datum import STAMPED_DATUM_PROTO
       from oarphpy.spark import RowAdapter
       from pyspark.sql import Row
       PROTO_ROW = Row(
                     task_id=0,
-                    point_clouds=[POINTCLOUD_PROTO],
-                    cuboids=[CUBOID_PROTO],
-                    camera_images=[CAMERAIMAGE_PROTO])
+                    pc_sds=[STAMPED_DATUM_PROTO],
+                    cuboids_sds=[STAMPED_DATUM_PROTO],
+                    ci_sds=[STAMPED_DATUM_PROTO])
       cls._schema = RowAdapter.to_schema(PROTO_ROW)
     return cls._schema
 
@@ -494,7 +493,10 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     def _load_cloud(path):
       import open3d as o3d
       import numpy as np
-      pcd = o3d.io.read_point_cloud(str(path))
+      path = str(path)
+      util.log.info("Reading world cloud %s GB at %s" % (
+        1e-9 * os.path.getsize(path), path))
+      pcd = o3d.io.read_point_cloud(path)
       return np.asarray(pcd.points)
 
     pc = datum.PointCloud(
@@ -529,11 +531,12 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
         cloud_factory = lambda: np.zeros((0, 3))
 
       pc = datum.PointCloud(
-        sensor_name=track_id,
+        sensor_name=uri.topic + '|' + track_id,
         timestamp=uri.timestamp,
         cloud_factory=cloud_factory,
         ego_to_sensor=datum.Transform(), # Hack! cloud is in world frame
-        ego_pose=datum.Transform())
+        ego_pose=datum.Transform(),
+        extra={'track_id': track_id})
       yield datum.StampedDatum(uri=uri, point_cloud=pc)
 
 
@@ -770,12 +773,12 @@ def compute_optical_flows(
     uvdij_visible[idx, -1] += 1
        # visible: in the camera frustum, AND is nearest point for the pixel.
        # then we'll flow from that pt. TODO: try to average flows for a single pixel?
-
+    print(time.time() - start, 'done select visible from numba')
 
     # OK next task is to allow fused tables to have mask / ignore clouds
     # that blot out stuff in the flow.  add that and then we can run this junk
-    if len(all_moving_clouds_t1t2): # TODO NEED THIS FOR SEMANTIC KITTI ~~~~~~~~~~~~~~~~~
-      uvdij_visible[np.where(is_moving_ignore == 1)[0], -1] = 0
+    # if len(all_moving_clouds_t1t2): # TODO NEED THIS FOR SEMANTIC KITTI ~~~~~~~~~~~~~~~~~
+    #   uvdij_visible[np.where(is_moving_ignore == 1)[0], -1] = 0
     
     return uvdij_visible
     
@@ -784,15 +787,19 @@ def compute_optical_flows(
   uvdij_visible2 = world_to_uvdij_visible_t(pose2)
   
   if debug_title:
+    import imageio
+    basepath = '/opt/psegs/test_run_output/' + debug_title
     debug = img1_factory().copy()
     draw_xy_depth_px_in_image(debug, uvdij_visible1[uvdij_visible1[:, -1] == 1][:, :3])
     print('project1')
-    imshow(debug)
-    
+    # imshow(debug)
+    imageio.imwrite(basepath + '.img1.png' , debug)
+
     debug = img2_factory().copy()
     draw_xy_depth_px_in_image(debug, uvdij_visible2[uvdij_visible2[:, -1] == 1][:, :3])
     print('project2')
-    imshow(debug)
+    # imshow(debug)
+    imageio.imwrite(basepath + '.img2.png' , debug)
   
   visible_both = ((uvdij_visible1[:, -1] == 1) & (uvdij_visible2[:, -1] == 1))
   
@@ -970,6 +977,160 @@ def compute_optical_flows(
 ## END FROM PAPER SCRATCH
 ###############################################################################
 
+class RenderOFlowTasksWorker(object):
+  
+  def __init__(self, T_ego2lidar, fused_datum_sample, render_func):
+    import threading
+    self._shared = threading.Lock()
+    self._track_id_to_fused_cloud = None
+    self._world_cloud = None
+    self.T_ego2lidar = T_ego2lidar
+    self.fused_datum_sample = fused_datum_sample
+    self.render_func = render_func
+  
+  def __getstate__(self):
+    d = dict(self.__dict__)
+    d.pop('_shared')
+    d.pop('_track_id_to_fused_cloud')
+    d.pop('_world_cloud')
+    return d
+
+  def __setstate__(self, d):
+    for k, v in d.items():
+      setattr(self, k, v)
+    import threading
+    self._shared = threading.Lock()
+    self._track_id_to_fused_cloud = None
+    self._world_cloud = None
+
+  def get_track_id_to_fused_cloud(self):
+    if self._track_id_to_fused_cloud is not None:
+      return self._track_id_to_fused_cloud
+    
+    print('get_track_id_to_fused_cloud')
+    from oarphpy.spark import RowAdapter
+    FROM_ROW = RowAdapter.from_row
+    with self._shared:
+      track_id_to_fused_cloud = {}
+      for pc in self.fused_datum_sample.lidar_clouds:
+        if 'lidar|objects_fused' in pc.sensor_name:
+          cucloud = FROM_ROW(pc)
+          track_id = cucloud.extra['track_id']
+          track_id_to_fused_cloud[track_id] = cucloud.get_cloud()
+          print(track_id, track_id_to_fused_cloud[track_id].shape)
+      print('track_id_to_fused_cloud', len(track_id_to_fused_cloud))
+      self._track_id_to_fused_cloud = track_id_to_fused_cloud
+    return self._track_id_to_fused_cloud
+
+  def get_world_cloud(self):
+    if self._world_cloud is not None:
+      return self._world_cloud
+    
+    print('get_world_cloud')
+    from oarphpy.spark import RowAdapter
+    FROM_ROW = RowAdapter.from_row
+    with self._shared:
+      world_cloud = None
+      for pc in self.fused_datum_sample.lidar_clouds:
+        if 'lidar|world_fused' in pc.sensor_name:
+          pc = FROM_ROW(pc)
+          print('loading cloud', pc.sensor_name)
+          world_cloud = pc.get_cloud()
+          print('loaded')
+          break
+      assert world_cloud is not None, fused_datum_sample.get_topics()
+      print('cfcloud', world_cloud.shape)
+      self._world_cloud = world_cloud
+    return self._world_cloud
+
+  def __call__(self, trow):
+    T_ego2lidar = self.T_ego2lidar
+    track_id_to_fused_cloud = self.get_track_id_to_fused_cloud()
+    world_cloud = self.get_world_cloud()
+
+    from oarphpy.spark import RowAdapter
+    FROM_ROW = RowAdapter.from_row
+
+    def union_all(it):
+      import itertools
+      return list(itertools.chain.from_iterable(it))
+      
+    cuboids1 = union_all(FROM_ROW(sd.cuboids) for sd in trow.cuboids_sds_t1)
+    cuboids2 = union_all(FROM_ROW(sd.cuboids) for sd in trow.cuboids_sds_t2)
+    ci1s = [FROM_ROW(sd.camera_image) for sd in trow.ci_sds_t1]
+    ci2s = [FROM_ROW(sd.camera_image) for sd in trow.ci_sds_t2]
+    cname_to_ci1 = dict((c.sensor_name, c) for c in ci1s)
+    cname_to_ci2 = dict((c.sensor_name, c) for c in ci2s)
+    all_cams = sorted(set(cname_to_ci1.keys()) & set(cname_to_ci2.keys()))
+    for sensor_name in all_cams:
+      print(sensor_name)
+      import time
+      start = time.time()
+      
+      ci1 = cname_to_ci1[sensor_name]
+      ci2 = cname_to_ci2[sensor_name]
+      
+      cam_height_pixels = ci1.height
+      cam_width_pixels = ci1.width
+      assert (ci1.width, ci1.height) == (ci2.width, ci2.height)
+
+      # Pose all objects for t1 and t2
+      moving_1 = np.zeros((0, 3))
+      for cuboid in cuboids1:
+        cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
+        cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+        cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+        moving_1 = np.vstack([moving_1, cloud_world])
+      print('moving_1', moving_1.shape)
+      
+      moving_2 = np.zeros((0, 3))
+      for cuboid in cuboids2:
+        cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
+        cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+        cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+        moving_2 = np.vstack([moving_2, cloud_world])
+      print('moving_2', moving_2.shape)
+      
+  
+      movement = ci1.ego_pose.translation - ci2.ego_pose.translation
+      print('movement', movement)
+      if np.linalg.norm(movement) < 0.01:
+          print('less than 1cm movement...')
+          continue
+  
+      # T_ego2cam = ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True)
+      # T_lidar2cam = T_ego2cam @ np.linalg.inv(T_ego2lidar)
+  
+      P = np.eye(4)
+      P[:3, :3] = ci1.K[:3, :3]
+  
+      pose1 = ci1.ego_pose.get_transformation_matrix(homogeneous=True)
+      pose2 = ci2.ego_pose.get_transformation_matrix(homogeneous=True)
+      result = self.render_func(
+                  world_cloud=world_cloud,
+                  T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
+          
+                  # KITTI-360 and nusc too wat i guess ego is lidar?
+                  T_lidar2cam=ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True),
+
+                  P=P,
+                  cam_height_pixels=cam_height_pixels,
+                  cam_width_pixels=cam_width_pixels,
+
+                  ego_pose1=pose1,
+                  ego_pose2=pose2,
+                  moving_1=moving_1,
+                  moving_2=moving_2,
+
+
+                  img1_factory=lambda: ci1.image,
+                  img2_factory=lambda: ci2.image,
+                  debug_title=trow.oflow_task_id)
+      
+      print('did in', time.time() - start)
+
+      yield result
+
 class OpticalFlowRenderBase(object):
 
   FUSED_LIDAR_SD_TABLE = None
@@ -996,9 +1157,10 @@ class OpticalFlowRenderBase(object):
     LIDAR_TOPIC = 'lidar'
 
     # Hacky! we just pick the first point cloud ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    pc_df = task_df.select(F.explode(task_df.point_clouds).alias('point_cloud'))
-    row = pc_df.first()['point_cloud']
-    pc = cls.SRC_SD_T().from_row(row)
+    pc_df = task_df.select(F.explode(task_df.pc_sds).alias('pc_sd'))
+    row = pc_df.first()['pc_sd']
+    sd = cls.SRC_SD_T().from_row(row)
+    pc = sd.point_cloud
     T_ego2lidar = pc.ego_to_sensor.get_transformation_matrix(homogeneous=True)
     return T_ego2lidar
 
@@ -1033,19 +1195,19 @@ class OpticalFlowRenderBase(object):
           CONCAT(cuci_1.task_id, '->', cuci_1.task_id) AS oflow_task_id,
           
           cuci_1.task_id AS task_id_1,
-          cuci_1.cuboids AS cuboids_t1,
-          cuci_1.camera_images AS camera_images_t1,
+          cuci_1.cuboids_sds AS cuboids_sds_t1,
+          cuci_1.ci_sds AS ci_sds_t1,
 
           cuci_2.task_id AS task_id_2,
-          cuci_2.cuboids AS cuboids_t2,
-          cuci_2.camera_images AS camera_images_t2
+          cuci_2.cuboids_sds AS cuboids_sds_t2,
+          cuci_2.ci_sds AS ci_sds_t2
         
         FROM
           oflow_culici_tasks_df AS cuci_1, oflow_culici_tasks_df AS cuci_2
         
         WHERE
-          SIZE(cuci_1.camera_images) > 0 AND
-          SIZE(cuci_2.camera_images) > 0 AND
+          SIZE(cuci_1.ci_sds) > 0 AND
+          SIZE(cuci_2.ci_sds) > 0 AND
           ( {task_id_join_clause} ) {task_id_filter_clause}
       """.format(
             task_id_join_clause=task_id_join_clause,
@@ -1053,107 +1215,122 @@ class OpticalFlowRenderBase(object):
     
     return oflow_task_df
 
-  @classmethod
-  def _render_oflow_tasks(cls, T_ego2lidar, fused_datum_sample, itask_rows):
-    FROM_ROW = cls.SRC_SD_T().from_row
-    
-    track_id_to_fused_cloud = {}
-    for p in fused_datum_sample.lidar_clouds:
-      if 'lidar|objects_fused' in p.uri.topic:
-        cucloud = FROM_ROW(p)
-        track_id = cucloud.sensor_name
-        track_id_to_fused_cloud[track_id] = cucloud.get_cloud()
-        print(track_id, track_id_to_fused_cloud[track_id].shape)
-    print('track_id_to_fused_cloud', len(track_id_to_fused_cloud))
+  
 
-    world_cloud = None
-    for p in fused_datum_sample.lidar_clouds:
-      if 'lidar|world_fused' in p.uri.topic:
-        pc = FROM_ROW(p)
-        world_cloud = pc.get_cloud()
-    assert world_cloud is not None, fused_datum_sample.get_topics()
-    print('cfcloud', world_cloud.shape)
-    
-    
-    for trow in itask_rows:
-      cname_to_ci1 = dict((c.sensor_name, c) for c in trow.camera_images_t1)
-      cname_to_ci2 = dict((c.sensor_name, c) for c in trow.camera_images_t2)
-      all_cams = sorted(set(cname_to_ci1.keys()) & set(cname_to_ci2.keys()))
-      for sensor_name in all_cams:
-        import time
-        start = time.time()
-        
-        ci1 = FROM_ROW(cname_to_ci1[sensor_name])
-        ci2 = FROM_ROW(cname_to_ci2[sensor_name])
-        
-        cam_height_pixels = ci1.height
-        cam_width_pixels = ci1.width
 
-        # Pose all objects for t1 and t2
-        moving_1 = np.zeros((0, 3))
-        for cuboid in [FROM_ROW(c) for c in trow.cuboids_t1]:
-            cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
-            cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
-            cloud_world = cuboid.ego_pose.apply(cloud_ego).T
-            moving_1 = np.vstack([moving_1, cloud_world])
-        print('moving_1', moving_1.shape)
+  # @classmethod
+  # def _render_oflow_tasks(cls, T_ego2lidar, fused_datum_sample, itask_rows):
+  #   from oarphpy.spark import RowAdapter
+  #   FROM_ROW = RowAdapter.from_row
+    
+  #   track_id_to_fused_cloud = {}
+  #   for pc in fused_datum_sample.lidar_clouds:
+  #     if 'lidar|objects_fused' in pc.sensor_name:
+  #       cucloud = FROM_ROW(pc)
+  #       track_id = cucloud.extra['track_id']
+  #       track_id_to_fused_cloud[track_id] = cucloud.get_cloud()
+  #       print(track_id, track_id_to_fused_cloud[track_id].shape)
+  #   print('track_id_to_fused_cloud', len(track_id_to_fused_cloud))
+
+  #   world_cloud = None
+  #   for pc in fused_datum_sample.lidar_clouds:
+  #     if 'lidar|world_fused' in pc.sensor_name:
+  #       pc = FROM_ROW(pc)
+  #       print('loading cloud', pc.sensor_name)
+  #       world_cloud = pc.get_cloud()
+  #       print('loaded')
+  #       break
+  #   assert world_cloud is not None, fused_datum_sample.get_topics()
+  #   print('cfcloud', world_cloud.shape)
+    
+  #   def union_all(it):
+  #     import itertools
+  #     return list(itertools.chain.from_iterable(it))
+  #   for trow in itask_rows:
+  #     cuboids1 = union_all(FROM_ROW(sd.cuboids) for sd in trow.cuboids_sds_t1)
+  #     cuboids2 = union_all(FROM_ROW(sd.cuboids) for sd in trow.cuboids_sds_t2)
+  #     ci1s = [FROM_ROW(sd.camera_image) for sd in trow.ci_sds_t1]
+  #     ci2s = [FROM_ROW(sd.camera_image) for sd in trow.ci_sds_t2]
+  #     cname_to_ci1 = dict((c.sensor_name, c) for c in ci1s)
+  #     cname_to_ci2 = dict((c.sensor_name, c) for c in ci2s)
+  #     all_cams = sorted(set(cname_to_ci1.keys()) & set(cname_to_ci2.keys()))
+  #     for sensor_name in all_cams:
+  #       print(sensor_name)
+  #       import time
+  #       start = time.time()
         
-        moving_2 = np.zeros((0, 3))
-        for cuboid in [FROM_ROW(c) for c in trow.cuboids_t2]:
-            cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
-            cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
-            cloud_world = cuboid.ego_pose.apply(cloud_ego).T
-            moving_2 = np.vstack([moving_2, cloud_world])
-        print('moving_2', moving_2.shape)
+  #       ci1 = cname_to_ci1[sensor_name]
+  #       ci2 = cname_to_ci2[sensor_name]
+        
+  #       cam_height_pixels = ci1.height
+  #       cam_width_pixels = ci1.width
+  #       assert (ci1.width, ci1.height) == (ci2.width, ci2.height)
+
+  #       # Pose all objects for t1 and t2
+  #       moving_1 = np.zeros((0, 3))
+  #       for cuboid in cuboids1:
+  #         cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
+  #         cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+  #         cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+  #         moving_1 = np.vstack([moving_1, cloud_world])
+  #       print('moving_1', moving_1.shape)
+        
+  #       moving_2 = np.zeros((0, 3))
+  #       for cuboid in cuboids2:
+  #         cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
+  #         cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+  #         cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+  #         moving_2 = np.vstack([moving_2, cloud_world])
+  #       print('moving_2', moving_2.shape)
         
     
-        movement = ci1.ego_pose.translation - ci2.ego_pose.translation
-        print('movement', movement)
-        if np.linalg.norm(movement) < 0.01:
-            print('less than 1cm movement...')
-            continue
+  #       movement = ci1.ego_pose.translation - ci2.ego_pose.translation
+  #       print('movement', movement)
+  #       if np.linalg.norm(movement) < 0.01:
+  #           print('less than 1cm movement...')
+  #           continue
     
-        # T_ego2cam = ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True)
-        # T_lidar2cam = T_ego2cam @ np.linalg.inv(T_ego2lidar)
+  #       # T_ego2cam = ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True)
+  #       # T_lidar2cam = T_ego2cam @ np.linalg.inv(T_ego2lidar)
     
-        P = np.eye(4)
-        P[:3, :3] = ci1.K[:3, :3]
+  #       P = np.eye(4)
+  #       P[:3, :3] = ci1.K[:3, :3]
     
-        pose1 = ci1.ego_pose.get_transformation_matrix(homogeneous=True)
-        pose2 = ci2.ego_pose.get_transformation_matrix(homogeneous=True)
-        result = cls.render_func(
-                    world_cloud=world_cloud,
-                    T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
+  #       pose1 = ci1.ego_pose.get_transformation_matrix(homogeneous=True)
+  #       pose2 = ci2.ego_pose.get_transformation_matrix(homogeneous=True)
+  #       result = cls.render_func(
+  #                   world_cloud=world_cloud,
+  #                   T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
             
-                    # KITTI-360 and nusc too wat i guess ego is lidar?
-                    T_lidar2cam=ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True),
+  #                   # KITTI-360 and nusc too wat i guess ego is lidar?
+  #                   T_lidar2cam=ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True),
 
-                    P=P,
-                    cam_height_pixels=cam_height_pixels,
-                    cam_width_pixels=cam_width_pixels,
+  #                   P=P,
+  #                   cam_height_pixels=cam_height_pixels,
+  #                   cam_width_pixels=cam_width_pixels,
 
-                    ego_pose1=pose1,
-                    ego_pose2=pose2,
-                    moving_1=moving_1,
-                    moving_2=moving_2,
+  #                   ego_pose1=pose1,
+  #                   ego_pose2=pose2,
+  #                   moving_1=moving_1,
+  #                   moving_2=moving_2,
 
 
-                    img1_factory=lambda: ci1.get_image(),
-                    img2_factory=lambda: ci2.get_image(),
-                    debug_title=trow.oflow_task_id)
+  #                   img1_factory=lambda: ci1.get_image(),
+  #                   img2_factory=lambda: ci2.get_image(),
+  #                   debug_title=trow.oflow_task_id)
         
-        print('did in', time.time() - start)
+  #       print('did in', time.time() - start)
 
-        yield result
+  #       yield result
         
         
-        # import pickle
-        # #path = "/opt/psegs/temp_out_fused/pair_%s_%s_%s.pkl" % (cam, t1, t2)
-        # path = "/outer_root/media/seagates-ext4/au_datas/temp_out_fused/pair_%s_%s_%s.pkl" % (cam, t1, t2)
-        # pickle.dump(data, open(path, 'wb'))
-        # print(path)
+  #       # import pickle
+  #       # #path = "/opt/psegs/temp_out_fused/pair_%s_%s_%s.pkl" % (cam, t1, t2)
+  #       # path = "/outer_root/media/seagates-ext4/au_datas/temp_out_fused/pair_%s_%s_%s.pkl" % (cam, t1, t2)
+  #       # pickle.dump(data, open(path, 'wb'))
+  #       # print(path)
 
-    print()
+  #   print()
 
   @classmethod
   def build(cls, spark=None, only_segments=None):
@@ -1162,15 +1339,21 @@ class OpticalFlowRenderBase(object):
       
       for suri in segment_uris:
         task_df = cls.TASK_DF_FACTORY().build_df_for_segment(spark, suri)
+        print('num tasks', task_df.count())
         fused_datum_sample = cls.FUSED_LIDAR_SD_TABLE.get_sample(
                                     suri, spark=spark)
 
         T_ego2lidar = cls._get_T_ego2lidar(task_df)
 
         oflow_task_df = cls._get_oflow_task_df(spark, task_df)
-        rdd = oflow_task_df.rdd.mapPartitions(
-                lambda irows: cls._render_oflow_tasks(
-                      T_ego2lidar,
-                      fused_datum_sample,
-                      irows))
-        print(rdd.count())
+        oflow_task_df = oflow_task_df.limit(10) #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        worker = RenderOFlowTasksWorker(
+          T_ego2lidar, fused_datum_sample, cls.render_func)
+
+        rdd = oflow_task_df.rdd.flatMap(worker, preservesPartitioning=True)
+                # lambda irows: cls._render_oflow_tasks(
+                #       T_ego2lidar,
+                #       fused_datum_sample,
+                #       irows))
+        print('running map.. count')
+        print(len(list(rdd.toLocalIterator())))
