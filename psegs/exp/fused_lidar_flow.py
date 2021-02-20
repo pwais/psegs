@@ -1138,7 +1138,7 @@ class OpticalFlowRenderBase(object):
   RENDERER_ALGO_NAME = 'naive_shortest_ray'
 
   MAX_TASKS_SEED = 1337
-  MAX_TASKS_PER_SEGMENT = 10
+  MAX_TASKS_PER_SEGMENT = -1
   TASK_OFFSETS = (1, 5)
 
   render_func = compute_optical_flows # TODO for python notebook drafting .........................
@@ -1171,6 +1171,7 @@ class OpticalFlowRenderBase(object):
     # trying to sort the table below by rand() and then doing a LIMIT.
     task_id_filter_clause = ''
     if cls.MAX_TASKS_PER_SEGMENT > 0:
+      print('restrict to', cls.MAX_TASKS_PER_SEGMENT)
       task_ids = [r.task_id for r in task_df.select('task_id').collect()]
       from random import Random
       r = Random(cls.MAX_TASKS_SEED)
@@ -1346,7 +1347,6 @@ class OpticalFlowRenderBase(object):
         T_ego2lidar = cls._get_T_ego2lidar(task_df)
 
         oflow_task_df = cls._get_oflow_task_df(spark, task_df)
-        oflow_task_df = oflow_task_df.limit(10) #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         worker = RenderOFlowTasksWorker(
           T_ego2lidar, fused_datum_sample, cls.render_func)
 
@@ -1356,4 +1356,4 @@ class OpticalFlowRenderBase(object):
                 #       fused_datum_sample,
                 #       irows))
         print('running map.. count')
-        print(len(list(rdd.toLocalIterator())))
+        print(rdd.count())
