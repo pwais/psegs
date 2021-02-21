@@ -728,6 +728,7 @@ def compute_optical_flows(
     import time
     start = time.time()
     
+    print('hfused_world_cloud', hfused_world_cloud.shape, 1e-9 * hfused_world_cloud.nbytes)
     xyz_ego_t = np.matmul(pose, hfused_world_cloud.T)
     print(time.time() - start, 'projected to xyz_ego_t')
 #     print('xyz_ego_t mean min max', np.mean(xyz_ego_t, axis=1), np.min(xyz_ego_t, axis=1), np.max(xyz_ego_t, axis=1))
@@ -750,7 +751,7 @@ def compute_optical_flows(
 
     uvdij_in_cam = uvdij[in_cam_frustum]
 #     uvdij, uvdij_in_cam = project_to_uvd(P, pose, hfused_world_cloud, T_lidar2cam, T_ego2lidar, w, h)
-    print(time.time() - start, 'projected to uvd in cam')
+    print(time.time() - start, 'projected to uvd in cam', uvdij_in_cam.shape, 1e-9 * uvdij_in_cam.nbytes)
 
     
 #     print('render using pandas %s ...' % (uvdij_in_cam.shape,))
@@ -773,7 +774,7 @@ def compute_optical_flows(
     uvdij_visible[idx, -1] += 1
        # visible: in the camera frustum, AND is nearest point for the pixel.
        # then we'll flow from that pt. TODO: try to average flows for a single pixel?
-    print(time.time() - start, 'done select visible from numba')
+    print(time.time() - start, 'done select visible from numba', uvdij_visible.shape, 1e-9 * uvdij_visible.nbytes)
 
     # OK next task is to allow fused tables to have mask / ignore clouds
     # that blot out stuff in the flow.  add that and then we can run this junk
@@ -977,6 +978,7 @@ def compute_optical_flows(
 ## END FROM PAPER SCRATCH
 ###############################################################################
 
+
 class RenderOFlowTasksWorker(object):
   
   def __init__(self, T_ego2lidar, fused_datum_sample, render_func):
@@ -1004,44 +1006,40 @@ class RenderOFlowTasksWorker(object):
     self._world_cloud = None
 
   def get_track_id_to_fused_cloud(self):
-    if self._track_id_to_fused_cloud is not None:
-      return self._track_id_to_fused_cloud
-    
-    print('get_track_id_to_fused_cloud')
-    from oarphpy.spark import RowAdapter
-    FROM_ROW = RowAdapter.from_row
     with self._shared:
-      track_id_to_fused_cloud = {}
-      for pc in self.fused_datum_sample.lidar_clouds:
-        if 'lidar|objects_fused' in pc.sensor_name:
-          cucloud = FROM_ROW(pc)
-          track_id = cucloud.extra['track_id']
-          track_id_to_fused_cloud[track_id] = cucloud.get_cloud()
-          print(track_id, track_id_to_fused_cloud[track_id].shape)
-      print('track_id_to_fused_cloud', len(track_id_to_fused_cloud))
-      self._track_id_to_fused_cloud = track_id_to_fused_cloud
-    return self._track_id_to_fused_cloud
+      from oarphpy.spark import RowAdapter
+      FROM_ROW = RowAdapter.from_row
+      if self._track_id_to_fused_cloud is None:
+        print('track_id_to_fused_cloud loading')
+        track_id_to_fused_cloud = {}
+        for pc in self.fused_datum_sample.lidar_clouds:
+          if 'lidar|objects_fused' in pc.sensor_name:
+            cucloud = FROM_ROW(pc)
+            track_id = cucloud.extra['track_id']
+            track_id_to_fused_cloud[track_id] = cucloud.get_cloud()
+            print(track_id, track_id_to_fused_cloud[track_id].shape)
+        print('track_id_to_fused_cloud', len(track_id_to_fused_cloud))
+        self._track_id_to_fused_cloud = track_id_to_fused_cloud
+      return self._track_id_to_fused_cloud
 
   def get_world_cloud(self):
-    if self._world_cloud is not None:
-      return self._world_cloud
-    
-    print('get_world_cloud')
-    from oarphpy.spark import RowAdapter
-    FROM_ROW = RowAdapter.from_row
     with self._shared:
-      world_cloud = None
-      for pc in self.fused_datum_sample.lidar_clouds:
-        if 'lidar|world_fused' in pc.sensor_name:
-          pc = FROM_ROW(pc)
-          print('loading cloud', pc.sensor_name)
-          world_cloud = pc.get_cloud()
-          print('loaded')
-          break
-      assert world_cloud is not None, fused_datum_sample.get_topics()
-      print('cfcloud', world_cloud.shape)
-      self._world_cloud = world_cloud
-    return self._world_cloud
+      if self._world_cloud is None:
+        print('get_world_cloud loading')
+        from oarphpy.spark import RowAdapter
+        FROM_ROW = RowAdapter.from_row
+        world_cloud = None
+        for pc in self.fused_datum_sample.lidar_clouds:
+          if 'lidar|world_fused' in pc.sensor_name:
+            pc = FROM_ROW(pc)
+            print('loading cloud', pc.sensor_name)
+            world_cloud = pc.get_cloud()
+            print('loaded')
+            break
+        assert world_cloud is not None, fused_datum_sample.get_topics()
+        print('cfcloud', world_cloud.shape)
+        self._world_cloud = world_cloud
+      return self._world_cloud
 
   def __call__(self, trow):
     T_ego2lidar = self.T_ego2lidar
@@ -1062,13 +1060,15 @@ class RenderOFlowTasksWorker(object):
     cname_to_ci1 = dict((c.sensor_name, c) for c in ci1s)
     cname_to_ci2 = dict((c.sensor_name, c) for c in ci2s)
     all_cams = sorted(set(cname_to_ci1.keys()) & set(cname_to_ci2.keys()))
+    
+    results = []
     for sensor_name in all_cams:
-      print(sensor_name)
       import time
       start = time.time()
       
       ci1 = cname_to_ci1[sensor_name]
       ci2 = cname_to_ci2[sensor_name]
+      print('starting cam', sensor_name, ci1.timestamp)
       
       cam_height_pixels = ci1.height
       cam_width_pixels = ci1.width
@@ -1129,7 +1129,33 @@ class RenderOFlowTasksWorker(object):
       
       print('did in', time.time() - start)
 
-      yield result
+      results.append(result)
+    return results
+  
+  FLOCK_PATH = '/tmp/psegs_RenderOFlowTasksWorker.lock'
+  def single_machine_map_rows(self, trows):
+    trows = list(trows)
+    print('len trows', len(trows))
+    assert os.path.exists(self.FLOCK_PATH)
+    import fasteners
+    lock = fasteners.InterProcessLock(self.FLOCK_PATH)
+    with lock:
+      print(os.getpid(), 'starting with flock', self.FLOCK_PATH)
+      import multiprocessing
+      num_thread = 4 #multiprocessing.cpu_count()
+
+      import concurrent.futures
+      with concurrent.futures.ThreadPoolExecutor(max_workers=num_thread) as executor:
+        ress = list(executor.map(self, trows))
+
+      # p = ThreadPool(num_thread)
+      # print('num_thread', num_thread)
+      # ress = p.map(self.__call__, trows)
+
+      import itertools
+      results = list(itertools.chain.from_iterable(ress))
+
+      return results
 
 class OpticalFlowRenderBase(object):
 
@@ -1350,7 +1376,8 @@ class OpticalFlowRenderBase(object):
         worker = RenderOFlowTasksWorker(
           T_ego2lidar, fused_datum_sample, cls.render_func)
 
-        rdd = oflow_task_df.rdd.flatMap(worker, preservesPartitioning=True)
+        oflow_task_df = oflow_task_df.coalesce(100)
+        rdd = oflow_task_df.rdd.mapPartitions(lambda irows: worker.single_machine_map_rows(irows))#(worker, preservesPartitioning=True)
                 # lambda irows: cls._render_oflow_tasks(
                 #       T_ego2lidar,
                 #       fused_datum_sample,
