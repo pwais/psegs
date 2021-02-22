@@ -1142,7 +1142,8 @@ class RenderOFlowTasksWorker(object):
     with lock:
       print(os.getpid(), 'starting with flock', self.FLOCK_PATH)
       import multiprocessing
-      num_thread = 4 #multiprocessing.cpu_count()
+      # num_thread = 4 # semantic kitti
+      num_thread = multiprocessing.cpu_count()
 
       import concurrent.futures
       with concurrent.futures.ThreadPoolExecutor(max_workers=num_thread) as executor:
@@ -1219,7 +1220,8 @@ class OpticalFlowRenderBase(object):
     oflow_task_df = spark.sql(
       """
         SELECT
-          CONCAT(cuci_1.task_id, '->', cuci_1.task_id) AS oflow_task_id,
+          CONCAT('{segment_id}', cuci_1.task_id, '->', cuci_2.task_id)
+            AS oflow_task_id,
           
           cuci_1.task_id AS task_id_1,
           cuci_1.cuboids_sds AS cuboids_sds_t1,
@@ -1237,6 +1239,7 @@ class OpticalFlowRenderBase(object):
           SIZE(cuci_2.ci_sds) > 0 AND
           ( {task_id_join_clause} ) {task_id_filter_clause}
       """.format(
+            segment_id=segment_id,
             task_id_join_clause=task_id_join_clause,
             task_id_filter_clause=task_id_filter_clause))
     
