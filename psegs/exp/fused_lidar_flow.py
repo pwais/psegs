@@ -802,21 +802,39 @@ def compute_optical_flows(
     # imshow(debug)
     imageio.imwrite(basepath + '.img2.png' , debug)
   
-  visible_both = ((uvdij_visible1[:, -1] == 1) & (uvdij_visible2[:, -1] == 1))
+  # # old format -- need this to make flow map
+  # visible_both = ((uvdij_visible1[:, -1] == 1) & (uvdij_visible2[:, -1] == 1))
   
-  visboth_uv1 = uvdij_visible1[visible_both, :2]
-  visboth_uv2 = uvdij_visible2[visible_both, :2]
-  ij_flow = np.hstack([
-    uvdij_visible1[visible_both, 3:5], visboth_uv2 - visboth_uv1
+  # visboth_uv1 = uvdij_visible1[visible_both, :2]
+  # visboth_uv2 = uvdij_visible2[visible_both, :2]
+  # ij_flow = np.hstack([
+  #   uvdij_visible1[visible_both, 3:5], visboth_uv2 - visboth_uv1
+  # ])
+  # v2v_flow = np.zeros((h, w, 2))
+  # xx = ij_flow[:, 0].astype(np.int)
+  # yy = ij_flow[:, 1].astype(np.int)
+  # v2v_flow[yy, xx] = ij_flow[:, 2:4]
+  
+  # v2o_flow = np.zeros((h, w, 2)) # ignore for now TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # o2v_flow = np.zeros((h, w, 2)) # ignore for now TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  # return v2v_flow, v2o_flow, o2v_flow
+
+  # new format
+  import time
+  start = time.time()
+  visible_either = ((uvdij_visible1[:, -1] == 1) | (uvdij_visible2[:, -1] == 1))
+  uvdij1_visible_uvdij2_visible = np.hstack([
+    uvdij_visible1[visible_either], uvdij_visible2[visible_either]
   ])
-  v2v_flow = np.zeros((h, w, 2))
-  xx = ij_flow[:, 0].astype(np.int)
-  yy = ij_flow[:, 1].astype(np.int)
-  v2v_flow[yy, xx] = ij_flow[:, 2:4]
+  print('uvdij1_visible_uvdij2_visible', time.time() - start, uvdij1_visible_uvdij2_visible.shape, 1e-9 * uvdij1_visible_uvdij2_visible.nbyte)
+
+  return uvdij1_visible_uvdij2_visible
+
+
+
   
-  v2o_flow = np.zeros((h, w, 2)) # ignore for now TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  o2v_flow = np.zeros((h, w, 2)) # ignore for now TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  return v2v_flow, v2o_flow, o2v_flow
+  
   
   # build array, each row is a 3d point at times t1 and t2
   # xyz t1 | xyz t2 | (is_moving - are xyz diff?) | img1 uvd | img2 uvd | is visible img1 | is visible img2
@@ -1055,20 +1073,22 @@ class RenderOFlowTasksWorker(object):
       
     cuboids1 = union_all(FROM_ROW(sd.cuboids) for sd in trow.cuboids_sds_t1)
     cuboids2 = union_all(FROM_ROW(sd.cuboids) for sd in trow.cuboids_sds_t2)
-    ci1s = [FROM_ROW(sd.camera_image) for sd in trow.ci_sds_t1]
-    ci2s = [FROM_ROW(sd.camera_image) for sd in trow.ci_sds_t2]
-    cname_to_ci1 = dict((c.sensor_name, c) for c in ci1s)
-    cname_to_ci2 = dict((c.sensor_name, c) for c in ci2s)
-    all_cams = sorted(set(cname_to_ci1.keys()) & set(cname_to_ci2.keys()))
+    ci1_sds = [FROM_ROW(sd) for sd in trow.ci_sds_t1]
+    ci2_sds = [FROM_ROW(sd) for sd in trow.ci_sds_t2]
+    cname_to_cisd1 = dict((sd.camera_image.sensor_name, sd) for sd in ci1_sds)
+    cname_to_cisd2 = dict((sd.camera_image.sensor_name, sd) for sd in ci2_sds)
+    all_cams = sorted(set(cname_to_cisd1.keys()) & set(cname_to_cisd2.keys()))
     
-    results = []
+    rows_out = []
     for sensor_name in all_cams:
       import time
       start = time.time()
       
-      ci1 = cname_to_ci1[sensor_name]
-      ci2 = cname_to_ci2[sensor_name]
-      print('starting cam', sensor_name, ci1.timestamp)
+      ci_sd1 = cname_to_cisd1[sensor_name]
+      ci_sd2 = cname_to_cisd2[sensor_name]
+      ci1 = ci_sd1.camera_image
+      ci2 = ci_sd2.camera_image
+      print('starting cam', sensor_name, str(ci_sd1.uri))
       
       cam_height_pixels = ci1.height
       cam_width_pixels = ci1.width
@@ -1106,7 +1126,7 @@ class RenderOFlowTasksWorker(object):
   
       pose1 = ci1.ego_pose.get_transformation_matrix(homogeneous=True)
       pose2 = ci2.ego_pose.get_transformation_matrix(homogeneous=True)
-      result = self.render_func(
+      uvdij1_visible_uvdij2_visible = self.render_func(
                   world_cloud=world_cloud,
                   T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
           
@@ -1127,10 +1147,16 @@ class RenderOFlowTasksWorker(object):
                   img2_factory=lambda: ci2.image,
                   debug_title=trow.oflow_task_id)
       
-      print('did in', time.time() - start)
+      print('render_func in', time.time() - start)
 
-      results.append(result)
-    return results
+      row_out = {
+        'ci1_uri': ci_sd1.uri,
+        'ci2_uri': ci_sd1.uri,
+        'uvdij1_visible_uvdij2_visible': uvdij1_visible_uvdij2_visible,
+      }
+
+      rows_out.append(row_out)
+    return rows_out
   
   FLOCK_PATH = '/tmp/psegs_RenderOFlowTasksWorker.lock'
   def single_machine_map_rows(self, trows):
@@ -1143,7 +1169,8 @@ class RenderOFlowTasksWorker(object):
       print(os.getpid(), 'starting with flock', self.FLOCK_PATH)
       import multiprocessing
       # num_thread = 4 # semantic kitti
-      num_thread = multiprocessing.cpu_count()
+      # num_thread = 1 # kitti-360
+      num_thread = multiprocessing.cpu_count() # nusc keyframes only
 
       import concurrent.futures
       with concurrent.futures.ThreadPoolExecutor(max_workers=num_thread) as executor:
@@ -1220,7 +1247,7 @@ class OpticalFlowRenderBase(object):
     oflow_task_df = spark.sql(
       """
         SELECT
-          CONCAT('{segment_id}', cuci_1.task_id, '->', cuci_2.task_id)
+          CONCAT(cuci_1.task_id, '->', cuci_2.task_id)
             AS oflow_task_id,
           
           cuci_1.task_id AS task_id_1,
@@ -1239,7 +1266,6 @@ class OpticalFlowRenderBase(object):
           SIZE(cuci_2.ci_sds) > 0 AND
           ( {task_id_join_clause} ) {task_id_filter_clause}
       """.format(
-            segment_id=segment_id,
             task_id_join_clause=task_id_join_clause,
             task_id_filter_clause=task_id_filter_clause))
     
@@ -1380,10 +1406,19 @@ class OpticalFlowRenderBase(object):
           T_ego2lidar, fused_datum_sample, cls.render_func)
 
         oflow_task_df = oflow_task_df.coalesce(100)
-        rdd = oflow_task_df.rdd.mapPartitions(lambda irows: worker.single_machine_map_rows(irows))#(worker, preservesPartitioning=True)
+        result_rdd = oflow_task_df.rdd.mapPartitions(lambda irows: worker.single_machine_map_rows(irows))#(worker, preservesPartitioning=True)
                 # lambda irows: cls._render_oflow_tasks(
                 #       T_ego2lidar,
                 #       fused_datum_sample,
                 #       irows))
-        print('running map.. count')
-        print(rdd.count())
+        result_rdd = result_rdd.flatMap(lambda x: x)
+        OUT_PATH = '/tmp/oflow_out/'
+        oputil.mkdir(OUT_PATH)
+        import pickle
+        for i, row in enumerate(result_rdd.toLocalIterator(prefetchPartitions=False)):
+          path = os.path.join(OUT_PATH, 'oflow_%s.pkl' % i)
+          with open(path, 'wb') as f:
+            pickle.dump(row, f, protocol=pickle.HIGHEST_PROTOCOL)
+          print('saved to', path)
+
+
