@@ -827,7 +827,7 @@ def compute_optical_flows(
   uvdij1_visible_uvdij2_visible = np.hstack([
     uvdij_visible1[visible_either], uvdij_visible2[visible_either]
   ])
-  print('uvdij1_visible_uvdij2_visible', time.time() - start, uvdij1_visible_uvdij2_visible.shape, 1e-9 * uvdij1_visible_uvdij2_visible.nbyte)
+  print('uvdij1_visible_uvdij2_visible', time.time() - start, uvdij1_visible_uvdij2_visible.shape, 1e-9 * uvdij1_visible_uvdij2_visible.nbytes)
 
   return uvdij1_visible_uvdij2_visible
 
