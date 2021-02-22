@@ -1162,15 +1162,30 @@ class RenderOFlowTasksWorker(object):
   def single_machine_map_rows(self, trows):
     trows = list(trows)
     print('len trows', len(trows))
+    if not trows:
+      return []
     assert os.path.exists(self.FLOCK_PATH)
     import fasteners
     lock = fasteners.InterProcessLock(self.FLOCK_PATH)
     with lock:
       print(os.getpid(), 'starting with flock', self.FLOCK_PATH)
-      import multiprocessing
+      
+      # Hack: each worker thread needs temp space proportional to
+      # world cloud size, so choose number of threads to not spill
+      # into swap too badly.
+      world_cloud = self.get_world_cloud()
+      world_cloud_bytes = world_cloud.nbytes
+      print('world_cloud_bytes', world_cloud_bytes)
+      import psutil
+      total_mem_bytes = psutil.virtual_memory().total # is exclusive of swap
+      print('total_mem', total_mem_bytes)
+      num_thread = max(1, int(total_mem_bytes / (10. * world_cloud_bytes)))
+      print('num_thread', num_thread)
+      
+      # import multiprocessing
       # num_thread = 4 # semantic kitti
       # num_thread = 1 # kitti-360
-      num_thread = multiprocessing.cpu_count() # nusc keyframes only
+      # num_thread = multiprocessing.cpu_count() # nusc keyframes only
 
       import concurrent.futures
       with concurrent.futures.ThreadPoolExecutor(max_workers=num_thread) as executor:
@@ -1193,7 +1208,7 @@ class OpticalFlowRenderBase(object):
 
   MAX_TASKS_SEED = 1337
   MAX_TASKS_PER_SEGMENT = -1
-  TASK_OFFSETS = (1, 5)
+  TASK_OFFSETS = (1,)# 5)
 
   render_func = compute_optical_flows # TODO for python notebook drafting .........................
 
@@ -1268,7 +1283,7 @@ class OpticalFlowRenderBase(object):
       """.format(
             task_id_join_clause=task_id_join_clause,
             task_id_filter_clause=task_id_filter_clause))
-    
+
     return oflow_task_df
 
   
@@ -1402,10 +1417,15 @@ class OpticalFlowRenderBase(object):
         T_ego2lidar = cls._get_T_ego2lidar(task_df)
 
         oflow_task_df = cls._get_oflow_task_df(spark, task_df)
+        print('oflow_task_df', oflow_task_df.count())
         worker = RenderOFlowTasksWorker(
           T_ego2lidar, fused_datum_sample, cls.render_func)
 
-        oflow_task_df = oflow_task_df.coalesce(100)
+        # Hacky way to coalesce into CPU-intensive partitions
+        from oarphpy.spark import num_executors
+        n_parts = int(max(1, oflow_task_df.count() / (10 * num_executors(spark))))
+        print('coalesc to ', n_parts)
+        oflow_task_df = oflow_task_df.coalesce(n_parts)
         result_rdd = oflow_task_df.rdd.mapPartitions(lambda irows: worker.single_machine_map_rows(irows))#(worker, preservesPartitioning=True)
                 # lambda irows: cls._render_oflow_tasks(
                 #       T_ego2lidar,
