@@ -239,12 +239,13 @@ if __name__ == '__main__':
   from psegs.spark import Spark
   spark = Spark.getOrCreate()
 
-  R = NuscKeyframesOFlowRenderer
+  # R = NuscKeyframesOFlowRenderer
 
   # R = SemanticKITTIOFlowRenderer
-  R.MAX_TASKS_PER_SEGMENT = 50
 
-  # R = KITTI360OFlowRenderer
+  R = KITTI360OFlowRenderer
+
+  R.MAX_TASKS_PER_SEGMENT = 2
 
   seg_uris = R.FUSED_LIDAR_SD_TABLE.get_all_segment_uris()
   R.build(spark=spark, only_segments=[seg_uris[0]])

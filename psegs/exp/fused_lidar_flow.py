@@ -802,18 +802,18 @@ def compute_optical_flows(
     # imshow(debug)
     imageio.imwrite(basepath + '.img2.png' , debug)
   
-  # # old format -- need this to make flow map
-  # visible_both = ((uvdij_visible1[:, -1] == 1) & (uvdij_visible2[:, -1] == 1))
+  # old format -- need this to make flow map
+  visible_both = ((uvdij_visible1[:, -1] == 1) & (uvdij_visible2[:, -1] == 1))
   
-  # visboth_uv1 = uvdij_visible1[visible_both, :2]
-  # visboth_uv2 = uvdij_visible2[visible_both, :2]
-  # ij_flow = np.hstack([
-  #   uvdij_visible1[visible_both, 3:5], visboth_uv2 - visboth_uv1
-  # ])
-  # v2v_flow = np.zeros((h, w, 2))
-  # xx = ij_flow[:, 0].astype(np.int)
-  # yy = ij_flow[:, 1].astype(np.int)
-  # v2v_flow[yy, xx] = ij_flow[:, 2:4]
+  visboth_uv1 = uvdij_visible1[visible_both, :2]
+  visboth_uv2 = uvdij_visible2[visible_both, :2]
+  ij_flow = np.hstack([
+    uvdij_visible1[visible_both, 3:5], visboth_uv2 - visboth_uv1
+  ])
+  v2v_flow = np.zeros((h, w, 2))
+  xx = ij_flow[:, 0].astype(np.int)
+  yy = ij_flow[:, 1].astype(np.int)
+  v2v_flow[yy, xx] = ij_flow[:, 2:4]
   
   # v2o_flow = np.zeros((h, w, 2)) # ignore for now TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   # o2v_flow = np.zeros((h, w, 2)) # ignore for now TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -829,7 +829,7 @@ def compute_optical_flows(
   ])
   print('uvdij1_visible_uvdij2_visible', time.time() - start, uvdij1_visible_uvdij2_visible.shape, 1e-9 * uvdij1_visible_uvdij2_visible.nbytes)
 
-  return uvdij1_visible_uvdij2_visible
+  return uvdij1_visible_uvdij2_visible, v2v_flow
 
 
 
@@ -1126,7 +1126,7 @@ class RenderOFlowTasksWorker(object):
   
       pose1 = ci1.ego_pose.get_transformation_matrix(homogeneous=True)
       pose2 = ci2.ego_pose.get_transformation_matrix(homogeneous=True)
-      uvdij1_visible_uvdij2_visible = self.render_func(
+      uvdij1_visible_uvdij2_visible, v2v_flow = self.render_func(
                   world_cloud=world_cloud,
                   T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
           
@@ -1153,6 +1153,7 @@ class RenderOFlowTasksWorker(object):
         'ci1_uri': ci_sd1.uri,
         'ci2_uri': ci_sd1.uri,
         'uvdij1_visible_uvdij2_visible': uvdij1_visible_uvdij2_visible,
+        'v2v_flow': v2v_flow,
       }
 
       rows_out.append(row_out)

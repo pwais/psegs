@@ -177,7 +177,7 @@ class SemanticKITTISDTable(StampedDatumTableBase):
   def _get_all_segment_uris(cls):
     return [
       datum.URI(
-        dataset='semantikitti',
+        dataset='semantikitti', # fixme ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
         split='train',
         segment_id=str(seq))
       for seq in cls.FIXTURES.get_seq_to_nscans().keys()
