@@ -622,9 +622,9 @@ def draw_xy_depth_px_in_image(img, pts, alpha=.7):
   print(pts.shape)
 
   colors = rgb_for_distance(pts[:, 2])
-  print(colors.shape)
+  # print(colors.shape)
   colors = np.clip(colors, 0, 255).astype(int)
-  print(colors.shape)
+  # print(colors.shape)
   for i, ((x, y), color) in enumerate(zip(pts[:, :2].tolist(), colors.tolist())):
     x = int(round(x))
     y = int(round(y))
@@ -633,8 +633,8 @@ def draw_xy_depth_px_in_image(img, pts, alpha=.7):
     overlay[y, x, :] = color
 #     print(color)
     
-    if i > 0 and ((i % 500000) == 0):
-        print(i, flush=True)
+    # if i > 0 and ((i % 500000) == 0):
+    #     print(i, flush=True)
 
   # Now blend!
   img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
@@ -1161,7 +1161,7 @@ class RenderOFlowTasksWorker(object):
   FLOCK_PATH = '/tmp/psegs_RenderOFlowTasksWorker.lock'
   def single_machine_map_rows(self, trows):
     trows = list(trows)
-    print('len trows', len(trows))
+    print('single_machine_map_rows working on', len(trows))
     if not trows:
       return []
     assert os.path.exists(self.FLOCK_PATH)
@@ -1189,15 +1189,16 @@ class RenderOFlowTasksWorker(object):
 
       import concurrent.futures
       with concurrent.futures.ThreadPoolExecutor(max_workers=num_thread) as executor:
-        ress = list(executor.map(self, trows))
+        results = list(executor.map(self, trows))
 
       # p = ThreadPool(num_thread)
       # print('num_thread', num_thread)
       # ress = p.map(self.__call__, trows)
 
-      import itertools
-      results = list(itertools.chain.from_iterable(ress))
+      # import itertools
+      # results = list(itertools.chain.from_iterable(ress))
 
+      print('single_machine_map_rows done with', len(results))
       return results
 
 class OpticalFlowRenderBase(object):
@@ -1423,7 +1424,8 @@ class OpticalFlowRenderBase(object):
 
         # Hacky way to coalesce into CPU-intensive partitions
         from oarphpy.spark import num_executors
-        n_parts = int(max(1, oflow_task_df.count() / (10 * num_executors(spark))))
+        n_tasks = oflow_task_df.count()
+        n_parts = int(max(1, n_tasks / (10 * num_executors(spark))))
         print('coalesc to ', n_parts)
         oflow_task_df = oflow_task_df.coalesce(n_parts)
         result_rdd = oflow_task_df.rdd.mapPartitions(lambda irows: worker.single_machine_map_rows(irows))#(worker, preservesPartitioning=True)
@@ -1431,14 +1433,19 @@ class OpticalFlowRenderBase(object):
                 #       T_ego2lidar,
                 #       fused_datum_sample,
                 #       irows))
-        result_rdd = result_rdd.flatMap(lambda x: x)
         OUT_PATH = '/tmp/oflow_out/'
         oputil.mkdir(OUT_PATH)
         import pickle
-        for i, row in enumerate(result_rdd.toLocalIterator(prefetchPartitions=False)):
-          path = os.path.join(OUT_PATH, 'oflow_%s.pkl' % i)
-          with open(path, 'wb') as f:
-            pickle.dump(row, f, protocol=pickle.HIGHEST_PROTOCOL)
-          print('saved to', path)
+        t = oputil.ThruputObserver(name='BuildOFlow', n_total=n_tasks)
+        t.start_block()
+        for i, results in enumerate(result_rdd.toLocalIterator(prefetchPartitions=False)):
+          for j, row in enumerate(results):
+            path = os.path.join(OUT_PATH, 'oflow_%s_%s.pkl' % (i, j))
+            with open(path, 'wb') as f:
+              pickle.dump(row, f, protocol=pickle.HIGHEST_PROTOCOL)
+            print('saved to', path)
+
+          t.update_tallies(n=1, num_bytes=oputil.get_size_of_deep(results), new_block=True)
+          t.maybe_log_progress(every_n=1)
 
 
