@@ -122,7 +122,7 @@ class Sample(object):
         self.uri = copy.deepcopy(base_uri)
     
     if self.uri:
-      self.uri = URI.from_str(self.uri)
+      self.uri = copy.deepcopy(URI.from_str(self.uri))
 
     if self.uri and not self.uri.sel_datums:
       self.uri.sel_datums = DatumSelection.selections_from_value(self.datums)

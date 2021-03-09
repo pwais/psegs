@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 
 from oarphpy.spark import RowAdapter
 from pyspark.sql import Row
@@ -127,6 +128,7 @@ class StampedDatumTableBase(object):
         seg_df = seg_df.filter(df.split == segment_uri.split)
       if segment_uri.sel_datums:
         import pyspark.sql.functions as F
+        from functools import reduce
         seg_df = seg_df.where(
           reduce(
             lambda a, b: a | b,
@@ -149,7 +151,7 @@ class StampedDatumTableBase(object):
     if hasattr(rdd_or_df, 'rdd'):
       return rdd_or_df
     else:
-      return cls._sd_rdd_to_sd_df(spark, rdd_or_df)
+      return cls._sd_rdd_to_sd_df(spark, rdd_or_df).persist()
 
   @classmethod
   def get_sample(cls, uri, spark=None):

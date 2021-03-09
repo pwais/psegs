@@ -111,20 +111,28 @@ def _move_clouds_to_ego_and_concat(point_clouds):
     
 # # iclouds = culi_tasks_df.repartition(5000).rdd.flatMap(iter_cleaned_world_clouds).toLocalIterator(prefetchPartitions=True) # KITTI EDIT iterator
 
-class TaskLidarCuboidCameraDFFactory(object):
-  """Adapt a `StampedDatumTable` to a table of "tasks" where each task has
+class SampleDFFactory(object):
+  """Adapt a `StampedDatumTable` to a table of "samples" where each task has
   all point clouds, cuboids, and camera images associated with a specific
   time point or event.  (Some datasets, like KITTI and Waymo OD, refer to
-  these as "frames"; we use the word "task" to distinguish these groupings
+  these as "frames"; we use the word "sample" to distinguish these groupings
   from the unrelated frames-of-reference e.g. lidar frame, world frame, etc).
 
-  The (integer) Task IDs implicitly represent numerical timestamps (but need
-  not be real timestamps-- the Stamped Datum URIs have real timestamps).  
-  Task IDs must be in chronological order: task T+1 should be an event one 
-  time-step after task T. The IDs need not be dense (there can be gaps
-  e.g. 1, 2, 3, 7, 8, 9) but any gaps may impact synthetic flow generation.
+  Each row in a Sample DataFrame contains sensor data and labels for a single
+  point in time.  Since different sensors record asynchronously (and at 
+  diferrent rates), each sample is essentially a synchronization (a grouping)
+  of the sensor data.  Each dataset needs to have data syncrhonized
+  differently.
 
-  Create a DataFrame here so that it's cheap to omit columns when needed.
+  The (integer) Sample IDs express the temporal order of consecutive
+  samples in a segment.  Sample IDs are in chronological order: sample S+1
+  should contain data for an event one time-step after sample S. The IDs need
+  not be dense (there can be gaps e.g. 1, 2, 3, 7, 8, 9) but any gaps may
+  impact downstream users.
+
+  Create a DataFrame here (vs an RDD) so that it's cheap to omit columns / 
+  sensors when needed.  Moreover, pairings of samples (e.g. for Flow) can be
+  done more efficiently using a DataFrame.
   """
 
   SRC_SD_TABLE = None
@@ -138,7 +146,7 @@ class TaskLidarCuboidCameraDFFactory(object):
       from oarphpy.spark import RowAdapter
       from pyspark.sql import Row
       PROTO_ROW = Row(
-                    task_id=0,
+                    sample_id=0,
                     pc_sds=[STAMPED_DATUM_PROTO],
                     cuboids_sds=[STAMPED_DATUM_PROTO],
                     ci_sds=[STAMPED_DATUM_PROTO])
@@ -148,8 +156,10 @@ class TaskLidarCuboidCameraDFFactory(object):
   @classmethod
   def build_df_for_segment(cls, spark, segment_uri):
     """The DF should have rows like:
-    Row(task_id | list[Point_cloud] | list[cuboids] | list[camera_image])"""
+    Row(sample_id | list[Point_cloud] | list[cuboids] | list[camera_image])"""
     raise NotImplementedError()
+
+
 
 
 
@@ -664,6 +674,8 @@ def make_homo(cloud):
     out[:, :3] = cloud[:, :3]
     return out
 
+
+
 import numba
 from numba import jit
 
@@ -682,6 +694,54 @@ def get_nearest_idx(uvd):
 
   rs = nearest[:, :, 0].flatten()
   return rs[rs != np.Inf].astype(np.int64)
+
+
+def world_to_uvd_visible(
+        camera_pose=np.eye(4),
+        P=np.eye(4),
+        image_size=(100, 200),
+        T_lidar2cam=np.eye(4),
+        T_ego2lidar=np.eye(4),
+        world_cloud=np.zeros((0, 3))):
+  
+  w, h = image_size
+  xyz_ego_t = np.matmul(camera_pose, world_cloud.T)
+  
+  uvd = P.dot(T_lidar2cam.dot( T_ego2lidar.dot( xyz_ego_t ) ) )
+  uvd[0:2, :] /= uvd[2, :]
+  uvd = uvd.T
+  uvd = uvd[:, :3]
+
+  in_cam_frustum = np.where(
+      (np.rint(uvd[:, 0]) >= 0) & 
+      (np.rint(uvd[:, 0]) <= w - 1) &
+      (np.rint(uvd[:, 1]) >= 0) & 
+      (np.rint(uvd[:, 1]) <= h - 1) &
+      (uvd[:, 2] >= 0.001))
+
+  uvd_in_cam = uvd[in_cam_frustum]
+
+  # Now prune to nearest points
+  nearest_idx = get_nearest_idx(uvd_in_cam)
+
+  uvd_visible = np.hstack([uvd, np.zeros((uvd.shape[0], 1))])
+  idx = np.arange(uvd_visible.shape[0])[in_cam_frustum][nearest_idx]
+  uvd_visible[idx, -1] += 1
+      # Visible: in the camera frustum, AND is nearest point for the pixel.
+      # TODO: Try to interpolate for neighboring pixels?
+
+  return uvd_visible
+
+
+def merge_uvd_nearest(uvd1, uvd2):
+  uvd = np.vstack([uvd1, uvd2])
+  nearest_idx = get_nearest_idx(uvd)
+  return uvd[nearest_idx]
+
+
+
+
+
 
 
 def compute_optical_flows(
@@ -1450,3 +1510,308 @@ class OpticalFlowRenderBase(object):
           t.maybe_log_progress(every_n=1)
 
 
+
+
+class WorldCloudCleaner(object):
+  
+  # def __init__(self, ego_box=None):
+  #   self._ego_box = ego_box
+  #   self.__thruput = oputil.ThruputObserver(name='WorldCloudCleaner.clouds_thru')
+  #   self.__pruned_stats = []
+
+  # @classmethod
+  # def _thruput(cls):
+  #   if not hasattr(cls, '_thurput_impl'):
+  #     cls._thurput_impl = oputil.ThruputObserver(
+  #       name='WorldCloudCleaner.clouds_thru')
+  #   return cls._thurput_impl
+
+  # @classmethod
+  # def _pruned_stats(cls):
+
+
+  # def __log_pruned(self):
+  #   print('len(self.__pruned_stats)', len(self.__pruned_stats))
+  #   if (len(self.__pruned_stats) % 10) == 0:
+  #     pruned_stats = np.array(self.__pruned_stats)
+  #     REPORT = """
+  #       Total points pruned: {total_pruned}
+  #       Total frac pruned: {total_frac_pruned}
+  #       Avg pruned per cloud: {avg_per_cloud}
+  #     """.format(
+  #       total_pruned=np.sum(pruned_stats[:, 1]),
+  #       total_frac_pruned=(
+  #         np.sum(pruned_stats[:, 1]) / np.sum(pruned_stats[:, 0])),
+  #       avg_per_cloud=np.mean(pruned_stats[:, 1]))
+  #     util.log.info(REPORT)
+
+  @classmethod
+  def _filter_ego_vehicle(cls, cloud_ego):
+    """Optionally filter self-returns in cloud in the ego frame for some
+    datasets (e.g. NuScenes)"""
+    return cloud_ego
+
+  def get_cleaned_world_cloud(self, point_clouds, cuboids):
+    assert point_clouds
+
+    cleaned_clouds = []
+    n_pruned = 0
+    for pc in point_clouds:
+      # self.__thruput.start_block()
+      cloud = pc.get_cloud()[:, :3] # TODO: can we keep colors?
+      cloud_ego = pc.ego_to_sensor.get_inverse().apply(cloud).T
+    
+      cloud_ego = self._filter_ego_vehicle(cloud_ego)
+
+      # Filter out all cuboids
+      n_before = cloud_ego.shape[0]
+      for cuboid in cuboids:
+        in_box, _ = get_point_idx_in_cuboid(cuboid, cloud_ego=cloud_ego)
+        cloud_ego = cloud_ego[~in_box]
+      n_after = cloud_ego.shape[0]
+      n_pruned += (n_before - n_after)
+
+      T_world_to_ego = pc.ego_pose
+      cloud_world = T_world_to_ego.apply(cloud_ego).T # why is this name backwards?? -- hmm works for nusc too
+
+      cleaned_clouds.append(cloud_world)
+      
+      # self.__thruput.stop_block(
+      #         n=1, num_bytes=oputil.get_size_of_deep(cloud_world))
+      # self.__thruput.maybe_log_progress(every_n=10)
+      # self.__log_pruned()
+    return np.vstack(cleaned_clouds), n_pruned
+
+
+class OpticalFlowRenderer(object):
+  
+  def world_cloud_to_uvd_visible(self, point_cloud, camera_image):
+    pass
+
+  def merge_uvd_visible(self, uvd_visible_1, uvd_visible_2):
+    pass
+
+
+
+class FusedFlowDFFactory(object):
+
+  """
+
+  A) Create flow pairs
+  B) Fuse data for the pair
+  C) Render the pair for samples 1 and 2
+  D) save and/or debug the output
+
+  Deets:
+  AA) allow (and study!) large-displacement pairs
+  
+  BB) start and debug with just ONE CLOUD
+  BB) allow sampling to just 50% or N% of clouds
+  BB) allow either fused objects or single frame objects ...
+  BB) allow smoothing, KITTI fused data instead, KITTI fusing method etc
+  BB) some day graph laplacian fusing ...
+
+  CC) rendering is:
+       * 000 clean world clouds and put in mem+disk cached
+       * get a chunk of pairs
+       * use a SELECT to create a DF of 
+          chunk ID | [point cloud] | sample 1 pose / cam | sample 2 pose / cam 
+              the sample columns are static data same for *chunks* !!
+           Spark will (probably)? partition data so that point clouds don't
+           need to move
+       * RDD map reduce (maybe DF pandas map?)
+           -> map point cloud -> uvd (or xyz)
+           -> *combine* and reduce -> merge_uvd_nearest 
+                (for SF need polar to do UV)
+  DD) render and/or save to parquet
+
+  """
+
+  SAMPLE_DF_FACTORY = None
+
+  @classmethod
+  def SRC_SD_T(cls):
+    return cls.SAMPLE_DF_FACTORY.SRC_SD_TABLE
+
+  @classmethod
+  def _build_world_cloud_df(cls, sample_df):
+    
+    from pyspark.sql import Row
+    from pyspark.sql import functions as F
+    from oarphpy.spark import RowAdapter
+    
+    cleaner = WorldCloudCleaner()
+
+    thruput = oputil.ThruputObserver(name='WorldCloudCleaner.clouds_thru')
+    pruned = oputil.ThruputObserver(name='WorldCloudCleaner.pruned')
+
+    RETURN_PROTO = {'cloud': np.zeros((0, 3)), 'n_pruned': 0}
+    @F.udf(returnType=RowAdapter.to_schema(RETURN_PROTO))
+    def row_to_world_cloud(pc_sds, cuboids_sds):
+      import itertools
+      from oarphpy.spark import RowAdapter
+
+      pcs = [RowAdapter.from_row(sdr).point_cloud for sdr in pc_sds]
+      cuboidss = [RowAdapter.from_row(sdr).cuboids for sdr in cuboids_sds]
+      cuboids = list(itertools.chain.from_iterable(cuboidss))
+
+      world_cloud, n_pruned = cleaner.get_cleaned_world_cloud(pcs, cuboids)
+
+      data = {
+        'cloud': world_cloud,
+        'n_pruned': n_pruned,
+      }
+      return RowAdapter.to_row(data)
+
+    licu_df = sample_df.select('sample_id', 'pc_sds', 'cuboids_sds')
+    licu_df = licu_df.withColumn(
+                'world_cloud',
+                row_to_world_cloud(licu_df['pc_sds'], licu_df['cuboids_sds']))
+    world_cloud_df = licu_df.select('sample_id', 'world_cloud')
+    return world_cloud_df
+
+
+
+  # @classmethod
+  # def _get_flow_task_df(cls, spark, sample_df, flow_pairs):
+
+    
+
+
+  #   # Optionally limit by number of tasks.
+  #   # We do this by filtering on task_id because it's much cheaper than e.g.
+  #   # trying to sort the table below by rand() and then doing a LIMIT.
+  #   task_id_filter_clause = ''
+  #   if cls.MAX_TASKS_PER_SEGMENT > 0:
+  #     print('restrict to', cls.MAX_TASKS_PER_SEGMENT)
+  #     task_ids = [r.task_id for r in task_df.select('task_id').collect()]
+  #     from random import Random
+  #     r = Random(cls.MAX_TASKS_SEED)
+  #     r.shuffle(task_ids)
+  #     task_ids = task_ids[:cls.MAX_TASKS_PER_SEGMENT]
+  #     tid_str = ", ".join(str(tid) for tid in task_ids)
+  #     task_id_filter_clause = "AND cuci_1.task_id in ( %s )" % tid_str
+
+  #   # Compute tasks pairs for flow
+  #   task_id_join_clauses = [
+  #     "( cuci_1.task_id = (cuci_2.task_id + %s) )" % offset
+  #     for offset in cls.TASK_OFFSETS
+  #   ]
+  #   task_id_join_clause = " OR ".join(task_id_join_clauses)
+
+  #   # Build the flow pair task table
+  #   spark.catalog.dropTempView('oflow_culici_tasks_df')
+  #   task_df.registerTempTable('oflow_culici_tasks_df')
+  #   oflow_task_df = spark.sql(
+  #     """
+  #       SELECT
+  #         CONCAT(cuci_1.task_id, '->', cuci_2.task_id)
+  #           AS oflow_task_id,
+          
+  #         cuci_1.task_id AS task_id_1,
+  #         cuci_1.cuboids_sds AS cuboids_sds_t1,
+  #         cuci_1.ci_sds AS ci_sds_t1,
+
+  #         cuci_2.task_id AS task_id_2,
+  #         cuci_2.cuboids_sds AS cuboids_sds_t2,
+  #         cuci_2.ci_sds AS ci_sds_t2
+        
+  #       FROM
+  #         oflow_culici_tasks_df AS cuci_1, oflow_culici_tasks_df AS cuci_2
+        
+  #       WHERE
+  #         SIZE(cuci_1.ci_sds) > 0 AND
+  #         SIZE(cuci_2.ci_sds) > 0 AND
+  #         ( {task_id_join_clause} ) {task_id_filter_clause}
+  #     """.format(
+  #           task_id_join_clause=task_id_join_clause,
+  #           task_id_filter_clause=task_id_filter_clause))
+
+  #   return oflow_task_df
+
+  @classmethod
+  def build(cls, spark=None, only_segments=None):
+    with Spark.sess(spark) as spark:
+      segment_uris = only_segments or cls.SRC_SD_T().get_all_segment_uris()
+      
+      for suri in segment_uris:
+        sample_df = cls.SAMPLE_DF_FACTORY.build_df_for_segment(spark, suri)
+        print('num samples', sample_df.count())
+        
+        world_cloud_df = cls._build_world_cloud_df(sample_df)
+        
+        world_cloud_df = world_cloud_df.persist()
+
+        world_cloud_df.registerTempTable('world_cloud_df')
+        stats_df = spark.sql("""
+          SELECT
+            COUNT(*) AS n_clouds,
+            1e-9 * SUM(LENGTH(world_cloud.cloud.values_packed)) AS cloud_gbytes,
+            SUM(world_cloud.n_pruned) AS total_pruned,
+            SUM(world_cloud.n_pruned) / (
+                SUM(world_cloud.n_pruned) + SUM(world_cloud.cloud.shape[0]))
+              AS total_frac_pruned,
+            MEAN(world_cloud.n_pruned) AS avg_pruned_per_cloud,
+            PERCENTILE(world_cloud.n_pruned, 0.1) AS pruned_per_cloud_10th,
+            PERCENTILE(world_cloud.n_pruned, 0.9) AS pruned_per_cloud_90th
+          FROM 
+            world_cloud_df
+        """)
+        util.log.info(stats_df.toPandas().transpose())
+
+        # REPORT = """
+        #   Total world clouds: {n_clouds} ({cloud_gbytes:%2f} GBytes)
+        #   Total points pruned: {total_pruned}
+        #   Total frac pruned: {total_frac_pruned}
+        #   Avg pruned per cloud: {avg_per_cloud}
+        # """.format(
+        #   n_clouds=stats_df.count(),
+        #   cloud_gbytes=1e-9 * stats_df['cloud_bytes'].sum(),
+        #   total_pruned=stats_df['n_pruned'].sum(),
+        #   total_frac_pruned=(
+        #     stats_df['n_pruned'].sum() / (
+        #       stats_df['n_kept'].sum() + stats_df['n_pruned'].sum())),
+        #   avg_per_cloud=stats_df['n_pruned'].mean())
+        # util.log.info(REPORT)
+        
+        
+        # world_cloud_df.show()
+        # import ipdb; ipdb.set_trace()
+        # print()
+        
+        
+        # fused_datum_sample = cls.FUSED_LIDAR_SD_TABLE.get_sample(
+        #                             suri, spark=spark)
+
+        # T_ego2lidar = cls._get_T_ego2lidar(task_df)
+
+        # oflow_task_df = cls._get_oflow_task_df(spark, task_df)
+        # print('oflow_task_df', oflow_task_df.count())
+        # worker = RenderOFlowTasksWorker(
+        #   T_ego2lidar, fused_datum_sample, cls.render_func)
+
+        # # Hacky way to coalesce into CPU-intensive partitions
+        # from oarphpy.spark import num_executors
+        # n_tasks = oflow_task_df.count()
+        # n_parts = int(max(1, n_tasks / (10 * num_executors(spark))))
+        # print('coalesc to ', n_parts)
+        # oflow_task_df = oflow_task_df.coalesce(n_parts)
+        # result_rdd = oflow_task_df.rdd.mapPartitions(lambda irows: worker.single_machine_map_rows(irows))#(worker, preservesPartitioning=True)
+        #         # lambda irows: cls._render_oflow_tasks(
+        #         #       T_ego2lidar,
+        #         #       fused_datum_sample,
+        #         #       irows))
+        # OUT_PATH = '/tmp/oflow_out/'
+        # oputil.mkdir(OUT_PATH)
+        # import pickle
+        # t = oputil.ThruputObserver(name='BuildOFlow', n_total=n_tasks)
+        # t.start_block()
+        # for i, results in enumerate(result_rdd.toLocalIterator(prefetchPartitions=False)):
+        #   for j, row in enumerate(results):
+        #     path = os.path.join(OUT_PATH, 'oflow_%s_%s.pkl' % (i, j))
+        #     with open(path, 'wb') as f:
+        #       pickle.dump(row, f, protocol=pickle.HIGHEST_PROTOCOL)
+        #     print('saved to', path)
+
+        #   t.update_tallies(n=1, num_bytes=oputil.get_size_of_deep(results), new_block=True)
+        #   t.maybe_log_progress(every_n=1)

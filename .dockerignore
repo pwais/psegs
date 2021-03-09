@@ -14,3 +14,6 @@ notebooks/.ipynb_checkpoints
 notebooks/sparkmonitor_kernelextension.log
 test_*
 *.bag
+dataroot_costco
+dataroot
+test_run_output
