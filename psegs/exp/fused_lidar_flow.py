@@ -680,66 +680,456 @@ import numba
 from numba import jit
 
 @jit(nopython=True)
-def get_nearest_idx(uvd):
+def get_nearest_idx(uvd, dist_eps):
+  if uvd.shape[0] == 0:
+    return np.ones(0, dtype=np.int64).flatten()
+
   max_u = int(np.rint(np.max(uvd[:, 0])))
   max_v = int(np.rint(np.max(uvd[:, 1])))
   nearest = np.full((max_u + 1, max_v + 1, 2), np.Inf)
+
+  # NB: numba accelerates this for loop 10x-100x+
   for r in range(uvd.shape[0]):
     d = uvd[r, 2]
     u = int(np.rint(uvd[r, 0]))
     v = int(np.rint(uvd[r, 1]))
-    if d < nearest[u, v, 1]:
+    if d >= dist_eps and d < nearest[u, v, 1]:
       nearest[u, v, 1] = d
       nearest[u, v, 0] = r
 
   rs = nearest[:, :, 0].flatten()
   return rs[rs != np.Inf].astype(np.int64)
 
+@jit(nopython=True)
+def get_masked_idx(uvd, uvd_mask):
+  
+  ij_idx = np.zeros((uvd.shape[0], 3), dtype=np.int64)
+  ij_idx[:, :2] = np.rint(uvd[:, (0, 1)])
+  ij_idx[:, 2] = np.arange(uvd.shape[0])
 
-def world_to_uvd_visible(
-        camera_pose=np.eye(4),
-        P=np.eye(4),
+  ijd_mask = np.zeros((uvd.shape[0], 3), dtype=uvd_mask.dtype)
+  ijd_mask[:, :2] = np.rint(uvd_mask[:, (0, 1)])
+  ijd_mask[:, 2] = uvd_mask[:, 3]
+
+  max_i = int(max(ij_idx[:, 0].max(), mask_ij[:, 0].max()))
+  max_j = int(max(ij_idx[:, 1].max(), mask_ij[:, 1].max()))
+
+  im_idx = np.full((max_i + 1, max_j + 1), -1, dtype=np.int64)
+  ii, jj, idx = ij_idx[:, 0], ij_idx[:, 1], ij_idx[:, 2]
+  im_idx[ii, jj] = idx
+    # Now im_idx has a 'pixel' value of 0 or greater for every row in
+    # `uvd`; otherwise, im_idx has 'pixel' value -1
+
+  # NB: numba accelerates this for loop 10x-100x+
+  masked = np.zeros(uvd.shape[0], dtype=np.bool)
+  for r in range(ijd_mask.shape[0]):
+    i = int(ijd_mask[r, 0])
+    j = int(ijd_mask[r, 1])
+    d_mask = ijd_mask[r, 2]
+    idx = im_idx[i, j]
+    if idx >= 0 and d_mask < uvd[idx, 2]:
+      masked[idx] = 1
+        # Since `uvd_mask` has a closer point than `uvd`, this point
+        # in `uvd` is to be masked
+  
+  return masked
+
+
+
+# def world_to_uvd_visible(
+#         camera_pose=np.eye(4),
+#         P=np.eye(4),
+#         image_size=(100, 200),
+#         T_lidar2cam=np.eye(4),
+#         T_ego2lidar=np.eye(4),
+#         world_cloud=np.zeros((0, 3))):
+  
+#   w, h = image_size
+#   xyz_ego_t = np.matmul(camera_pose, world_cloud.T)
+  
+#   uvd = P.dot(T_lidar2cam.dot( T_ego2lidar.dot( xyz_ego_t ) ) )
+#   uvd[0:2, :] /= uvd[2, :]
+#   uvd = uvd.T
+#   uvd = uvd[:, :3]
+
+#   in_cam_frustum = np.where(
+#       (np.rint(uvd[:, 0]) >= 0) & 
+#       (np.rint(uvd[:, 0]) <= w - 1) &
+#       (np.rint(uvd[:, 1]) >= 0) & 
+#       (np.rint(uvd[:, 1]) <= h - 1) &
+#       (uvd[:, 2] >= 0.001))
+
+#   uvd_in_cam = uvd[in_cam_frustum]
+
+#   # Now prune to nearest points
+#   nearest_idx = get_nearest_idx(uvd_in_cam)
+
+#   uvd_visible = np.hstack([uvd, np.zeros((uvd.shape[0], 1))])
+#   idx = np.arange(uvd_visible.shape[0])[in_cam_frustum][nearest_idx]
+#   uvd_visible[idx, -1] += 1
+#       # Visible: in the camera frustum, AND is nearest point for the pixel.
+#       # TODO: Try to interpolate for neighboring pixels?
+
+#   return uvd_visible
+
+ # 100 microns if cloud is in meters
+DEFAULT_MIN_DIST = 0.0001
+
+def render_world_to_uvd_visible(
+        viewer_pose1=np.eye(4),
+        viewer_pose2=np.eye(4),
+        
+        projection='pinhole', # or 'spherical'
+
+        # Use a pinhole camera viewer / projection
+        K=np.eye(4),
         image_size=(100, 200),
-        T_lidar2cam=np.eye(4),
-        T_ego2lidar=np.eye(4),
-        world_cloud=np.zeros((0, 3))):
+        
+        # Use a spherical viewer / projection
+        yaw_bin_radians=0.,
+        yaw_limits_radians=(-float('inf'), float('inf')),
+        pitch_bin_radians=0.,
+        pitch_limits_radians=(-float('inf'), float('inf')),
+        
+        # T_lidar2viewer=np.eye(4),
+        # T_ego2lidar=np.eye(4),
+        T_ego2viewer=np.eye(4),
+        world_cloud1=np.zeros((0, 3)),
+        world_cloud2=None, # Or provide a xyz point cloud for cloud in view 2
+        
+        clip_invisible_both=True,
+        min_dist=DEFAULT_MIN_DIST):
+  """
+  Render the given xyz point cloud(s) `world_cloud1` (and optionally
+  `world_cloud2`) in the space of a 'viewer' (e.g. a camera) and
+  return an float32 numpy array (a _table_) of:
+       uvd visible 1          uvd visible 2
+    u1 | v1 | d1 | viz1 | u2 | v2 | d2 | viz2 |
+  For each row in the output:
+   * The float values `u` and `v` are the "horizontal" and "vertical" axes.  
+      For a camera, `u` is the width dimension (x-axis) and `v` is the
+      height dimension (y-axis).  For a spherical projection, `u` is 
+      the left-right (yaw) axis and `v` is the up-down (pitch) axis.
+   * The float value `d` is depth or distance from the viewer's origin.
+      This value has the same units as the world cloud (e.g. meters).
+   * The float value `viz` is 1 if the point is visible from the viewer pose
+      and 0 otherwise (i.e. the point is occluded).
+   * The first columns represent data for the first viewer pose and the last
+      columns represent data for the last viewer pose.
+   * Rows indicate correspondence between points in the two viewer poses--
+      each row in the output is data for the same physical point in both
+      viewer frames.
+   * Points that are invisible in *both* frames will be omitted only if
+      `clip_invisible_both`.
   
-  w, h = image_size
-  xyz_ego_t = np.matmul(camera_pose, world_cloud.T)
+  """
+  import time
+  start = time.time()
+
+  hworld_cloud1 = make_homo(world_cloud1)
+  xyz_ego_1 = np.matmul(viewer_pose1, hworld_cloud1.T)
+  # xyz_viewer_1 = T_lidar2viewer.dot( T_ego2lidar.dot( xyz_ego_1 ) )
+  xyz_viewer_1 = T_ego2viewer.dot( xyz_ego_1 )
   
-  uvd = P.dot(T_lidar2cam.dot( T_ego2lidar.dot( xyz_ego_t ) ) )
-  uvd[0:2, :] /= uvd[2, :]
-  uvd = uvd.T
-  uvd = uvd[:, :3]
+  if world_cloud2 is None:
+    xyz_ego_2 = np.matmul(viewer_pose2, hworld_cloud1.T)
+  else:
+    assert world_cloud2.shape == world_cloud1.shape, \
+      "Cloud rows must indicate point correspondence!"
+    hworld_cloud2 = make_homo(world_cloud2)
+    xyz_ego_2 = np.matmul(viewer_pose2, hworld_cloud2.T)
+  # xyz_viewer_2 = T_lidar2viewer.dot( T_ego2lidar.dot( xyz_ego_2 ) )
+  xyz_viewer_2 = T_ego2viewer.dot( xyz_ego_2 )
+  print('in viewer frame', time.time() - start)
+  if projection == 'pinhole':
 
-  in_cam_frustum = np.where(
-      (np.rint(uvd[:, 0]) >= 0) & 
-      (np.rint(uvd[:, 0]) <= w - 1) &
-      (np.rint(uvd[:, 1]) >= 0) & 
-      (np.rint(uvd[:, 1]) <= h - 1) &
-      (uvd[:, 2] >= 0.001))
+    #@jit(nopython=True)  ~~ TODO why is jit slower? nb: appears w/out jit does multithread~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def to_uvdvis(xyz):
+      w, h = image_size
 
-  uvd_in_cam = uvd[in_cam_frustum]
+      uvd = K.dot(xyz)
+      uvd[0:2, :] /= uvd[2, :]
+      uvd = uvd.T
+      uvd = uvd[:, :3]
+      
+      in_cam_frustum_idx = np.where(
+        (np.rint(uvd[:, 0]) >= 0) & 
+        (np.rint(uvd[:, 0]) <= w - 1) &
+        (np.rint(uvd[:, 1]) >= 0) & 
+        (np.rint(uvd[:, 1]) <= h - 1) &
+        (uvd[:, 2] >= min_dist)
+      )
+        # NB: we tried to JIT this expression and JIT is slower
 
-  # Now prune to nearest points
-  nearest_idx = get_nearest_idx(uvd_in_cam)
+      nearest_idx = get_nearest_idx(uvd[in_cam_frustum_idx], min_dist)
+        # Ignoring the out-of-frustum points helps runtime considerably
 
-  uvd_visible = np.hstack([uvd, np.zeros((uvd.shape[0], 1))])
-  idx = np.arange(uvd_visible.shape[0])[in_cam_frustum][nearest_idx]
-  uvd_visible[idx, -1] += 1
-      # Visible: in the camera frustum, AND is nearest point for the pixel.
-      # TODO: Try to interpolate for neighboring pixels?
+      uvdvis = np.hstack([uvd, np.zeros((uvd.shape[0], 1))])
+      vis_idx = np.arange(uvd.shape[0])[in_cam_frustum_idx][nearest_idx]
+      uvdvis[vis_idx, -1] = 1
+      return uvdvis
+      
+      
+#       idx = np.arange(uvdij_visible.shape[0])[in_cam_frustum][nearest_idx]
+#     uvdij_visible[idx, -1] += 1
 
-  return uvd_visible
+#       in_cam_frustum = np.where(
+#         (uvdij[:, 0] >= 0) & 
+#         (uvdij[:, 0] <= w - 1) &
+#         (uvdij[:, 1] >= 0) & 
+#         (uvdij[:, 1] <= h - 1) &
+#         (uvdij[:, 2] >= 0.01))
+
+#       uvdij_in_cam = uvdij[in_cam_frustum]
 
 
-def merge_uvd_nearest(uvd1, uvd2):
-  uvd = np.vstack([uvd1, uvd2])
-  nearest_idx = get_nearest_idx(uvd)
-  return uvd[nearest_idx]
+# #     uvdij, uvdij_in_cam = project_to_uvd(P, pose, hfused_world_cloud, T_lidar2cam, T_ego2lidar, w, h)
+#     print(time.time() - start, 'projected to uvd in cam', uvdij_in_cam.shape, 1e-9 * uvdij_in_cam.nbytes)
+
+    
+# #     print('render using pandas %s ...' % (uvdij_in_cam.shape,))
+# #     import pandas as pd
+# #     start = time.time()
+# #     df = pd.DataFrame(uvdij_in_cam[:, 2:], columns=['d', 'i', 'j'])
+# #     df['id'] = df.index
+# #     nearest_idx = df.groupby(['i', 'j'])['d'].idxmin().to_numpy()
+# #     print(time.time() - start, 'done pandas, %s winners' % (nearest_idx.shape,))
+# #     print(nearest_idx[:10])
+    
+#     print('render using numba %s ...' % (uvdij_in_cam.shape,))
+#     start = time.time()
+#     nearest_idx = get_nearest_idx(uvdij_in_cam)
+#     print(time.time() - start, 'done numba, %s winners' % (nearest_idx.shape,))
+# #     print(nearest_idx[:10])
+    
+#     uvdij_visible = np.hstack([uvdij, np.zeros((uvdij.shape[0], 1))])
+#     idx = np.arange(uvdij_visible.shape[0])[in_cam_frustum][nearest_idx]
+#     uvdij_visible[idx, -1] += 1
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+#       fstart = time.time()
+#       xxx = 
+#       print(xxx.shape)
+#       nearest_idx = get_nearest_idx(uvd[in_cam_frustum == True], min_dist)
+#       print('numba time', time.time() - fstart)
+#       is_nearest = np.zeros(uvd.shape[0], dtype=np.bool) # NB need bool_ for numba: https://github.com/numba/numba/issues/1311
+#       is_nearest[nearest_idx] = 1
+
+#       visible = ( in_cam_frustum & is_nearest ) #np.zeros((uvd.shape[0], 1)) + ( in_cam_frustum & is_nearest)
+#       visible = np.expand_dims(visible, axis=1)
+
+#       uvdvis = np.hstack((uvd, visible.astype(uvd.dtype)))
+      
+#       return uvdvis
+
+    uvdvis1 = to_uvdvis(xyz_viewer_1)
+    uvdvis2 = to_uvdvis(xyz_viewer_2)
+
+  elif projection == 'spherical':
+    raise ValueError('TODO')
+  else:
+    raise ValueError("Unsupported %s" % projection)
+
+  if clip_invisible_both:
+    visible_either = ((uvdvis1[:, -1] == 1) | (uvdvis2[:, -1] == 1))
+    print('visible_either', visible_either.sum())
+    uvd_viz1_uvd_viz2 = np.hstack([
+      uvdvis1[visible_either], uvdvis2[visible_either]
+    ])
+  else:
+    uvd_viz1_uvd_viz2 = np.hstack([uvdvis1, uvdvis2])
+  print('done', time.time() - start)
+  return uvd_viz1_uvd_viz2
+
+
+def merge_uvd_viz1_uvd_viz2(
+        uvd_viz1_uvd_viz2_pair1,
+        uvd_viz1_uvd_viz2_pair2,
+        min_dist=DEFAULT_MIN_DIST):
+  """Reduce operation: combine two uvdvis-pairs and return only
+    the nearest points across both pairs."""
+  import time
+  start = time.time()
+
+  merged_uvd_viz1_uvd_viz2 = np.vstack([
+    uvd_viz1_uvd_viz2_pair1,
+    uvd_viz1_uvd_viz2_pair2
+  ])
+
+  uvdvis1 = merged_uvd_viz1_uvd_viz2[:, :4]
+  nearest_idx = get_nearest_idx(uvdvis1, min_dist)
+  is_nearest = np.zeros(uvdvis1.shape[0], dtype=np.bool)
+  is_nearest[nearest_idx] = 1
+  uvdvis1[:, -1] = ((uvdvis1[:, -1] == 1) & is_nearest)
+  
+  uvdvis2 = merged_uvd_viz1_uvd_viz2[:, 4:]
+  nearest_idx = get_nearest_idx(uvdvis2, min_dist)
+  is_nearest = np.zeros(uvdvis2.shape[0], dtype=np.bool)
+  is_nearest[nearest_idx] = 1
+  uvdvis2[:, -1] = ((uvdvis2[:, -1] == 1) & is_nearest)
+
+  visible_either = ((uvdvis1[:, -1] == 1) | (uvdvis2[:, -1] == 1))
+  print('merge visible_either', visible_either.sum())
+  merged_uvd_viz1_uvd_viz2 = np.hstack([
+    uvdvis1[visible_either], uvdvis2[visible_either]
+  ])
+  print('merge in ', time.time() - start)
+  return merged_uvd_viz1_uvd_viz2
+
+
+  # is_nearest = np.zeros(uvd.shape[0], dtype=np.bool) # NB need bool_ for numba: https://github.com/numba/numba/issues/1311
+  # is_nearest[nearest_idx] = 1
+
+  # visible = ( in_cam_frustum & is_nearest ) #np.zeros((uvd.shape[0], 1)) + ( in_cam_frustum & is_nearest)
+  # visible = np.expand_dims(visible, axis=1)
+
+  # nearest_idx1 = get_nearest_idx(uvdvis1, min_dist)
+  # nearest_idx2 = get_nearest_idx(uvdvis2, min_dist)
+
+
+
+
+  # merged_uvd_viz1_uvd_viz2 = np.vstack([
+  #   uvd_viz1_uvd_viz2_pair1,
+  #   uvd_viz1_uvd_viz2_pair2
+  # ])
+  # nearest_idx = get_nearest_idx(merged_uvd_viz1_uvd_viz2, min_dist)
+  # res = merged_uvd_viz1_uvd_viz2[nearest_idx]
+  # print('merge in ', time.time() - start)
+  # return res
+
+
+# def merge_uvd_nearest(uvd1, uvd2):
+#   uvd = np.vstack([uvd1, uvd2])
+#   nearest_idx = get_nearest_idx(uvd)
+#   return uvd[nearest_idx]
+
+def render_oflow_pair(
+      ci1=datum.CameraImage(),
+      ci2=datum.CameraImage(),
+      world_cloud1=np.zeros((0, 3)),
+      world_cloud2=np.zeros((0, 3)), # or None to use world_cloud1
+      mask_world=np.zeros((0, 3))):
+
+  ego_pose1 = ci1.ego_pose.get_inverse().get_transformation_matrix(homogeneous=True) # not sure why need inv...........
+  ego_pose2 = ci2.ego_pose.get_inverse().get_transformation_matrix(homogeneous=True)
+
+  K = np.eye(4)
+  K[:3, :3] = ci1.K[:3, :3]
+
+  w, h = ci1.width, ci2.height
+
+  T_ego2cam = ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True)
+
+  uvd_viz1_uvd_viz2 = render_world_to_uvd_visible(
+                          viewer_pose1=ego_pose1,
+                          viewer_pose2=ego_pose2,
+                          projection='pinhole',
+                          K=K,
+                          image_size=(w, h),
+                          T_ego2viewer=T_ego2cam,
+                          world_cloud1=world_cloud1,
+                          world_cloud2=world_cloud2,
+                          clip_invisible_both=True)
+    
+  if mask_world.shape[0] > 0:
+    # Get masks in uvd space
+    mask_uvd_viz1_uvd_viz2 = render_world_to_uvd_visible(
+                                viewer_pose1=ego_pose1,
+                                viewer_pose2=ego_pose2,
+                                projection='pinhole',
+                                K=K,
+                                image_size=(w, h),
+                                T_ego2viewer=T_ego2cam,
+                                world_cloud1=mask_world)
+    
+    uvdvis1 = uvd_viz1_uvd_viz2[:, :4]
+    uvdvis2 = uvd_viz1_uvd_viz2[:, 4:]
+
+    # Apply masks: make masked pixels invisible
+    masked = get_masked_idx(
+                uvdvis1,
+                mask_uvd_viz1_uvd_viz2[:, 0:3])
+    uvdvis1[masked, -1] = 0
+
+    masked = get_masked_idx(
+                uvdvis2,
+                mask_uvd_viz1_uvd_viz2[:, 4:8])
+    uvdvis2[masked, -1] = 0
+
+    # Re-apply clip_invisible_both
+    visible_either = ((uvdvis1[:, -1] == 1) | (uvdvis2[:, -1] == 1))
+    uvd_viz1_uvd_viz2 = np.hstack([
+      uvdvis1[visible_either], uvdvis2[visible_either]
+    ])
+  
+  return uvd_viz1_uvd_viz2
+
+
+def viz_oflow_pair(ci1, ci2, uvd_viz1_uvd_viz2):
+  from psegs.util.plotting import draw_xy_depth_in_image
+
+  im1 = ci1.image
+  im2 = ci2.image
+
+  uvdvis1 = uvd_viz1_uvd_viz2[:, :4]
+  uvd1 = uvdvis1[uvdvis1[:, -1] == 1, :3]
+  uvdvis2 = uvd_viz1_uvd_viz2[:, 4:]
+  uvd2 = uvdvis2[uvdvis2[:, -1] == 1, :3]
+
+  def put_label(img, s):
+    import cv2
+    FONT_SCALE = 0.8
+    FONT = cv2.FONT_HERSHEY_PLAIN
+    PADDING = 2 # In pixels
+
+    ret = cv2.getTextSize(s, FONT, fontScale=FONT_SCALE, thickness=1)
+    ((text_width, text_height), _) = ret
+
+    cv2.putText(
+        img,
+        s,
+        (10, 10),
+        FONT,
+        FONT_SCALE,
+        (128, 128, 128), # text_color
+        1) # thickness
+
+  debug_im1_uvd1 = im1.copy()
+  draw_xy_depth_in_image(debug_im1_uvd1, uvd1)
+  put_label(debug_im1_uvd1, 'img1+cloud1')
+  
+  debug_im1_uvd2 = im1.copy()
+  draw_xy_depth_in_image(debug_im1_uvd2, uvd2)
+  put_label(debug_im1_uvd2, 'img1+cloud2')
+  
+  debug_im2_uvd1 = im2.copy()
+  draw_xy_depth_in_image(debug_im2_uvd1, uvd1)
+  put_label(debug_im2_uvd1, 'img2+cloud2')
+  
+  debug_im2_uvd2 = im2.copy()
+  draw_xy_depth_in_image(debug_im2_uvd2, uvd2)
+  put_label(debug_im2_uvd2, 'img2+cloud2')
+
+  debug_full = np.concatenate([
+    np.concatenate([debug_im1_uvd1, debug_im1_uvd2], axis=1),
+    np.concatenate([debug_im2_uvd1, debug_im2_uvd2], axis=1),
+  ], axis=0)
+
+  return debug_full
 
 
 
@@ -1736,28 +2126,315 @@ class FusedFlowDFFactory(object):
       
       for suri in segment_uris:
         sample_df = cls.SAMPLE_DF_FACTORY.build_df_for_segment(spark, suri)
-        print('num samples', sample_df.count())
+        print('sample_df size', sample_df.count())
         
         world_cloud_df = cls._build_world_cloud_df(sample_df)
+        print('world_cloud_df size', world_cloud_df.count())
         
         world_cloud_df = world_cloud_df.persist()
 
-        world_cloud_df.registerTempTable('world_cloud_df')
-        stats_df = spark.sql("""
+
+
+        sample_id_filter_clause = ''
+        # if cls.MAX_TASKS_PER_SEGMENT > 0:
+        #   print('restrict to', cls.MAX_TASKS_PER_SEGMENT)
+        #   task_ids = [r.task_id for r in task_df.select('task_id').collect()]
+        #   from random import Random
+        #   r = Random(cls.MAX_TASKS_SEED)
+        #   r.shuffle(task_ids)
+        #   task_ids = task_ids[:cls.MAX_TASKS_PER_SEGMENT]
+        #   tid_str = ", ".join(str(tid) for tid in task_ids)
+        #   task_id_filter_clause = "AND cuci_1.task_id in ( %s )" % tid_str
+
+        # Compute tasks pairs for flow
+        sample_id_join_clauses = [
+          "( cuci_1.sample_id = (cuci_2.sample_id + %s) )" % offset
+          for offset in (1,)#cls.TASK_OFFSETS
+        ]
+        sample_id_join_clause = " OR ".join(sample_id_join_clauses)
+
+        # Build the flow pair task table
+        spark.catalog.dropTempView('flow_pairs_df')
+        sample_df.registerTempTable('sample_df')
+        flow_pairs_df = spark.sql(
+          """
+            SELECT
+              CONCAT(cuci_1.sample_id, '->', cuci_2.sample_id)
+                AS flow_pair_id,
+              
+              cuci_1.sample_id AS sample_id_1,
+              cuci_1.cuboids_sds AS cuboids_sds_1,
+              cuci_1.ci_sds AS ci_sds_1,
+
+              cuci_2.sample_id AS sample_id_2,
+              cuci_2.cuboids_sds AS cuboids_sds_2,
+              cuci_2.ci_sds AS ci_sds_2
+            
+            FROM
+              sample_df AS cuci_1, sample_df AS cuci_2
+            
+            WHERE
+              SIZE(cuci_1.ci_sds) > 0 AND
+              SIZE(cuci_2.ci_sds) > 0 AND
+              ( {task_id_join_clause} ) {sample_id_filter_clause}
+          """.format(
+                task_id_join_clause=sample_id_join_clause,
+                sample_id_filter_clause=sample_id_filter_clause))
+        flow_pairs_df.registerTempTable('flow_pairs_df')
+
+        pairs_stats_df = spark.sql("""
           SELECT
-            COUNT(*) AS n_clouds,
-            1e-9 * SUM(LENGTH(world_cloud.cloud.values_packed)) AS cloud_gbytes,
-            SUM(world_cloud.n_pruned) AS total_pruned,
-            SUM(world_cloud.n_pruned) / (
-                SUM(world_cloud.n_pruned) + SUM(world_cloud.cloud.shape[0]))
-              AS total_frac_pruned,
-            MEAN(world_cloud.n_pruned) AS avg_pruned_per_cloud,
-            PERCENTILE(world_cloud.n_pruned, 0.1) AS pruned_per_cloud_10th,
-            PERCENTILE(world_cloud.n_pruned, 0.9) AS pruned_per_cloud_90th
-          FROM 
-            world_cloud_df
+            COUNT(*) AS total_sample_pairs,
+            SUM(SIZE(ci_sds_1)) AS num_camera_pose_pairs
+          FROM flow_pairs_df
         """)
-        util.log.info(stats_df.toPandas().transpose())
+        pairs_stats = pairs_stats_df.first().asDict()
+        util.log.info(
+          "Flow Pairs Stats:\n%s" % pairs_stats)
+
+        # world_cloud_df.registerTempTable('world_cloud_df')
+
+        thruput_pairs = oputil.ThruputObserver(
+          'RenderFlowPairs', n_total=pairs_stats['total_sample_pairs'])
+        for row in flow_pairs_df.rdd.toLocalIterator():
+          thruput_pairs.start_block()
+
+
+          """
+          for each camera pair:
+            static cloud: just take xyz
+            dynmic cloud: use xyz pose 1 or xyz pose 2 in projection; need
+              *same point order for both projection*
+            project to uvdviz1, uvdviz2
+            trim invisible in both 1 and 2
+
+          """
+
+
+          from oarphpy.spark import RowAdapter
+          FROM_ROW = RowAdapter.from_row
+
+          def union_all(it):
+            import itertools
+            return list(itertools.chain.from_iterable(it))
+
+          cuboids1 = union_all(FROM_ROW(sd.cuboids) for sd in row.cuboids_sds_1)
+          cuboids2 = union_all(FROM_ROW(sd.cuboids) for sd in row.cuboids_sds_2)
+          ci1_sds = [FROM_ROW(sd) for sd in row.ci_sds_1]
+          ci2_sds = [FROM_ROW(sd) for sd in row.ci_sds_2]
+          cname_to_ci1 = dict((c.camera_image.sensor_name, c) for c in ci1_sds)
+          cname_to_ci2 = dict((c.camera_image.sensor_name, c) for c in ci2_sds)
+          all_cams = sorted(set(cname_to_ci1.keys()) & set(cname_to_ci2.keys()))
+          for sensor_name in all_cams:
+            print(sensor_name)
+            ci_sd1 = cname_to_ci1[sensor_name]
+            ci_sd2 = cname_to_ci2[sensor_name]
+            ci1 = ci_sd1.camera_image
+            ci2 = ci_sd2.camera_image
+
+            render = (
+              lambda world_cloud: 
+                render_oflow_pair(
+                  ci1, ci2, world_cloud1=world_cloud, world_cloud2=None))
+            to_numpy = lambda row: FROM_ROW(row.world_cloud.cloud)
+            uvd_viz1_uvd_viz2_rdd = world_cloud_df.rdd.map(to_numpy).map(render)
+
+            # yay = world_cloud_df.rdd.map(to_numpy).first()
+            # res = render(yay)
+            # base_path = '/opt/psegs/test_run_output/'
+            # fname = 'refactor_%s.png' % sensor_name
+            # debug = viz_oflow_pair(ci1, ci2, res)
+            # import imageio
+            # imageio.imwrite(base_path + fname, debug)
+            # print(base_path + fname)
+            # import ipdb; ipdb.set_trace()
+
+            reduce_uvds = (lambda u1, u2: merge_uvd_viz1_uvd_viz2(u1, u2))
+            uvd_viz1_uvd_viz2 = uvd_viz1_uvd_viz2_rdd.treeReduce(reduce_uvds)
+              # NB: treeReduce is more efficient than reduce() because reduce()
+              # will do an O(num partitions) aggregate in the driver
+            print('final uvd_viz1_uvd_viz2', uvd_viz1_uvd_viz2.shape)
+
+            base_path = '/opt/psegs/test_run_output/'
+            fname = 'refactor_%s_%s.png' % (row.flow_pair_id, sensor_name)
+            debug = viz_oflow_pair(ci1, ci2, uvd_viz1_uvd_viz2)
+            import imageio
+            imageio.imwrite(base_path + fname, debug)
+            print(base_path + fname)
+
+
+          # cname_to_ci1 = dict((c.sensor_name, c) for c in ci1s)
+          #   #     cname_to_ci2 = dict((c.sensor_name, c) for c in ci2s)
+          #   #     all_cams = sorted(set(cname_to_ci1.keys()) & set(cname_to_ci2.keys()))
+          #   #     for sensor_name in all_cams:
+          #   #       print(sensor_name)
+          #   #       import time
+          #   #       start = time.time()
+
+          # uvdij1_visible_uvdij2_visible, v2v_flow = self.render_func(
+          #         world_cloud=world_cloud,
+          #         T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
+          
+          #         # KITTI-360 and nusc too wat i guess ego is lidar?
+          #         T_lidar2cam=ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True),
+
+          #         P=P,
+          #         cam_height_pixels=cam_height_pixels,
+          #         cam_width_pixels=cam_width_pixels,
+
+          #         ego_pose1=pose1,
+          #         ego_pose2=pose2,
+          #         moving_1=moving_1,
+          #         moving_2=moving_2,
+
+
+          #         img1_factory=lambda: ci1.image,
+          #         img2_factory=lambda: ci2.image,
+          #         debug_title=trow.oflow_task_id)
+
+
+          # class RenderUVDVisible(object):
+          #   def __init__(self, ci_sds):
+          #     self._ci_sds = ci_sds
+          #     self._thruput = oputil.ThruputObserver(name='RenderUVDVisible', log_on_del=True)
+            
+          #   def iter_renders(self, world_cloud):
+          #     for ci_sd in self._ci_sds:
+          #       ci = ci_sd.camera_image
+          #       self._thruput.start_block()
+
+          #       P = np.eye(4)
+          #       P[:3, :3] = ci1.K[:3, :3]
+          #       camera_pose = ci.ego_pose.get_transformation_matrix(homogeneous=True)
+          #       T_lidar2cam = ci.ego_to_sensor.get_transformation_matrix(homogeneous=True),
+
+          #       uvd_visible = world_to_uvd_visible(
+          #                       camera_pose=camera_pose,
+          #                       P=P,
+          #                       image_size=(ci.width, ci.height),
+          #                       T_lidar2cam=T_lidar2cam,
+          #                       T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
+          #                       world_cloud=world_cloud)
+                
+          #       self._thruput.stop_block(n=1, num_bytes=uvd_visible.nbytes)
+          #       self._thruput.maybe_log_progress()
+          #       yield {
+          #         'ci_uri': str(ci_sd.uri),
+          #         'uvd_visible': uvd_visible,
+          #       }
+
+
+          
+          # for sensor_name in all_cams:
+          #   t.start_block()
+  #       print(sensor_name)
+  #       import time
+  #       start = time.time()
+        
+  #       ci1 = cname_to_ci1[sensor_name]
+  #       ci2 = cname_to_ci2[sensor_name]
+        
+  #       cam_height_pixels = ci1.height
+  #       cam_width_pixels = ci1.width
+  #       assert (ci1.width, ci1.height) == (ci2.width, ci2.height)
+
+  #       # Pose all objects for t1 and t2
+  #       moving_1 = np.zeros((0, 3))
+  #       for cuboid in cuboids1:
+  #         cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
+  #         cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+  #         cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+  #         moving_1 = np.vstack([moving_1, cloud_world])
+  #       print('moving_1', moving_1.shape)
+        
+  #       moving_2 = np.zeros((0, 3))
+  #       for cuboid in cuboids2:
+  #         cloud_obj = track_id_to_fused_cloud[cuboid.track_id]
+  #         cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+  #         cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+  #         moving_2 = np.vstack([moving_2, cloud_world])
+  #       print('moving_2', moving_2.shape)
+        
+    
+  #       movement = ci1.ego_pose.translation - ci2.ego_pose.translation
+  #       print('movement', movement)
+  #       if np.linalg.norm(movement) < 0.01:
+  #           print('less than 1cm movement...')
+  #           continue
+    
+  #       # T_ego2cam = ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True)
+  #       # T_lidar2cam = T_ego2cam @ np.linalg.inv(T_ego2lidar)
+    
+  #       P = np.eye(4)
+  #       P[:3, :3] = ci1.K[:3, :3]
+    
+  #       pose1 = ci1.ego_pose.get_transformation_matrix(homogeneous=True)
+  #       pose2 = ci2.ego_pose.get_transformation_matrix(homogeneous=True)
+  #       result = cls.render_func(
+  #                   world_cloud=world_cloud,
+  #                   T_ego2lidar=np.eye(4), # T_ego2lidar nope this is np.eye(4) for kitti and nusc
+            
+  #                   # KITTI-360 and nusc too wat i guess ego is lidar?
+  #                   T_lidar2cam=ci1.ego_to_sensor.get_transformation_matrix(homogeneous=True),
+
+  #                   P=P,
+  #                   cam_height_pixels=cam_height_pixels,
+  #                   cam_width_pixels=cam_width_pixels,
+
+  #                   ego_pose1=pose1,
+  #                   ego_pose2=pose2,
+  #                   moving_1=moving_1,
+  #                   moving_2=moving_2,
+
+
+  #                   img1_factory=lambda: ci1.get_image(),
+  #                   img2_factory=lambda: ci2.get_image(),
+  #                   debug_title=trow.oflow_task_id)
+        
+  #       print('did in', time.time() - start)
+
+  #       yield result
+
+        
+
+        # SAMPLE_WINDOW = 1000000
+        # render_df = spark.sql("""
+        #   SELECT
+        #     *
+        #   FROM
+        #     flow_pairs_df, world_cloud_df
+        #   WHERE
+        #     sample_id <= sample_id_1 + {sample_window} AND
+        #     sample_id >= sample_id_1 - {sample_window} AND
+        #     sample_id <= sample_id_2 + {sample_window} AND
+        #     sample_id >= sample_id_2 - {sample_window}
+
+        # """.format(sample_window=SAMPLE_WINDOW))
+
+        
+
+        # stats_df = spark.sql("""
+        #   SELECT
+        #     COUNT(*) AS n_clouds,
+        #     1e-9 * SUM(LENGTH(world_cloud.cloud.values_packed)) AS cloud_gbytes,
+        #     SUM(world_cloud.n_pruned) AS total_pruned,
+        #     SUM(world_cloud.n_pruned) / (
+        #         SUM(world_cloud.n_pruned) + SUM(world_cloud.cloud.shape[0]))
+        #       AS total_frac_pruned,
+        #     MEAN(world_cloud.n_pruned) AS avg_pruned_per_cloud,
+        #     PERCENTILE(world_cloud.n_pruned, 0.1) AS pruned_per_cloud_10th,
+        #     PERCENTILE(world_cloud.n_pruned, 0.9) AS pruned_per_cloud_90th
+        #   FROM 
+        #     world_cloud_df
+        # """)
+        # util.log.info(
+        #   "World Cloud Stats:\n%s" % stats_df.toPandas().transpose())
+
+        # import ipdb; ipdb.set_trace()
+        # print()
+
+
+
 
         # REPORT = """
         #   Total world clouds: {n_clouds} ({cloud_gbytes:%2f} GBytes)

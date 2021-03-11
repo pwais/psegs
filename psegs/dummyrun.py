@@ -75,11 +75,11 @@ class KITTI360LCCDFFactory(SampleDFFactory):
         datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
         datum_df.registerTempTable('datums')
         
-        util.log.info('Building tasks table for %s ...' % segment_uri.segment_id)
+        util.log.info('Building sample table for %s ...' % segment_uri.segment_id)
         
-        spark.catalog.dropTempView('kitti360_tasks_df')
-        task_data_df = spark.sql("""
-            CACHE TABLE kitti360_tasks_df OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
+        spark.catalog.dropTempView('kitti360_sample_df')
+        spark.sql("""
+            CACHE TABLE kitti360_sample_df OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
             SELECT 
               INT(uri.extra.`kitti-360.frame_id`) AS sample_id,
               COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
@@ -102,9 +102,9 @@ class KITTI360LCCDFFactory(SampleDFFactory):
             HAVING SIZE(pc_sds) > 0 AND SIZE(ci_sds) > 0
         """)
         
-        tasks_df = spark.sql('SELECT * FROM kitti360_tasks_df')
+        sample_df = spark.sql('SELECT * FROM kitti360_sample_df')
         util.log.info('... done.')
-        return tasks_df
+        return sample_df
 
 class KITTI360FusedFlowDFFactory(FusedFlowDFFactory):
   SAMPLE_DF_FACTORY = KITTI360LCCDFFactory
