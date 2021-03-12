@@ -965,10 +965,14 @@ def merge_uvd_viz1_uvd_viz2(
   import time
   start = time.time()
 
+  # try:
   merged_uvd_viz1_uvd_viz2 = np.vstack([
     uvd_viz1_uvd_viz2_pair1,
     uvd_viz1_uvd_viz2_pair2
   ])
+  # except Exception as e:
+  #   print('asdgadsgs', e, uvd_viz1_uvd_viz2_pair1.shape, uvd_viz1_uvd_viz2_pair2.shape)
+  #   raise e
 
   uvdvis1 = merged_uvd_viz1_uvd_viz2[:, :4]
   nearest_idx = get_nearest_idx(uvdvis1, min_dist)
@@ -2138,8 +2142,8 @@ class FusedFlowDFFactory(object):
           return Row(**rowdata)
 
     licu_df = sample_df.select('sample_id', 'pc_sds', 'cuboids_sds')
-    licu_df = licu_df.repartition(
-                10 * licu_df.rdd.getNumPartitions(), 'sample_id')
+    # licu_df = licu_df.repartition(
+    #             10 * licu_df.rdd.getNumPartitions(), 'sample_id')
 
     # SCHEMA_PROTO = {'sample_id': 0, 'cloud': np.zeros((0, 3)), 'n_pruned': 0}
     f = RowToWorldCloud(cleaner, C_acc)
@@ -2390,41 +2394,50 @@ class FusedFlowDFFactory(object):
                 #   set(c.track_id for c in cuboids2))
               
               def __call__(self, stamped_datum):
-                self._thruput.start_block()
+                from threadpoolctl import threadpool_limits
+                with threadpool_limits(limits=1, user_api='blas'):
+                  self._thruput.start_block()
 
-                EMPTY_CLOUD = np.zeros((0, 3))
-                if not stamped_datum.point_cloud:
-                  return EMPTY_CLOUD, EMPTY_CLOUD
-                pc = stamped_datum.point_cloud
-                if 'lidar|objects_fused' not in pc.sensor_name:
-                  return EMPTY_CLOUD, EMPTY_CLOUD
-                
-                def render_world(t2c):
-                  track_id = pc.extra['track_id']
-                  if track_id not in t2c:
-                    return EMPTY_CLOUD
+                  EMPTY_CLOUD = np.zeros((0, 3))
+                  if not stamped_datum.point_cloud:
+                    return EMPTY_CLOUD, EMPTY_CLOUD
+                  pc = stamped_datum.point_cloud
+                  if 'lidar|objects_fused' not in pc.sensor_name:
+                    return EMPTY_CLOUD, EMPTY_CLOUD
                   
-                  cuboid = t2c[track_id]
-                  cloud_obj = pc.get_cloud()
-                  cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
-                  cloud_world = cuboid.ego_pose.apply(cloud_ego).T
-                  return cloud_world
+                  track_id = pc.extra['track_id']
+                  have_both_poses = (
+                    track_id in self._track_id_to_cuboid1 and
+                    track_id in self._track_id_to_cuboid2)
+                  if not have_both_poses:
+                    return EMPTY_CLOUD, EMPTY_CLOUD
 
-                world_cloud1 = render_world(self._track_id_to_cuboid1)
-                world_cloud2 = render_world(self._track_id_to_cuboid2)
-                
-                self._thruput.stop_block(n=1, num_bytes=(world_cloud1.nbytes + world_cloud2.nbytes))
-                self._thruput.maybe_log_progress()
-                
-                return world_cloud1, world_cloud2
+                  cloud_obj = pc.get_cloud()
+
+                  def render_world(t2c):                  
+                    cuboid = t2c[track_id]
+                    cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+                    cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+                    return cloud_world
+
+                  world_cloud1 = render_world(self._track_id_to_cuboid1)
+                  world_cloud2 = render_world(self._track_id_to_cuboid2)
+                  
+                  self._thruput.stop_block(n=1, num_bytes=(world_cloud1.nbytes + world_cloud2.nbytes))
+                  self._thruput.maybe_log_progress()
+                  
+                  return world_cloud1, world_cloud2
 
             class RenderObjCloudPair(object):
               def __init__(self):
-                self._thruput = oputil.ThruputObserver(name='RenderObjCloudPair', log_freq=1)
+                self._thruput = oputil.ThruputObserver(name='RenderObjCloudPair', log_freq=10)
               def __call__(self, wc_pair):
-                world_cloud1, world_cloud2 = wc_pair
-
                 self._thruput.start_block()
+
+                world_cloud1, world_cloud2 = wc_pair
+                if (world_cloud1.shape[0] + world_cloud2.shape[0]) == 0:
+                  return np.zeros((0, 8))
+                
                 from threadpoolctl import threadpool_limits
                 with threadpool_limits(limits=1, user_api='blas'):
                   uvd_viz1_uvd_viz2 = render_oflow_pair(
@@ -2433,6 +2446,7 @@ class FusedFlowDFFactory(object):
                                         world_cloud2=world_cloud2)
                 self._thruput.stop_block(n=1, num_bytes=uvd_viz1_uvd_viz2.nbytes)
                 self._thruput.maybe_log_progress()
+                print('uvd_viz1_uvd_viz2 shape', uvd_viz1_uvd_viz2.shape)
                 return uvd_viz1_uvd_viz2
 
             obj_to_wc = FusedObjectCloudToWorldCloudPair(cuboids1, cuboids2)
@@ -2465,7 +2479,11 @@ class FusedFlowDFFactory(object):
 
                   self._thruput.stop_block(n=1, num_bytes=uvd_viz1_uvd_viz2.nbytes)
                   self._thruput.maybe_log_progress()
-                return [uvd_viz1_uvd_viz2_part]
+                
+                if uvd_viz1_uvd_viz2_part is None:
+                  return []
+                else:
+                  return [uvd_viz1_uvd_viz2_part]
             render = RenderWCPartition()
             wc_uvd_viz1_uvd_viz2_rdd = world_cloud_df.rdd.mapPartitions(render)
 
@@ -2484,7 +2502,35 @@ class FusedFlowDFFactory(object):
             debug = viz_oflow_pair(ci1, ci2, uvd_viz1_uvd_viz2)
             import imageio
             imageio.imwrite(base_path + fname, debug)
-            print(base_path + fname)
+            print('saved debug', base_path + fname)
+
+            
+            h, w = ci1.height, ci1.width
+            uvdvis1 = uvd_viz1_uvd_viz2[:, :4]
+            uvdvis2 = uvd_viz1_uvd_viz2[:, 4:]
+            visible_both = ((uvdvis1[:, -1] == 1) & (uvdvis2[:, -1] == 1))
+            visboth_uv1 = uvdvis1[visible_both, :2]
+            visboth_uv2 = uvdvis2[visible_both, :2]
+            ij1 = np.rint(uvdvis1[:, (0, 1)])
+            ij_flow = np.hstack([
+              ij1, visboth_uv2 - visboth_uv1
+            ])
+            v2v_flow = np.zeros((h, w, 2))
+            xx = ij_flow[:, 0].astype(np.int)
+            yy = ij_flow[:, 1].astype(np.int)
+            v2v_flow[yy, xx] = ij_flow[:, 2:4]
+            row_out = {
+              'ci1_uri': ci_sd1.uri,
+              'ci2_uri': ci_sd1.uri,
+              'uvdij1_visible_uvdij2_visible': uvd_viz1_uvd_viz2,
+              'v2v_flow': v2v_flow,
+            }
+
+            path = os.path.join(base_path, 'refactor_%s_%s_oflow.pkl' % (row.flow_pair_id, sensor_name))
+            import pickle
+            with open(path, 'wb') as f:
+              pickle.dump(row_out, f, protocol=pickle.HIGHEST_PROTOCOL)
+            print('saved pkl to', path)
 
 
           # cname_to_ci1 = dict((c.sensor_name, c) for c in ci1s)
