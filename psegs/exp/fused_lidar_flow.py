@@ -966,6 +966,19 @@ def merge_uvd_viz1_uvd_viz2(
   start = time.time()
 
   # try:
+  if uvd_viz1_uvd_viz2_pair1.shape[0]:
+    print(
+      'uvd_viz1_uvd_viz2_pair1',
+      uvd_viz1_uvd_viz2_pair1.shape,
+      uvd_viz1_uvd_viz2_pair1.max(axis=0),
+      uvd_viz1_uvd_viz2_pair1.min(axis=0))
+  if uvd_viz1_uvd_viz2_pair2.shape[0]:
+    print(
+      'uvd_viz1_uvd_viz2_pair2',
+      uvd_viz1_uvd_viz2_pair2.shape,
+      uvd_viz1_uvd_viz2_pair2.max(axis=0),
+      uvd_viz1_uvd_viz2_pair2.min(axis=0))
+
   merged_uvd_viz1_uvd_viz2 = np.vstack([
     uvd_viz1_uvd_viz2_pair1,
     uvd_viz1_uvd_viz2_pair2
@@ -974,17 +987,29 @@ def merge_uvd_viz1_uvd_viz2(
   #   print('asdgadsgs', e, uvd_viz1_uvd_viz2_pair1.shape, uvd_viz1_uvd_viz2_pair2.shape)
   #   raise e
 
+  def get_nearest_update_visible(uvdvis):
+    is_visible = np.where(uvdvis[:, -1] == 1)
+    nearest_idx = get_nearest_idx(uvdvis[is_visible], min_dist)
+      # Ignore invisible points: they can't _become_ visible
+    vis_idx = np.arange(uvdvis.shape[0])[is_visible][nearest_idx]
+    uvdvis[:, -1] = 0
+    uvdvis[vis_idx, -1] = 1
+
   uvdvis1 = merged_uvd_viz1_uvd_viz2[:, :4]
-  nearest_idx = get_nearest_idx(uvdvis1, min_dist)
-  is_nearest = np.zeros(uvdvis1.shape[0], dtype=np.bool)
-  is_nearest[nearest_idx] = 1
-  uvdvis1[:, -1] = ((uvdvis1[:, -1] == 1) & is_nearest)
+  get_nearest_update_visible(uvdvis1)
+  # nearest_idx = get_nearest_idx(uvdvis1, min_dist)
+  # is_nearest = np.zeros(uvdvis1.shape[0], dtype=np.bool)
+  # is_nearest[nearest_idx] = 1
+  # print('is_nearest', is_nearest.shape)
+  # uvdvis1[:, -1] = ((uvdvis1[:, -1] == 1) & is_nearest)
   
   uvdvis2 = merged_uvd_viz1_uvd_viz2[:, 4:]
-  nearest_idx = get_nearest_idx(uvdvis2, min_dist)
-  is_nearest = np.zeros(uvdvis2.shape[0], dtype=np.bool)
-  is_nearest[nearest_idx] = 1
-  uvdvis2[:, -1] = ((uvdvis2[:, -1] == 1) & is_nearest)
+  get_nearest_update_visible(uvdvis2)
+  # nearest_idx = get_nearest_idx(uvdvis2, min_dist)
+  # is_nearest = np.zeros(uvdvis2.shape[0], dtype=np.bool)
+  # is_nearest[nearest_idx] = 1
+  # print('is_nearest', is_nearest.shape)
+  # uvdvis2[:, -1] = ((uvdvis2[:, -1] == 1) & is_nearest)
 
   visible_either = ((uvdvis1[:, -1] == 1) | (uvdvis2[:, -1] == 1))
   print('merge visible_either', visible_either.sum())
@@ -992,6 +1017,7 @@ def merge_uvd_viz1_uvd_viz2(
     uvdvis1[visible_either], uvdvis2[visible_either]
   ])
   print('merge in ', time.time() - start)
+  print('merged_uvd_viz1_uvd_viz2', merged_uvd_viz1_uvd_viz2.shape)
   return merged_uvd_viz1_uvd_viz2
 
 
@@ -2157,7 +2183,7 @@ class FusedFlowDFFactory(object):
         print('spinns')
         import pprint
         util.log.info(pprint.pformat(C_acc.value))
-        time.sleep(5)
+        time.sleep(10)
     import threading
     bkg_th = threading.Thread(target=spin_log, args=())
     bkg_th.daemon = True
@@ -2492,7 +2518,7 @@ class FusedFlowDFFactory(object):
             ])
 
             reduce_uvds = (lambda u1, u2: merge_uvd_viz1_uvd_viz2(u1, u2))
-            uvd_viz1_uvd_viz2 = uvd_viz1_uvd_viz2_rdd.treeReduce(reduce_uvds)
+            uvd_viz1_uvd_viz2 = uvd_viz1_uvd_viz2_rdd.treeReduce(reduce_uvds, depth=3)
               # NB: treeReduce is more efficient than reduce() because reduce()
               # will do an O(num partitions) aggregate in the driver
             print('final uvd_viz1_uvd_viz2', uvd_viz1_uvd_viz2.shape)
@@ -2511,7 +2537,7 @@ class FusedFlowDFFactory(object):
             visible_both = ((uvdvis1[:, -1] == 1) & (uvdvis2[:, -1] == 1))
             visboth_uv1 = uvdvis1[visible_both, :2]
             visboth_uv2 = uvdvis2[visible_both, :2]
-            ij1 = np.rint(uvdvis1[:, (0, 1)])
+            ij1 = np.rint(visboth_uv1[:, (0, 1)])
             ij_flow = np.hstack([
               ij1, visboth_uv2 - visboth_uv1
             ])

@@ -106,6 +106,8 @@ class KITTI360LCCDFFactory(SampleDFFactory):
         """)
         
         sample_df = spark.sql('SELECT * FROM kitti360_sample_df')
+        n_parts = int(max(10, sample_df.count() // 10))
+        sample_df = sample_df.repartition(n_parts, 'sample_id')
         util.log.info('... done.')
         return sample_df
 
