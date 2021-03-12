@@ -46,15 +46,18 @@ class SemanticKITTSampleDFFactory(SampleDFFactory):
         df = df.persist()
         return df
 
+class SemanticKITTIFusedWorldCloudTable(FusedLidarCloudTableBase):
+    TASK_DF_FACTORY = SemanticKITTSampleDFFactory
+
+    # SemanticKITTI has no cuboids, so we skip this step.
+    HAS_OBJ_CLOUDS = False
+
+
 class SemanticKITTIFusedFlowDFFactory(FusedFlowDFFactory):
   SAMPLE_DF_FACTORY = SemanticKITTSampleDFFactory
+  FUSED_LIDAR_SD_TABLE = SemanticKITTIFusedWorldCloudTable
 
 
-# class SemanticKITTIFusedWorldCloudTable(FusedLidarCloudTableBase):
-#     TASK_DF_FACTORY = SemanticKITTILCCDFFactory
-
-#     # SemanticKITTI has no cuboids, so we skip this step.
-#     HAS_OBJ_CLOUDS = False
 
 # class SemanticKITTIOFlowRenderer(OpticalFlowRenderBase):
 #     FUSED_LIDAR_SD_TABLE = SemanticKITTIFusedWorldCloudTable
@@ -67,7 +70,7 @@ class KITTI360OurFusedClouds(KITTI360SDTable):
 class KITTI360LCCDFFactory(SampleDFFactory):
     
     SRC_SD_TABLE = KITTI360OurFusedClouds
-    
+
     @classmethod
     def build_df_for_segment(cls, spark, segment_uri):
         from psegs import util
@@ -106,12 +109,14 @@ class KITTI360LCCDFFactory(SampleDFFactory):
         util.log.info('... done.')
         return sample_df
 
+class KITTI360WorldCloudTableBase(FusedLidarCloudTableBase):
+  TASK_DF_FACTORY = KITTI360LCCDFFactory
+
 class KITTI360FusedFlowDFFactory(FusedFlowDFFactory):
   SAMPLE_DF_FACTORY = KITTI360LCCDFFactory
-
+  FUSED_LIDAR_SD_TABLE = KITTI360WorldCloudTableBase
     
-# class KITTI360WorldCloudTableBase(FusedLidarCloudTableBase):
-#     TASK_DF_FACTORY = KITTI360LCCDFFactory
+
         
 # class KITTI360OFlowRenderer(OpticalFlowRenderBase):
 #     FUSED_LIDAR_SD_TABLE = KITTI360WorldCloudTableBase

@@ -183,7 +183,8 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
   @classmethod
   def _should_build_world_cloud(cls, segment_uri):
-    return not cls.world_cloud_path(segment_uri).exists()
+    return False # hacks no more build to disk
+    # return not cls.world_cloud_path(segment_uri).exists()
 
   @classmethod
   def _should_build_obj_clouds(cls, segment_uri):
@@ -487,7 +488,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
     sds = []
     for seg_uri in seg_uris:
-      sds.append(cls._create_world_cloud_sd(seg_uri))
+      # sds.append(cls._create_world_cloud_sd(seg_uri)) # hacks no more world clouds 
       if cls.HAS_OBJ_CLOUDS:
         sds.extend(cls._create_obj_cloud_sds(seg_uri))
     datum_rdds = [spark.sparkContext.parallelize(sds)]
@@ -684,8 +685,8 @@ def get_nearest_idx(uvd, dist_eps):
   if uvd.shape[0] == 0:
     return np.ones(0, dtype=np.int64).flatten()
 
-  max_u = int(np.rint(np.max(uvd[:, 0])))
-  max_v = int(np.rint(np.max(uvd[:, 1])))
+  max_u = max(0, int(np.rint(np.max(uvd[:, 0]))))
+  max_v = max(0, int(np.rint(np.max(uvd[:, 1]))))
   nearest = np.full((max_u + 1, max_v + 1, 2), np.Inf)
 
   # NB: numba accelerates this for loop 10x-100x+
@@ -693,7 +694,7 @@ def get_nearest_idx(uvd, dist_eps):
     d = uvd[r, 2]
     u = int(np.rint(uvd[r, 0]))
     v = int(np.rint(uvd[r, 1]))
-    if d >= dist_eps and d < nearest[u, v, 1]:
+    if u >= 0 and v >= 0 and d >= dist_eps and d < nearest[u, v, 1]:
       nearest[u, v, 1] = d
       nearest[u, v, 0] = r
 
@@ -840,7 +841,7 @@ def render_world_to_uvd_visible(
     xyz_ego_2 = np.matmul(viewer_pose2, hworld_cloud2.T)
   # xyz_viewer_2 = T_lidar2viewer.dot( T_ego2lidar.dot( xyz_ego_2 ) )
   xyz_viewer_2 = T_ego2viewer.dot( xyz_ego_2 )
-  print('in viewer frame', time.time() - start)
+  # print('in viewer frame', time.time() - start)
   if projection == 'pinhole':
 
     #@jit(nopython=True)  ~~ TODO why is jit slower? nb: appears w/out jit does multithread~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -945,13 +946,13 @@ def render_world_to_uvd_visible(
 
   if clip_invisible_both:
     visible_either = ((uvdvis1[:, -1] == 1) | (uvdvis2[:, -1] == 1))
-    print('visible_either', visible_either.sum())
+    # print('visible_either', visible_either.sum())
     uvd_viz1_uvd_viz2 = np.hstack([
       uvdvis1[visible_either], uvdvis2[visible_either]
     ])
   else:
     uvd_viz1_uvd_viz2 = np.hstack([uvdvis1, uvdvis2])
-  print('done', time.time() - start)
+  # print('done', time.time() - start)
   return uvd_viz1_uvd_viz2
 
 
@@ -1016,6 +1017,7 @@ def merge_uvd_viz1_uvd_viz2(
 #   uvd = np.vstack([uvd1, uvd2])
 #   nearest_idx = get_nearest_idx(uvd)
 #   return uvd[nearest_idx]
+
 
 def render_oflow_pair(
       ci1=datum.CameraImage(),
@@ -1910,11 +1912,11 @@ class WorldCloudCleaner(object):
   #   self.__pruned_stats = []
 
   # @classmethod
-  # def _thruput(cls):
-  #   if not hasattr(cls, '_thurput_impl'):
-  #     cls._thurput_impl = oputil.ThruputObserver(
-  #       name='WorldCloudCleaner.clouds_thru')
-  #   return cls._thurput_impl
+  # def _thruput(self):
+  #   if not hasattr(self, '_thurput_impl'):
+  #     self._thurput_impl = oputil.ThruputObserver(
+  #       name='WorldCloudCleaner.clouds_thru', log_on_del=True)
+  #   return self._thurput_impl
 
   # @classmethod
   # def _pruned_stats(cls):
@@ -1947,7 +1949,7 @@ class WorldCloudCleaner(object):
     cleaned_clouds = []
     n_pruned = 0
     for pc in point_clouds:
-      # self.__thruput.start_block()
+      # self._thruput().start_block()
       cloud = pc.get_cloud()[:, :3] # TODO: can we keep colors?
       cloud_ego = pc.ego_to_sensor.get_inverse().apply(cloud).T
     
@@ -1966,9 +1968,9 @@ class WorldCloudCleaner(object):
 
       cleaned_clouds.append(cloud_world)
       
-      # self.__thruput.stop_block(
+      # self._thruput().stop_block(
       #         n=1, num_bytes=oputil.get_size_of_deep(cloud_world))
-      # self.__thruput.maybe_log_progress(every_n=10)
+      # self._thruput().maybe_log_progress(every_n=1)
       # self.__log_pruned()
     return np.vstack(cleaned_clouds), n_pruned
 
@@ -1982,6 +1984,34 @@ class OpticalFlowRenderer(object):
     pass
 
 
+class MyT(oputil.ThruputObserver):
+  def __gt__(self, v):
+    if isinstance(v, (MyT, oputil.ThruputObserver)):
+      return self.name > v.name
+    else:
+      return self.n > v
+    
+  def __lt__(self, v):
+    if isinstance(v, (MyT, oputil.ThruputObserver)):
+      return self.name < v.name
+    else:
+      return self.n < v
+  
+  @classmethod
+  def union(cls, thruputs):
+    u = cls()
+    for t in thruputs:
+      u += t
+    return u
+
+  def __add__(self, other):
+    if isinstance(other, (MyT, oputil.ThruputObserver)):
+      return self.union((self, other))
+    else:
+      return self
+  
+  def __repr__(self):
+    return str(self)
 
 class FusedFlowDFFactory(object):
 
@@ -2019,12 +2049,14 @@ class FusedFlowDFFactory(object):
 
   SAMPLE_DF_FACTORY = None
 
+  FUSED_LIDAR_SD_TABLE = None
+
   @classmethod
   def SRC_SD_T(cls):
     return cls.SAMPLE_DF_FACTORY.SRC_SD_TABLE
 
   @classmethod
-  def _build_world_cloud_df(cls, sample_df):
+  def _build_world_cloud_df(cls, spark, sample_df):
     
     from pyspark.sql import Row
     from pyspark.sql import functions as F
@@ -2032,33 +2064,113 @@ class FusedFlowDFFactory(object):
     
     cleaner = WorldCloudCleaner()
 
-    thruput = oputil.ThruputObserver(name='WorldCloudCleaner.clouds_thru')
-    pruned = oputil.ThruputObserver(name='WorldCloudCleaner.pruned')
+    from pyspark.accumulators import AccumulatorParam
+    # class ThruputObserverAccParam(AccumulatorParam):
+    #   def zero(self, t):
+    #     return t
+    #   def addInPlace(self, val1, val2):
+    #     val1 += val2
+    #     return val1
+    
+    from collections import Counter
+    class CounterAccumulator(AccumulatorParam):
+      def zero(self, value):
+        return Counter({})
+
+      def addInPlace(self, value1, value2):
+        return value1 + value2
+
+    
+
+    # t = oputil.ThruputObserver(name='world_clouds')
+
+    sc = spark.sparkContext
+    C_acc = sc.accumulator(Counter(), CounterAccumulator())
 
     RETURN_PROTO = {'cloud': np.zeros((0, 3)), 'n_pruned': 0}
-    @F.udf(returnType=RowAdapter.to_schema(RETURN_PROTO))
-    def row_to_world_cloud(pc_sds, cuboids_sds):
-      import itertools
-      from oarphpy.spark import RowAdapter
+    # @F.udf(returnType=RowAdapter.to_schema(RETURN_PROTO))
+    class RowToWorldCloud(object):
+      def __init__(self, cleaner, C_acc):
+        self.cleaner = cleaner
+        self.C_acc = C_acc
 
-      pcs = [RowAdapter.from_row(sdr).point_cloud for sdr in pc_sds]
-      cuboidss = [RowAdapter.from_row(sdr).cuboids for sdr in cuboids_sds]
-      cuboids = list(itertools.chain.from_iterable(cuboidss))
+      def __call__(self, row):#pc_sds, cuboids_sds):
+        # def row_to_world_cloud(pc_sds, cuboids_sds):
+        # def row_to_world_cloud(row):
+          
+        import itertools
+        from oarphpy.spark import RowAdapter
+        from pyspark import Row
+        from threadpoolctl import threadpool_limits
+        with threadpool_limits(limits=1, user_api='blas'):
+          from collections import Counter
+          counter = Counter()
+          t = MyT(name='world_clouds')
+          # for row in iter_rows:
+          t.start_block()
 
-      world_cloud, n_pruned = cleaner.get_cleaned_world_cloud(pcs, cuboids)
+          pc_sds = row.pc_sds
+          cuboids_sds = row.cuboids_sds
 
-      data = {
-        'cloud': world_cloud,
-        'n_pruned': n_pruned,
-      }
-      return RowAdapter.to_row(data)
+          pcs = [RowAdapter.from_row(sdr).point_cloud for sdr in pc_sds]
+          cuboidss = [RowAdapter.from_row(sdr).cuboids for sdr in cuboids_sds]
+          cuboids = list(itertools.chain.from_iterable(cuboidss))
+
+          world_cloud, n_pruned = self.cleaner.get_cleaned_world_cloud(pcs, cuboids)
+
+          counter['n_pruned'] += n_pruned
+          counter['n_wc_pts'] += world_cloud.shape[0]
+          counter['pcs'] += len(pcs)
+          counter['cuboids'] += len(cuboids)
+
+          data = {
+            'sample_id': row.sample_id,
+            'world_cloud': Row(
+              cloud=world_cloud,
+              n_pruned=n_pruned,
+            ),
+          }
+          rowdata = RowAdapter.to_row(data)
+          t.stop_block(n=1, num_bytes=world_cloud.nbytes)
+            # yield Row(**rowdata)
+          counter['t_world_clouds'] = t
+          self.C_acc += counter
+          return Row(**rowdata)
 
     licu_df = sample_df.select('sample_id', 'pc_sds', 'cuboids_sds')
-    licu_df = licu_df.withColumn(
-                'world_cloud',
-                row_to_world_cloud(licu_df['pc_sds'], licu_df['cuboids_sds']))
-    world_cloud_df = licu_df.select('sample_id', 'world_cloud')
+    licu_df = licu_df.repartition(
+                10 * licu_df.rdd.getNumPartitions(), 'sample_id')
+
+    # SCHEMA_PROTO = {'sample_id': 0, 'cloud': np.zeros((0, 3)), 'n_pruned': 0}
+    f = RowToWorldCloud(cleaner, C_acc)
+    world_cloud_df = spark.createDataFrame(
+                        licu_df.rdd.map(f))
+                        # schema=RowAdapter.to_schema(SCHEMA_PROTO))
+    
+    def spin_log():
+      import time
+      while True:
+        print('spinns')
+        import pprint
+        util.log.info(pprint.pformat(C_acc.value))
+        time.sleep(5)
+    import threading
+    bkg_th = threading.Thread(target=spin_log, args=())
+    bkg_th.daemon = True
+    bkg_th.start()
+    
     return world_cloud_df
+    
+
+    
+    # func = F.udf(f, returnType=RowAdapter.to_schema(RETURN_PROTO))
+
+    # licu_df = licu_df.withColumn(
+    #             'world_cloud',
+    #             func(licu_df['pc_sds'], licu_df['cuboids_sds']))
+    #             # row_to_world_cloud(licu_df['pc_sds'], licu_df['cuboids_sds']))
+    # world_cloud_df = licu_df.select('sample_id', 'world_cloud')
+    # return world_cloud_df
 
 
 
@@ -2128,13 +2240,45 @@ class FusedFlowDFFactory(object):
         sample_df = cls.SAMPLE_DF_FACTORY.build_df_for_segment(spark, suri)
         print('sample_df size', sample_df.count())
         
-        world_cloud_df = cls._build_world_cloud_df(sample_df)
-        print('world_cloud_df size', world_cloud_df.count())
-        
+        world_cloud_df = cls._build_world_cloud_df(spark, sample_df)
+        # world_cloud_df = world_cloud_df.repartition('sample_id').persist()
         world_cloud_df = world_cloud_df.persist()
+        
+        # if sample_df.count() >= 100:
+        #   util.log.info("Rendering and caching world clouds ...")
+        #   thruput_wc = oputil.ThruputObserver('RenderWorldClouds')
+        #   thruput_wc.start_block()
+        #   spark.catalog.dropTempView('world_cloud_df')
+        #   world_cloud_df.registerTempTable('world_cloud_df')
+        #   stats_df = spark.sql("""
+        #     SELECT
+        #       COUNT(*) AS n_clouds,
+        #       1e-9 * SUM(LENGTH(world_cloud.cloud.values_packed)) AS cloud_gbytes,
+        #       SUM(world_cloud.n_pruned) AS total_pruned,
+        #       SUM(world_cloud.n_pruned) / (
+        #           SUM(world_cloud.n_pruned) + SUM(world_cloud.cloud.shape[0]))
+        #         AS total_frac_pruned,
+        #       MEAN(world_cloud.n_pruned) AS avg_pruned_per_cloud,
+        #       PERCENTILE(world_cloud.n_pruned, 0.1) AS pruned_per_cloud_10th,
+        #       PERCENTILE(world_cloud.n_pruned, 0.9) AS pruned_per_cloud_90th
+        #     FROM 
+        #       world_cloud_df
+        #   """)
+        #   stats = stats_df.first().asDict()
+        #   util.log.info(
+        #     "World Cloud Stats:\n%s" % stats)
+        #   thruput_wc.stop_block(
+        #     n=stats['n_clouds'], num_bytes=1e9*stats['cloud_gbytes'])
+        #   thruput_wc.maybe_log_progress(every_n=1)
 
 
 
+        fused_sd_rdd = cls.FUSED_LIDAR_SD_TABLE.get_segment_datum_rdd(
+                                                    spark, suri)
+        from pyspark import StorageLevel
+        fused_sd_rdd = fused_sd_rdd.persist(StorageLevel.DISK_ONLY)
+        
+        
         sample_id_filter_clause = ''
         # if cls.MAX_TASKS_PER_SEGMENT > 0:
         #   print('restrict to', cls.MAX_TASKS_PER_SEGMENT)
@@ -2232,22 +2376,102 @@ class FusedFlowDFFactory(object):
             ci1 = ci_sd1.camera_image
             ci2 = ci_sd2.camera_image
 
-            render = (
-              lambda world_cloud: 
-                render_oflow_pair(
-                  ci1, ci2, world_cloud1=world_cloud, world_cloud2=None))
-            to_numpy = lambda row: FROM_ROW(row.world_cloud.cloud)
-            uvd_viz1_uvd_viz2_rdd = world_cloud_df.rdd.map(to_numpy).map(render)
 
-            # yay = world_cloud_df.rdd.map(to_numpy).first()
-            # res = render(yay)
-            # base_path = '/opt/psegs/test_run_output/'
-            # fname = 'refactor_%s.png' % sensor_name
-            # debug = viz_oflow_pair(ci1, ci2, res)
-            # import imageio
-            # imageio.imwrite(base_path + fname, debug)
-            # print(base_path + fname)
-            # import ipdb; ipdb.set_trace()
+            ## Cuboids
+            class FusedObjectCloudToWorldCloudPair(object):
+              def __init__(self, cuboids1, cuboids2):
+                self._track_id_to_cuboid1 = dict((c.track_id, c) for c in cuboids1)
+                self._track_id_to_cuboid2 = dict((c.track_id, c) for c in cuboids2)
+                self._thruput = oputil.ThruputObserver(name='FusedObjectCloudToWorldCloudPair', log_freq=1)
+                # self._cuboids1 = cuboids1
+                # self._cuboids2 = cuboids2
+                # self._track_ids = (
+                #   set(c.track_id for c in cuboids1) | 
+                #   set(c.track_id for c in cuboids2))
+              
+              def __call__(self, stamped_datum):
+                self._thruput.start_block()
+
+                EMPTY_CLOUD = np.zeros((0, 3))
+                if not stamped_datum.point_cloud:
+                  return EMPTY_CLOUD, EMPTY_CLOUD
+                pc = stamped_datum.point_cloud
+                if 'lidar|objects_fused' not in pc.sensor_name:
+                  return EMPTY_CLOUD, EMPTY_CLOUD
+                
+                def render_world(t2c):
+                  track_id = pc.extra['track_id']
+                  if track_id not in t2c:
+                    return EMPTY_CLOUD
+                  
+                  cuboid = t2c[track_id]
+                  cloud_obj = pc.get_cloud()
+                  cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+                  cloud_world = cuboid.ego_pose.apply(cloud_ego).T
+                  return cloud_world
+
+                world_cloud1 = render_world(self._track_id_to_cuboid1)
+                world_cloud2 = render_world(self._track_id_to_cuboid2)
+                
+                self._thruput.stop_block(n=1, num_bytes=(world_cloud1.nbytes + world_cloud2.nbytes))
+                self._thruput.maybe_log_progress()
+                
+                return world_cloud1, world_cloud2
+
+            class RenderObjCloudPair(object):
+              def __init__(self):
+                self._thruput = oputil.ThruputObserver(name='RenderObjCloudPair', log_freq=1)
+              def __call__(self, wc_pair):
+                world_cloud1, world_cloud2 = wc_pair
+
+                self._thruput.start_block()
+                from threadpoolctl import threadpool_limits
+                with threadpool_limits(limits=1, user_api='blas'):
+                  uvd_viz1_uvd_viz2 = render_oflow_pair(
+                                        ci1, ci2,
+                                        world_cloud1=world_cloud1,
+                                        world_cloud2=world_cloud2)
+                self._thruput.stop_block(n=1, num_bytes=uvd_viz1_uvd_viz2.nbytes)
+                self._thruput.maybe_log_progress()
+                return uvd_viz1_uvd_viz2
+
+            obj_to_wc = FusedObjectCloudToWorldCloudPair(cuboids1, cuboids2)
+            render_obj_wcs = RenderObjCloudPair()
+            obj_uvd_viz1_uvd_viz2_rdd = fused_sd_rdd.map(obj_to_wc).map(render_obj_wcs)
+
+            ## World Clouds
+
+            class RenderWCPartition(object):
+              def __init__(self):
+                self._thruput = oputil.ThruputObserver(name='RenderOflowPair', log_freq=1)
+              def __call__(self, iter_rows):
+                uvd_viz1_uvd_viz2_part = None
+                for row in iter_rows:
+                  self._thruput.start_block()
+                  world_cloud = FROM_ROW(row.world_cloud.cloud)
+
+                
+                  from threadpoolctl import threadpool_limits
+                  with threadpool_limits(limits=1, user_api='blas'):
+                    uvd_viz1_uvd_viz2 = render_oflow_pair(
+                      ci1, ci2, world_cloud1=world_cloud, world_cloud2=None)
+                  
+                  if uvd_viz1_uvd_viz2_part is None:
+                    uvd_viz1_uvd_viz2_part = uvd_viz1_uvd_viz2
+                  else:
+                    uvd_viz1_uvd_viz2_part = merge_uvd_viz1_uvd_viz2(
+                                                uvd_viz1_uvd_viz2_part,
+                                                uvd_viz1_uvd_viz2)
+
+                  self._thruput.stop_block(n=1, num_bytes=uvd_viz1_uvd_viz2.nbytes)
+                  self._thruput.maybe_log_progress()
+                return [uvd_viz1_uvd_viz2_part]
+            render = RenderWCPartition()
+            wc_uvd_viz1_uvd_viz2_rdd = world_cloud_df.rdd.mapPartitions(render)
+
+            uvd_viz1_uvd_viz2_rdd = spark.sparkContext.union([
+              obj_uvd_viz1_uvd_viz2_rdd, wc_uvd_viz1_uvd_viz2_rdd
+            ])
 
             reduce_uvds = (lambda u1, u2: merge_uvd_viz1_uvd_viz2(u1, u2))
             uvd_viz1_uvd_viz2 = uvd_viz1_uvd_viz2_rdd.treeReduce(reduce_uvds)
