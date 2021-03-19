@@ -258,10 +258,13 @@ if __name__ == '__main__':
   from psegs.spark import Spark
   spark = Spark.getOrCreate()
 
-  R = KITTI360FusedFlowDFFactory
+  # R = KITTI360FusedFlowDFFactory
 
-  seg_uris = R.SRC_SD_T().get_all_segment_uris()
-  R.build(spark=spark, only_segments=[seg_uris[0]])
+  # seg_uris = R.SRC_SD_T().get_all_segment_uris()
+  # R.build(spark=spark, only_segments=[seg_uris[3]])
+
+
+
 
   # R = NuscKeyframesOFlowRenderer
 
@@ -273,3 +276,58 @@ if __name__ == '__main__':
 
   # seg_uris = R.FUSED_LIDAR_SD_TABLE.get_all_segment_uris()
   # R.build(spark=spark, only_segments=[seg_uris[0]])
+
+
+
+
+
+  # from oarphpy import util as oputil
+  # import os
+  # PSEGS_OFLOW_PKL_PATHS = [
+  #     os.path.abspath(p)
+  #     for p in oputil.all_files_recursive('test_run_output', pattern='refactor*.pkl')
+  # ]
+  # print('len PSEGS_OFLOW_PKL_PATHS', len(PSEGS_OFLOW_PKL_PATHS))
+  # # print(PSEGS_OFLOW_PKL_PATHS)
+
+  # # PSEGS_OFLOW_PKL_PATHS = PSEGS_OFLOW_PKL_PATHS[:10]
+  # path_rdd = spark.sparkContext.parallelize(
+  #               PSEGS_OFLOW_PKL_PATHS,
+  #               numSlices=len(PSEGS_OFLOW_PKL_PATHS))
+
+  # from oarphpy.spark import RowAdapter
+  # from pyspark.sql import Row
+  # def to_row(path):
+  #   import pickle
+  #   with open(path, 'rb') as f:
+  #       row = pickle.load(f)
+    
+  #   asdf = row.pop('uvdij1_visible_uvdij2_visible')
+  #   row['uvd_viz1_uvd_viz2'] = asdf
+  #   # from psegs.datum import URI
+  #   # row['segment_uri'] = URI.from_str(row['ci1_uri']).to_segment_uri()
+  #   return RowAdapter.to_row(Row(**row))
+
+  # row_rdd = path_rdd.map(to_row)
+  # import pyspark
+  # row_rdd = row_rdd.persist(pyspark.StorageLevel.DISK_ONLY)
+  
+  # from psegs.datum.stamped_datum import URI_PROTO
+  # import numpy as np
+  # schema = RowAdapter.to_schema(Row(
+  #   ci1_uri=URI_PROTO,
+  #   ci2_uri=URI_PROTO,
+  #   uvd_viz1_uvd_viz2=np.zeros((1, 4 + 4)),
+  #   v2v_flow=np.zeros((10, 20, 2))
+  # ))
+  # df = spark.createDataFrame(row_rdd, schema=schema)
+  
+  # df = df.withColumn('dataset', df['ci1_uri.dataset'])
+  # df = df.withColumn('segment_id', df['ci1_uri.segment_id'])
+  
+  # df.write.save(
+  #       path='test_run_output/psegs_oflow.parquet',
+  #       format='parquet',
+  #       partitionBy=['dataset', 'segment_id'],
+  #       compression='lz4')
+  

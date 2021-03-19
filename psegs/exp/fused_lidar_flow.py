@@ -966,18 +966,18 @@ def merge_uvd_viz1_uvd_viz2(
   start = time.time()
 
   # try:
-  if uvd_viz1_uvd_viz2_pair1.shape[0]:
-    print(
-      'uvd_viz1_uvd_viz2_pair1',
-      uvd_viz1_uvd_viz2_pair1.shape,
-      uvd_viz1_uvd_viz2_pair1.max(axis=0),
-      uvd_viz1_uvd_viz2_pair1.min(axis=0))
-  if uvd_viz1_uvd_viz2_pair2.shape[0]:
-    print(
-      'uvd_viz1_uvd_viz2_pair2',
-      uvd_viz1_uvd_viz2_pair2.shape,
-      uvd_viz1_uvd_viz2_pair2.max(axis=0),
-      uvd_viz1_uvd_viz2_pair2.min(axis=0))
+  # if uvd_viz1_uvd_viz2_pair1.shape[0]:
+  #   print(
+  #     'uvd_viz1_uvd_viz2_pair1',
+  #     uvd_viz1_uvd_viz2_pair1.shape,
+  #     uvd_viz1_uvd_viz2_pair1.max(axis=0),
+  #     uvd_viz1_uvd_viz2_pair1.min(axis=0))
+  # if uvd_viz1_uvd_viz2_pair2.shape[0]:
+  #   print(
+  #     'uvd_viz1_uvd_viz2_pair2',
+  #     uvd_viz1_uvd_viz2_pair2.shape,
+  #     uvd_viz1_uvd_viz2_pair2.max(axis=0),
+  #     uvd_viz1_uvd_viz2_pair2.min(axis=0))
 
   merged_uvd_viz1_uvd_viz2 = np.vstack([
     uvd_viz1_uvd_viz2_pair1,
@@ -1012,7 +1012,7 @@ def merge_uvd_viz1_uvd_viz2(
   # uvdvis2[:, -1] = ((uvdvis2[:, -1] == 1) & is_nearest)
 
   visible_either = ((uvdvis1[:, -1] == 1) | (uvdvis2[:, -1] == 1))
-  print('merge visible_either', visible_either.sum())
+  # print('merge visible_either', visible_either.sum())
   merged_uvd_viz1_uvd_viz2 = np.hstack([
     uvdvis1[visible_either], uvdvis2[visible_either]
   ])
@@ -2322,7 +2322,7 @@ class FusedFlowDFFactory(object):
 
         # Compute tasks pairs for flow
         sample_id_join_clauses = [
-          "( cuci_1.sample_id = (cuci_2.sample_id + %s) )" % offset
+          "( cuci_2.sample_id = (cuci_1.sample_id + %s) )" % offset
           for offset in (1,)#cls.TASK_OFFSETS
         ]
         sample_id_join_clause = " OR ".join(sample_id_join_clauses)
@@ -2351,6 +2351,7 @@ class FusedFlowDFFactory(object):
               SIZE(cuci_1.ci_sds) > 0 AND
               SIZE(cuci_2.ci_sds) > 0 AND
               ( {task_id_join_clause} ) {sample_id_filter_clause}
+            ORDER BY RAND(1337)
           """.format(
                 task_id_join_clause=sample_id_join_clause,
                 sample_id_filter_clause=sample_id_filter_clause))
@@ -2551,6 +2552,11 @@ class FusedFlowDFFactory(object):
               'uvdij1_visible_uvdij2_visible': uvd_viz1_uvd_viz2,
               'v2v_flow': v2v_flow,
             }
+              # want for eval:
+              # * the cuboid boxes in ego so that we can do some stats about objects?
+              # * the cuboid box classes so that we can find pedestrians etc?
+              # * --> just the cuboid URIs?
+              # * info that will let us trace a xyz point over frames / time ? ...
 
             path = os.path.join(base_path, 'refactor_%s_%s_oflow.pkl' % (row.flow_pair_id, sensor_name))
             import pickle

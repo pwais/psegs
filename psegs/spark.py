@@ -31,6 +31,7 @@ class Spark(spark.SessionFactory):
   CONF_KV = {
     'spark.driver.maxResultSize': '10g',
     'spark.driver.memory': '32g',
+    'spark.executor.memory': '32g',
     # 'spark.driver.cores': '6',
     # 'spark.memory.offHeap.enabled': 'true',
     # 'spark.memory.offHeap.size': '100g',
@@ -39,6 +40,7 @@ class Spark(spark.SessionFactory):
       # Needed for notebook-based development; FMI see oarphpy.spark.NBSpark
 
     'spark.python.worker.reuse': False,
+    'spark.blockManager.port': '5555',
       # Helps reduce memory leaks related to matplotlib / tensorflow / etc
 
     'spark.sql.files.maxPartitionBytes': int(8 * 1e6),
