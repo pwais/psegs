@@ -159,13 +159,15 @@ class KITTI360_KITTIFused_SampleDFFactory(SampleDFFactory):
             SELECT *
             FROM datums, valid_frames
             WHERE
-              uri.topic NOT LIKE '%lidar|fused_static%' OR
+              uri.topic NOT LIKE '%lidar%' OR
               (
                 uri.topic LIKE '%lidar|fused_static%' AND
                 valid_frames.frame_id = uri.extra.`kitti-360.frame_id`
               )
         """)
         datum_df.registerTempTable('kitti360_kfused_datums')
+        
+        spark.sql("SELECT uri.topic, count(*) from kitti360_kfused_datums group by uri.topic").show()
 
         # Now collect datums, using only the distinct fused clouds we
         # collected above

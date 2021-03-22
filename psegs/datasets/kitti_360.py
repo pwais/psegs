@@ -28,6 +28,7 @@ from psegs.table.sd_table import StampedDatumTableBase
 from psegs.util import misc
 
 
+
 ###############################################################################
 ### KITTI-360 Fixtures & Other Constants
 
@@ -405,7 +406,7 @@ class KITTI360SDTable(StampedDatumTableBase):
   FIXTURES = Fixtures
 
   INCLUDE_FISHEYES = False
-  """bool: Should we emit label datums for the fisheye / side cameras?
+  """bool: Should we emit datums for the fisheye / side cameras?
   At the time of writing, the distortion parameters for the fisheyes are
   not available, so we can't make much use of the images / labels for
   these cameras.
@@ -506,7 +507,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       # Some datums are more expensive to create than others, so distribute
       # them evenly in the RDD
       uris = sorted(uris, key=lambda u: u.timestamp)
-      # uris = uris[5000:6000]
+      uris = uris[5000:6000]
 
       seg_span_sec = 1e-9 * (uris[-1].timestamp - uris[0].timestamp)
 
@@ -818,11 +819,13 @@ class KITTI360SDTable(StampedDatumTableBase):
     if uri.topic == 'lidar':
       vel_path = cls.FIXTURES.velodyne_cloud_path(
                       uri.segment_id, cls._get_frame_id(uri))
+
       def _get_vel_cloud(path):
+        import numpy as np
         cloud = np.fromfile(path, dtype=np.float32)
         cloud = np.reshape(cloud, [-1, 4])
         return cloud
-
+      
       cloud_factory = lambda: _get_vel_cloud(vel_path)
 
       ego_to_sensor = velo_to_ego.get_inverse()
@@ -832,6 +835,7 @@ class KITTI360SDTable(StampedDatumTableBase):
                       uri.segment_id, cls._get_frame_id(uri))
       
       def _get_sick_cloud(path):
+        import numpy as np
         cloud = np.fromfile(path, dtype=np.float32)
         cloud = np.reshape(cloud, [-1, 2])
         cloud = np.concatenate([
@@ -841,33 +845,33 @@ class KITTI360SDTable(StampedDatumTableBase):
                   ],
                   axis=1)
         return cloud
-      
+
       cloud_factory = lambda: _get_sick_cloud(sick_path)
       
       sick_from_ego = calib.sick_to_velo['laser|sick', 'lidar'] @ velo_to_ego
       ego_to_sensor = sick_from_ego.get_inverse()
     
     elif uri.topic in ('lidar|fused_static', 'lidar|fused_dynamic'):
-      
-      def _get_fused_cloud(uri, frame_id):
-        T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
-        assert T_world_to_ego is not None, \
-          "Programming error: no pose %s" % uri
-        # T_world_to_velo = (velo_to_ego.get_inverse() @ T_world_to_ego).get_inverse()
-        T_world_to_velo = (T_world_to_ego @ velo_to_ego).get_inverse()
-        
-        chan = 'static' if 'static' in uri.topic else 'dynamic'
-        frame_id_to_chan_to_path = cls._get_fused_scan_idx(uri.segment_id)
-        fused_path = frame_id_to_chan_to_path[frame_id][chan]
 
+      T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
+      assert T_world_to_ego is not None, \
+        "Programming error: no pose %s" % uri
+      # T_world_to_velo = (velo_to_ego.get_inverse() @ T_world_to_ego).get_inverse()
+      T_world_to_velo = (T_world_to_ego @ velo_to_ego).get_inverse()
+      
+      chan = 'static' if 'static' in uri.topic else 'dynamic'
+      frame_id_to_chan_to_path = cls._get_fused_scan_idx(uri.segment_id)
+      fused_path = frame_id_to_chan_to_path[frame_id][chan]
+
+      def _get_fused_cloud(T_world_to_velo, fused_path):
         import open3d
+        import numpy as np
         pcd = open3d.io.read_point_cloud(str(fused_path))
         cloud = np.asarray(pcd.points)
         cloud = T_world_to_velo.apply(cloud).T
-
         return cloud
 
-      cloud_factory = lambda: _get_fused_cloud(uri, frame_id)
+      cloud_factory = lambda: _get_fused_cloud(T_world_to_velo, fused_path)
 
       ego_to_sensor = velo_to_ego.get_inverse()
 
