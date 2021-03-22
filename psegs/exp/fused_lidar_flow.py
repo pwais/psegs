@@ -2081,6 +2081,8 @@ class FusedFlowDFFactory(object):
 
   FUSED_LIDAR_SD_TABLE = None
 
+  WORLD_CLEANER_CLS = WorldCloudCleaner
+
   @classmethod
   def SRC_SD_T(cls):
     return cls.SAMPLE_DF_FACTORY.SRC_SD_TABLE
@@ -2092,7 +2094,7 @@ class FusedFlowDFFactory(object):
     from pyspark.sql import functions as F
     from oarphpy.spark import RowAdapter
     
-    cleaner = WorldCloudCleaner()
+    cleaner = cls.WORLD_CLEANER_CLS()
 
     from pyspark.accumulators import AccumulatorParam
     # class ThruputObserverAccParam(AccumulatorParam):
@@ -2378,7 +2380,7 @@ class FusedFlowDFFactory(object):
           """
           for each camera pair:
             static cloud: just take xyz
-            dynmic cloud: use xyz pose 1 or xyz pose 2 in projection; need
+            dynamic cloud: use xyz pose 1 or xyz pose 2 in projection; need
               *same point order for both projection*
             project to uvdviz1, uvdviz2
             trim invisible in both 1 and 2

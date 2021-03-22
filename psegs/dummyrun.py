@@ -63,13 +63,13 @@ class SemanticKITTIFusedFlowDFFactory(FusedFlowDFFactory):
 #     FUSED_LIDAR_SD_TABLE = SemanticKITTIFusedWorldCloudTable
 
 from psegs.datasets.kitti_360 import KITTI360SDTable
-class KITTI360OurFusedClouds(KITTI360SDTable):
+class KITTI360_OurFused(KITTI360SDTable):
     INCLUDE_FISHEYES = False
     INCLUDE_FUSED_CLOUDS = False  # Use our own fused clouds
 
-class KITTI360LCCDFFactory(SampleDFFactory):
+class KITTI360_OurFused_SampleDFFactory(SampleDFFactory):
     
-    SRC_SD_TABLE = KITTI360OurFusedClouds
+    SRC_SD_TABLE = KITTI360_OurFused
 
     @classmethod
     def build_df_for_segment(cls, spark, segment_uri):
@@ -111,17 +111,142 @@ class KITTI360LCCDFFactory(SampleDFFactory):
         util.log.info('... done.')
         return sample_df
 
-class KITTI360WorldCloudTableBase(FusedLidarCloudTableBase):
-  TASK_DF_FACTORY = KITTI360LCCDFFactory
+class KITTI360_OurFused_WorldCloudTableBase(FusedLidarCloudTableBase):
+  TASK_DF_FACTORY = KITTI360_OurFused_SampleDFFactory
 
-class KITTI360FusedFlowDFFactory(FusedFlowDFFactory):
-  SAMPLE_DF_FACTORY = KITTI360LCCDFFactory
-  FUSED_LIDAR_SD_TABLE = KITTI360WorldCloudTableBase
+class KITTI360_OurFused_FusedFlowDFFactory(FusedFlowDFFactory):
+  SAMPLE_DF_FACTORY = KITTI360_OurFused_SampleDFFactory
+  FUSED_LIDAR_SD_TABLE = KITTI360_OurFused_WorldCloudTableBase
     
 
         
+
+
+
+
+class KITTI360_KITTIFused(KITTI360SDTable):
+    INCLUDE_FISHEYES = False
+    INCLUDE_FUSED_CLOUDS = True  # Use KITTI's fused clouds
+    DATASET_NAME = 'kitti-360-fused'
+
+class KITTI360_KITTIFused_SampleDFFactory(SampleDFFactory):
+    
+    SRC_SD_TABLE = KITTI360_KITTIFused
+
+    @classmethod
+    def build_df_for_segment(cls, spark, segment_uri):
+        from psegs import util
+        
+        datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
+        datum_df.registerTempTable('datums')
+
+        util.log.info('Building sample table for %s ...' % segment_uri.segment_id)
+        
+        # KITTI-360 fused clouds have data for multiple frames in each
+        # individual file.  We only want to read each file once, so let's
+        # prune the 'datums' table to contain only *distinct* clouds from
+        # the available datums (and all other non-cloud data).
+        datum_df = spark.sql("""
+            WITH valid_frames AS (
+                    SELECT
+                      FIRST(uri.extra.`kitti-360.frame_id`) AS frame_id,
+                      uri.extra.`kitti-360.fused_cloud_path` AS cloud_path
+                    FROM datums
+                    WHERE uri.topic LIKE '%lidar|fused_static%'
+                    GROUP BY uri.extra.`kitti-360.fused_cloud_path`
+            )
+
+            SELECT *
+            FROM datums, valid_frames
+            WHERE
+              uri.topic NOT LIKE '%lidar|fused_static%' OR
+              (
+                uri.topic LIKE '%lidar|fused_static%' AND
+                valid_frames.frame_id = uri.extra.`kitti-360.frame_id`
+              )
+        """)
+        datum_df.registerTempTable('kitti360_kfused_datums')
+
+        # Now collect datums, using only the distinct fused clouds we
+        # collected above
+        spark.catalog.dropTempView('kitti360_kfused_sample_df')
+        spark.sql("""
+            CACHE TABLE 
+              kitti360_kfused_sample_df
+              OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
+            SELECT 
+              INT(uri.extra.`kitti-360.frame_id`) AS sample_id,
+              COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
+                  FILTER (WHERE uri.topic LIKE '%lidar%') AS pc_sds,
+              COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
+                  FILTER (WHERE uri.topic LIKE '%cuboid%') AS cuboids_sds,
+              COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
+                  FILTER (WHERE uri.topic LIKE '%camera%') AS ci_sds
+            FROM kitti360_kfused_datums
+            WHERE (
+              uri.topic LIKE '%cuboid%' OR
+              uri.topic LIKE '%lidar|fused_static%' OR
+              uri.topic LIKE '%camera%'
+            ) AND (
+              camera_image is NULL OR (camera_image.extra.`kitti-360.has-valid-ego-pose` = 'True')
+            ) AND (
+              point_cloud is NULL OR (point_cloud.extra.`kitti-360.has-valid-ego-pose` = 'True')
+            )
+            GROUP BY sample_id
+        """)
+        
+        sample_df = spark.sql('SELECT * FROM kitti360_kfused_sample_df')
+        util.log.info('... done.')
+        return sample_df
+
+from psegs.exp.fused_lidar_flow import WorldCloudCleaner
+class PassThruWorldCloudCleaner(WorldCloudCleaner):
+  
+  def get_cleaned_world_cloud(self, point_clouds, cuboids):
+
+    cleaned_clouds = []
+    n_pruned = 0
+    for pc in point_clouds:
+      # self._thruput().start_block()
+      cloud = pc.get_cloud()[:, :3] # TODO: can we keep colors?
+      cloud_ego = pc.ego_to_sensor.get_inverse().apply(cloud).T
+    
+      cloud_ego = self._filter_ego_vehicle(cloud_ego)
+
+      # skip filtering cuboids
+
+      T_world_to_ego = pc.ego_pose
+      cloud_world = T_world_to_ego.apply(cloud_ego).T # why is this name backwards?? -- hmm works for nusc too
+
+      cleaned_clouds.append(cloud_world)
+      
+      # self._thruput().stop_block(
+      #         n=1, num_bytes=oputil.get_size_of_deep(cloud_world))
+      # self._thruput().maybe_log_progress(every_n=1)
+      # self.__log_pruned()
+    if not cleaned_clouds:
+      return np.zeros((0, 3)), 0
+    else:
+      return np.vstack(cleaned_clouds), n_pruned
+
+
+
+class KITTI360_KITTIFused_FusedFlowDFFactory(FusedFlowDFFactory):
+  SAMPLE_DF_FACTORY = KITTI360_KITTIFused_SampleDFFactory
+  WORLD_CLEANER_CLS = PassThruWorldCloudCleaner
+  FUSED_LIDAR_SD_TABLE = KITTI360_OurFused_WorldCloudTableBase
+    # We'll use our own fused *dynamic objects* but use
+    # KITTI-360's fused *static world clouds*
+
+
+
+
+
 # class KITTI360OFlowRenderer(OpticalFlowRenderBase):
 #     FUSED_LIDAR_SD_TABLE = KITTI360WorldCloudTableBase
+
+
+
 
 
 
@@ -258,10 +383,13 @@ if __name__ == '__main__':
   from psegs.spark import Spark
   spark = Spark.getOrCreate()
 
-  # R = KITTI360FusedFlowDFFactory
+  # R = KITTI360_OurFused_FusedFlowDFFactory
+  R = KITTI360_KITTIFused_FusedFlowDFFactory
 
-  # seg_uris = R.SRC_SD_T().get_all_segment_uris()
-  # R.build(spark=spark, only_segments=[seg_uris[3]])
+  # R = NuscKeyframesOFlowRenderer
+
+  seg_uris = R.SRC_SD_T().get_all_segment_uris()
+  R.build(spark=spark, only_segments=[seg_uris[0]])
 
 
 

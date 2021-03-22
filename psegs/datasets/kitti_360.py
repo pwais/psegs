@@ -400,8 +400,9 @@ class Calibration(object):
 
 class KITTI360SDTable(StampedDatumTableBase):
 
-  FIXTURES = Fixtures
+  # TODO: allow inclusion of oxts data.  for now we just use KITTI's refined poses
 
+  FIXTURES = Fixtures
 
   INCLUDE_FISHEYES = False
   """bool: Should we emit label datums for the fisheye / side cameras?
@@ -416,6 +417,8 @@ class KITTI360SDTable(StampedDatumTableBase):
   KITTI-360.
   """
 
+  DATASET_NAME = 'kitti-360'
+
   ## Dataset API
 
   @classmethod
@@ -428,7 +431,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       raise ValueError("Unknown sequence %s" % sequence)
     
     base_uri = datum.URI(
-      dataset='kitti-360',
+      dataset=cls.DATASET_NAME,
       split=split,
       segment_id=sequence)
 
@@ -491,6 +494,10 @@ class KITTI360SDTable(StampedDatumTableBase):
     URIS_PER_PARTITION = 256
       # Requires about 256 Megabytes of memory per chunk
 
+    if cls.INCLUDE_FUSED_CLOUDS:
+      URIS_PER_PARTITION = max(10, URIS_PER_PARTITION // 4)
+        # Fused clouds are much larger
+
     # from oarphpy import util as oputil
     datum_rdds = []
     for seg_uri in seg_uris:
@@ -499,7 +506,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       # Some datums are more expensive to create than others, so distribute
       # them evenly in the RDD
       uris = sorted(uris, key=lambda u: u.timestamp)
-      # uris = uris[5000:10000]
+      # uris = uris[5000:6000]
 
       seg_span_sec = 1e-9 * (uris[-1].timestamp - uris[0].timestamp)
 
@@ -788,13 +795,16 @@ class KITTI360SDTable(StampedDatumTableBase):
         has_pose = (
           cls._get_ego_pose(base_uri.segment_id, frame_id) is not None)
         if has_pose:
-          for chan in chan_to_path.keys():
+          for chan, path in chan_to_path.items():
             yield base_uri.replaced(
                 topic='lidar|fused_' + chan,
                 timestamp=
                   cls._get_nanostamp(base_uri.segment_id, 'velodyne', frame_id),
                 extra={
                   'kitti-360.frame_id': str(frame_id),
+                  'kitti-360.fused_cloud_path': path,
+                    # path for uniquely identifying the fused cloud files,
+                    # which each span multiple frames
                 })
 
   @classmethod
@@ -841,16 +851,17 @@ class KITTI360SDTable(StampedDatumTableBase):
       
       def _get_fused_cloud(uri, frame_id):
         T_world_to_ego = cls._get_ego_pose(uri.segment_id, frame_id)
-        assert T_world_to_ego is not None, "Programming error: no pose %s" % uri
+        assert T_world_to_ego is not None, \
+          "Programming error: no pose %s" % uri
         # T_world_to_velo = (velo_to_ego.get_inverse() @ T_world_to_ego).get_inverse()
         T_world_to_velo = (T_world_to_ego @ velo_to_ego).get_inverse()
         
         chan = 'static' if 'static' in uri.topic else 'dynamic'
         frame_id_to_chan_to_path = cls._get_fused_scan_idx(uri.segment_id)
-        path = frame_id_to_chan_to_path[frame_id][chan]
+        fused_path = frame_id_to_chan_to_path[frame_id][chan]
 
         import open3d
-        pcd = open3d.io.read_point_cloud(str(cpath))
+        pcd = open3d.io.read_point_cloud(str(fused_path))
         cloud = np.asarray(pcd.points)
         cloud = T_world_to_velo.apply(cloud).T
 
