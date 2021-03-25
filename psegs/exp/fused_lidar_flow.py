@@ -488,7 +488,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
     sds = []
     for seg_uri in seg_uris:
-      # sds.append(cls._create_world_cloud_sd(seg_uri)) # hacks no more world clouds 
+      # sds.append(cls._create_world_cloud_sd(seg_uri)) # hacks no more world clouds ~~~~~~~~~~~~
       if cls.HAS_OBJ_CLOUDS:
         sds.extend(cls._create_obj_cloud_sds(seg_uri))
     datum_rdds = [spark.sparkContext.parallelize(sds)]
@@ -521,6 +521,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
   @classmethod
   def _create_obj_cloud_sds(cls, segment_uri):
     idx_df = pd.read_csv(cls.obj_cloud_idx_path(segment_uri))
+    print('_create_obj_cloud_sds', idx_df)
     for _, row in idx_df.iterrows():
       track_id = str(row['track_id'])
       cloud_path = row['path']
@@ -2152,18 +2153,15 @@ class FusedFlowDFFactory(object):
 
           counter['n_pruned'] += n_pruned
           counter['n_wc_pts'] += world_cloud.shape[0]
-          counter['pcs'] += len(pcs)
+          counter['pcs'] += len(pcs) # TODO why is this seem to report double the world clouds found ??
           counter['cuboids'] += len(cuboids)
 
           data = {
             'sample_id': row.sample_id,
-            'world_cloud': Row(
-              cloud=world_cloud,
-              n_pruned=n_pruned,
-            ),
+            'world_cloud': world_cloud,
           }
           rowdata = RowAdapter.to_row(data)
-          t.stop_block(n=1, num_bytes=world_cloud.nbytes)
+          t.stop_block(n=len(pcs), num_bytes=world_cloud.nbytes) # TODO is this the thruput we want?
             # yield Row(**rowdata)
           counter['t_world_clouds'] = t
           self.C_acc += counter
@@ -2173,25 +2171,34 @@ class FusedFlowDFFactory(object):
     # licu_df = licu_df.repartition(
     #             10 * licu_df.rdd.getNumPartitions(), 'sample_id')
 
-    # SCHEMA_PROTO = {'sample_id': 0, 'cloud': np.zeros((0, 3)), 'n_pruned': 0}
+    # from pyspark import Row
+    # SCHEMA_PROTO = Row(**{
+    #         'sample_id': row.sample_id,
+    #         'world_cloud': world_cloud,
+    #       }
+      
+      
+    #   # sample_id=0, world_cloud=np.zeros((0, 3)))
     f = RowToWorldCloud(cleaner, C_acc)
-    world_cloud_df = spark.createDataFrame(
-                        licu_df.rdd.map(f))
-                        # schema=RowAdapter.to_schema(SCHEMA_PROTO))
-    
+    # world_cloud_df = spark.createDataFrame(
+    #                     licu_df.rdd.map(f),
+    #                     samplingRatio=0.25)
+    #                     # schema=RowAdapter.to_schema(SCHEMA_PROTO))
+    world_cloud_rdd = licu_df.rdd.map(f)
+
     def spin_log():
       import time
       while True:
         print('spinns')
         import pprint
         util.log.info(pprint.pformat(C_acc.value))
-        time.sleep(10)
+        time.sleep(30)
     import threading
     bkg_th = threading.Thread(target=spin_log, args=())
     bkg_th.daemon = True
     bkg_th.start()
     
-    return world_cloud_df
+    return world_cloud_rdd#world_cloud_df
     
 
     
@@ -2274,7 +2281,8 @@ class FusedFlowDFFactory(object):
         
         world_cloud_df = cls._build_world_cloud_df(spark, sample_df)
         # world_cloud_df = world_cloud_df.repartition('sample_id').persist()
-        world_cloud_df = world_cloud_df.persist()
+        import pyspark
+        world_cloud_df = world_cloud_df.persist(pyspark.StorageLevel.MEMORY_AND_DISK)
         
         # if sample_df.count() >= 100:
         #   util.log.info("Rendering and caching world clouds ...")
@@ -2309,6 +2317,7 @@ class FusedFlowDFFactory(object):
                                                     spark, suri)
         from pyspark import StorageLevel
         fused_sd_rdd = fused_sd_rdd.persist(StorageLevel.DISK_ONLY)
+        print('fused_sd_rdd', fused_sd_rdd.count())
         
         
         sample_id_filter_clause = ''
@@ -2372,7 +2381,8 @@ class FusedFlowDFFactory(object):
         # world_cloud_df.registerTempTable('world_cloud_df')
 
         thruput_pairs = oputil.ThruputObserver(
-          'RenderFlowPairs', n_total=pairs_stats['total_sample_pairs'])
+          'RenderFlowPairs_%s' % suri.segment_id,
+          n_total=pairs_stats['total_sample_pairs'])
         for row in flow_pairs_df.rdd.toLocalIterator():
           thruput_pairs.start_block()
 
@@ -2491,7 +2501,7 @@ class FusedFlowDFFactory(object):
                 uvd_viz1_uvd_viz2_part = None
                 for row in iter_rows:
                   self._thruput.start_block()
-                  world_cloud = FROM_ROW(row.world_cloud.cloud)
+                  world_cloud = FROM_ROW(row.world_cloud)
 
                 
                   from threadpoolctl import threadpool_limits
@@ -2514,7 +2524,8 @@ class FusedFlowDFFactory(object):
                 else:
                   return [uvd_viz1_uvd_viz2_part]
             render = RenderWCPartition()
-            wc_uvd_viz1_uvd_viz2_rdd = world_cloud_df.rdd.mapPartitions(render)
+            # wc_uvd_viz1_uvd_viz2_rdd = world_cloud_df.rdd.mapPartitions(render)
+            wc_uvd_viz1_uvd_viz2_rdd = world_cloud_df.mapPartitions(render)
 
             uvd_viz1_uvd_viz2_rdd = spark.sparkContext.union([
               obj_uvd_viz1_uvd_viz2_rdd, wc_uvd_viz1_uvd_viz2_rdd
@@ -2565,6 +2576,9 @@ class FusedFlowDFFactory(object):
             with open(path, 'wb') as f:
               pickle.dump(row_out, f, protocol=pickle.HIGHEST_PROTOCOL)
             print('saved pkl to', path)
+
+            thruput_pairs.stop_block(n=1)
+            thruput_pairs.maybe_log_progress(every_n=1)
 
 
           # cname_to_ci1 = dict((c.sensor_name, c) for c in ci1s)

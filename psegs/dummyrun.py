@@ -137,37 +137,47 @@ class KITTI360_KITTIFused_SampleDFFactory(SampleDFFactory):
     def build_df_for_segment(cls, spark, segment_uri):
         from psegs import util
         
+        util.log.info(
+          'Building sample table for %s ...' % segment_uri.segment_id)
+
         datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
+        # datum_df = datum_df.persist()
+        
+        spark.catalog.dropTempView('datums')
         datum_df.registerTempTable('datums')
 
-        util.log.info('Building sample table for %s ...' % segment_uri.segment_id)
-        
         # KITTI-360 fused clouds have data for multiple frames in each
         # individual file.  We only want to read each file once, so let's
         # prune the 'datums' table to contain only *distinct* clouds from
         # the available datums (and all other non-cloud data).
-        datum_df = spark.sql("""
-            WITH valid_frames AS (
-                    SELECT
-                      FIRST(uri.extra.`kitti-360.frame_id`) AS frame_id,
-                      uri.extra.`kitti-360.fused_cloud_path` AS cloud_path
-                    FROM datums
-                    WHERE uri.topic LIKE '%lidar|fused_static%'
-                    GROUP BY uri.extra.`kitti-360.fused_cloud_path`
-            )
+        valid_frames_df = spark.sql("""
+            SELECT
+              FIRST(uri.extra.`kitti-360.frame_id`) AS frame_id,
+              uri.extra.`kitti-360.fused_cloud_path` AS cloud_path
+            FROM datums
+            WHERE uri.topic LIKE '%lidar|fused_static%'
+            GROUP BY uri.extra.`kitti-360.fused_cloud_path`
+            """)
+        valid_fids = set(
+          r.frame_id for r in valid_frames_df.collect()
+          if r.cloud_path is not None
+        )
+        util.log.info(
+          "... found %s distinct world clouds ..." % len(valid_fids))
+        valid_fids_str = ','.join("'%s'" % fid for fid in valid_fids)
 
+        datum_df = spark.sql("""
             SELECT *
-            FROM datums, valid_frames
+            FROM datums
             WHERE
               uri.topic NOT LIKE '%lidar%' OR
               (
                 uri.topic LIKE '%lidar|fused_static%' AND
-                valid_frames.frame_id = uri.extra.`kitti-360.frame_id`
+                uri.extra.`kitti-360.frame_id` IN ( {valid_fids_str} )
               )
-        """)
+        """.format(valid_fids_str=valid_fids_str))
         datum_df.registerTempTable('kitti360_kfused_datums')
-        
-        spark.sql("SELECT uri.topic, count(*) from kitti360_kfused_datums group by uri.topic").show()
+
 
         # Now collect datums, using only the distinct fused clouds we
         # collected above
@@ -205,12 +215,21 @@ from psegs.exp.fused_lidar_flow import WorldCloudCleaner
 class PassThruWorldCloudCleaner(WorldCloudCleaner):
   
   def get_cleaned_world_cloud(self, point_clouds, cuboids):
-
+    # TODO need to prune isVisible for optical flow ............................................................
     cleaned_clouds = []
     n_pruned = 0
     for pc in point_clouds:
       # self._thruput().start_block()
-      cloud = pc.get_cloud()[:, :3] # TODO: can we keep colors?
+
+      cloud = pc.get_cloud()
+
+      # actually this doesn't make a huge difference
+      # # Only keep visible points.  These are points visible to at least one
+      # # camera.  
+      # vis_idx = pc.get_col_idx('is_visible')
+      # cloud = cloud[cloud[:, vis_idx] == 1]
+
+      cloud = cloud[:, :3] # TODO: can we keep colors?
       cloud_ego = pc.ego_to_sensor.get_inverse().apply(cloud).T
     
       cloud_ego = self._filter_ego_vehicle(cloud_ego)
@@ -385,13 +404,13 @@ if __name__ == '__main__':
   from psegs.spark import Spark
   spark = Spark.getOrCreate()
 
-  # R = KITTI360_OurFused_FusedFlowDFFactory
-  R = KITTI360_KITTIFused_FusedFlowDFFactory
+  R = KITTI360_OurFused_FusedFlowDFFactory
+  # R = KITTI360_KITTIFused_FusedFlowDFFactory
 
   # R = NuscKeyframesOFlowRenderer
 
   seg_uris = R.SRC_SD_T().get_all_segment_uris()
-  R.build(spark=spark, only_segments=[seg_uris[0]])
+  R.build(spark=spark, only_segments=[seg_uris[6]])
 
 
 

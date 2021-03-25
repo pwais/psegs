@@ -507,7 +507,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       # Some datums are more expensive to create than others, so distribute
       # them evenly in the RDD
       uris = sorted(uris, key=lambda u: u.timestamp)
-      uris = uris[5000:6000]
+      # uris = uris[5000:10000]
 
       seg_span_sec = 1e-9 * (uris[-1].timestamp - uris[0].timestamp)
 
@@ -816,6 +816,8 @@ class KITTI360SDTable(StampedDatumTableBase):
     velo_to_ego = (
       calib.cam_left_rect_to_ego @ calib.cam_left_rect_to_velo.get_inverse())
 
+    cloud_colnames = ['x', 'y', 'z']
+
     if uri.topic == 'lidar':
       vel_path = cls.FIXTURES.velodyne_cloud_path(
                       uri.segment_id, cls._get_frame_id(uri))
@@ -864,14 +866,40 @@ class KITTI360SDTable(StampedDatumTableBase):
       fused_path = frame_id_to_chan_to_path[frame_id][chan]
 
       def _get_fused_cloud(T_world_to_velo, fused_path):
-        import open3d
         import numpy as np
-        pcd = open3d.io.read_point_cloud(str(fused_path))
-        cloud = np.asarray(pcd.points)
-        cloud = T_world_to_velo.apply(cloud).T
-        return cloud
+        from plyfile import PlyData
+        with open(fused_path, 'rb') as f:
+          plydata = PlyData.read(f)
+        assert len(plydata.elements) >= 1, plydata
+        data = plydata.elements[0].data
+        cloud_xyz = np.array([data['x'], data['y'], data['z']]).T
+        
+        # import open3d
+        # import numpy as np
+        # pcd = open3d.io.read_point_cloud(str(fused_path))
+        # cloud = np.asarray(pcd.points)
+        # cloud = T_world_to_velo.apply(cloud).T
+
+        cloud_xyz = T_world_to_velo.apply(cloud_xyz).T
+        cloud_rgbsiv = np.array([
+          data['red'],
+          data['green'],
+          data['blue'],
+          data['semantic'],
+          data['instance'],
+          data['visible'],
+        ]).T
+
+        return np.hstack([cloud_xyz, cloud_rgbsiv])
 
       cloud_factory = lambda: _get_fused_cloud(T_world_to_velo, fused_path)
+      cloud_colnames = [
+          'x', 'y', 'z',
+          'r', 'g', 'b',
+          'semantic_id',
+          'instance_id',
+          'is_visible',
+        ]
 
       ego_to_sensor = velo_to_ego.get_inverse()
 
@@ -885,6 +913,7 @@ class KITTI360SDTable(StampedDatumTableBase):
           timestamp=uri.timestamp,
           # cloud=cloud,
           cloud_factory=cloud_factory,
+          cloud_colnames=cloud_colnames,
           ego_to_sensor=ego_to_sensor,
           ego_pose=ego_pose or datum.Transform(),
           extra={'kitti-360.has-valid-ego-pose': str(bool(ego_pose))})

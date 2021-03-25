@@ -38,8 +38,9 @@ class PointCloud(object):
   nanoseconds."""
 
   cloud = attr.ib(type=np.ndarray, default=None)
-  """numpy.ndarray: Lidar points as an n-by-3 matrix of `(x, y, z)` points.
-  Nominally, these points are in **ego** frame, not point sensor frame."""#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  """numpy.ndarray: Lidar points as an n-by-d matrix (typically of 
+  `(x, y, z)` points). Nominally, these points are in **ego** frame????
+  not point sensor frame. need to check this because looks like we put in sensor frame?"""#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   # TODO rename to cloud_array once we can dump SD parquet ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
   cloud_factory = attr.ib(
@@ -48,6 +49,11 @@ class PointCloud(object):
     default=None)
   """CloudpickeledCallable: A serializable factory function that emits an HWC
     numpy array image"""
+
+  cloud_colnames = attr.ib(default=['x', 'y', 'z'])
+  """List[str]: Semantic names for the columns (or dimensions / attributes)
+  of the cloud.  Typically clouds have just 3-D (x, y, z) points, but some
+  clouds have reflectance, RGB, labels, and/or other data."""
 
   # then start using get_cloud() in call sites.  could rename cloud to cloud_array and then just dump
   # the nuscenes SDTable that we built...
@@ -75,6 +81,13 @@ class PointCloud(object):
       return self.cloud_factory()
     else:
       raise ValueError("No cloud data!")
+
+  def get_col_idx(self, colname):
+    for i in range(len(self.cloud_colnames)):
+      if self.cloud_colnames[i] == colname:
+        return i
+    raise ValueError(
+      "Colname %s not found in %s" % (colname, self.cloud_colnames))
 
   # @
   # def _get_2d_debug_image(
