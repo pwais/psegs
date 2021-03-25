@@ -271,8 +271,136 @@ class KITTI360_KITTIFused_FusedFlowDFFactory(FusedFlowDFFactory):
 
 
 
-# from psegs.datasets.nuscenes import NuscStampedDatumTableBase
-# from psegs.datasets.nuscenes import NuscStampedDatumTableLabelsAllFrames
+from psegs.datasets.nuscenes import NuscStampedDatumTableBase
+from psegs.datasets.nuscenes import NuscStampedDatumTableLabelsAllFrames
+
+class NuscFlowSDTable(NuscStampedDatumTableBase):
+  SENSORS_KEYFRAMES_ONLY = False
+  LABELS_KEYFRAMES_ONLY = False
+  INCLUDE_LIDARSEG = False
+
+  @classmethod
+  def _get_all_segment_uris(cls):
+    segment_uris = NuscStampedDatumTableBase._get_all_segment_uris()
+    
+    # Simplify 'train' for 'train-detect' and 'train-track'
+    for suri in segment_uris:  
+      if 'train' in suri.split:
+        suri.split = 'train'
+    
+    return segment_uris
+
+class NuscSampleDFFactory(SampleDFFactory):
+  SRC_SD_TABLE = NuscFlowSDTable
+
+  # For NuScenes, labels (and keyframes) are only available at 2Hz and are
+  # otherwise interpolated. The lidar scans at 2x the frequence of the cameras.
+  # For best alignment, we fuse all lidar clouds, but only render flow
+  # for keyframes.
+  LIDAR_KEYFRAMES_ONLY = False
+  CAMERAS_KEYFRAMES_ONLY = True
+  CUBOIDS_KEYFRAMES_ONLY = True
+  GROUP_SAMPLES_BY_KEYFRAME = True
+
+  @classmethod
+  def build_df_for_segment(cls, spark, segment_uri):
+      from psegs import util
+      
+      util.log.info(
+        'Building sample table for %s ...' % segment_uri.segment_id)
+
+      datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
+        # datum_df = datum_df.persist()
+        
+      spark.catalog.dropTempView('nusc_datums')
+      datum_df.registerTempTable('nusc_datums')
+
+      sample_id_key = (
+        'uri.extra.`nuscenes-segment-keyframe-offset`'
+        if cls.GROUP_SAMPLES_BY_KEYFRAME else
+        'uri.extra.`nuscenes-segment-sd-offset`')
+
+      kf_filter = "AND uri.extra.`nuscenes-is-keyframe` = 'True'"
+      pc_kf_filter = kf_filter if cls.LIDAR_KEYFRAMES_ONLY else ''
+      ci_kf_filter = kf_filter if cls.CAMERAS_KEYFRAMES_ONLY else ''
+      cu_kf_filter = kf_filter if cls.CUBOIDS_KEYFRAMES_ONLY else ''
+
+      spark.catalog.dropTempView('nusc_sample_df')
+      spark.sql("""
+          CACHE TABLE 
+            nusc_sample_df
+            OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
+          SELECT 
+            INT({sample_id_key}) AS sample_id,
+            COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
+                FILTER (WHERE uri.topic LIKE '%lidar%' {pc_kf_filter}) AS pc_sds,
+            COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
+                FILTER (WHERE uri.topic LIKE '%cuboid%' {cu_kf_filter}) AS cuboids_sds,
+            COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
+                FILTER (WHERE uri.topic LIKE '%camera%' {ci_kf_filter}) AS ci_sds
+          FROM nusc_datums
+          WHERE (
+            uri.topic LIKE '%cuboid%' OR
+            uri.topic LIKE '%lidar%' OR
+            uri.topic LIKE '%camera%'
+          ) AND (
+            camera_image is NULL OR (camera_image.extra.`kitti-360.has-valid-ego-pose` = 'True')
+          ) AND (
+            point_cloud is NULL OR (point_cloud.extra.`kitti-360.has-valid-ego-pose` = 'True')
+          )
+          GROUP BY sample_id
+          ORDER BY sample_id
+      """.format(
+        sample_id_key=sample_id_key,
+        pc_kf_filter=pc_kf_filter,
+        ci_kf_filter=ci_kf_filter,
+        cu_kf_filter=cu_kf_filter))
+        
+      sample_df = spark.sql('SELECT * FROM nusc_sample_df')
+      util.log.info('... done.')
+      return sample_df
+
+from psegs.exp.fused_lidar_flow import WorldCloudCleaner
+class NuscWorldCloudCleaner(WorldCloudCleaner):
+  
+  @classmethod
+  def _filter_ego_vehicle(cls, cloud_ego):
+      # Note: NuScenes authors have already corrected clouds for ego motion:
+      # https://github.com/nutonomy/nuscenes-devkit/issues/481#issuecomment-716250423
+      # But have not filtered out ego self-returns
+      cloud_ego = cloud_ego[np.where(  ~(
+                      (cloud_ego[:, 0] <= 1.5) & (cloud_ego[:, 0] >= -1.5) &  # Nusc lidar +x is +right
+                      (cloud_ego[:, 1] <= 2.5) & (cloud_ego[:, 0] >= -2.5) &  # Nusc lidar +y is +forward
+                      (cloud_ego[:, 1] <= 1.5) & (cloud_ego[:, 0] >= -1.5)    # Nusc lidar +z is +up
+      ))]
+      return cloud_ego
+
+
+class NuscWorldCloudTableBase(FusedLidarCloudTableBase):
+  TASK_DF_FACTORY = NuscSampleDFFactory
+
+class NuscFusedFlowDFFactory(FusedFlowDFFactory):
+  SAMPLE_DF_FACTORY = NuscSampleDFFactory
+  WORLD_CLEANER_CLS = NuscWorldCloudCleaner
+  FUSED_LIDAR_SD_TABLE = NuscWorldCloudTableBase
+
+
+
+# class NuscWorldCloudTableBase(FusedLidarCloudTableBase):
+#     SPLITS = ['train_detect', 'train_track']
+    
+#     @classmethod
+#     def _filter_ego_vehicle(cls, cloud_ego):
+#         # Note: NuScenes authors have already corrected clouds for ego motion:
+#         # https://github.com/nutonomy/nuscenes-devkit/issues/481#issuecomment-716250423
+#         # But have not filtered out ego self-returns
+#         cloud_ego = cloud_ego[np.where(  ~(
+#                         (cloud_ego[:, 0] <= 1.5) & (cloud_ego[:, 0] >= -1.5) &  # Nusc lidar +x is +right
+#                         (cloud_ego[:, 1] <= 2.5) & (cloud_ego[:, 0] >= -2.5) &  # Nusc lidar +y is +forward
+#                         (cloud_ego[:, 1] <= 1.5) & (cloud_ego[:, 0] >= -1.5)    # Nusc lidar +z is +up
+#         ))]
+#         return cloud_ego
+
 
 
 # class NuscKFOnlyLCCDFFactory(TaskLidarCuboidCameraDFFactory):
@@ -404,13 +532,13 @@ if __name__ == '__main__':
   from psegs.spark import Spark
   spark = Spark.getOrCreate()
 
-  R = KITTI360_OurFused_FusedFlowDFFactory
+  # R = KITTI360_OurFused_FusedFlowDFFactory
   # R = KITTI360_KITTIFused_FusedFlowDFFactory
 
-  # R = NuscKeyframesOFlowRenderer
+  R = NuscFusedFlowDFFactory
 
   seg_uris = R.SRC_SD_T().get_all_segment_uris()
-  R.build(spark=spark, only_segments=[seg_uris[6]])
+  R.build(spark=spark, only_segments=[seg_uris[0]])
 
 
 

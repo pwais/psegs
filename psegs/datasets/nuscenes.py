@@ -101,7 +101,10 @@ try:
   from nuscenes.nuscenes import NuScenes
   BASE = NuScenes
 except ImportError:
-  BASE = object
+  class NuscNotInstalled(object):
+    def __new__(self, *args, **kwargs):
+      raise ValueError("This code requires nuscenes-devkit==1.1.2")
+  BASE = NuscNotInstalled
 
 class PSegsNuScenes(BASE):
   """A PSegs wrapper around the NuScenes dataset handle featuring reduced
@@ -169,44 +172,58 @@ class PSegsNuScenes(BASE):
           "Could not find provided dataroot %s nor default "
           "PSegs dataroot %s" % (self.dataroot, self.FIXTURES.ROOT))
 
-    if util.missing_or_empty(self._get_cache_path('')):
-      util.log.info(
-        "Creating shelve caches; will use ~8-10GB of RAM ...")
-      nusc = NuScenes(**kwargs)
-        # NB: The above ctor call not only loads all JSON but also runs
-        # 'reverse indexing', which **EDITS** the data loaded into memory.
-        # We'll then write the edited data below using `shelve` so that we
-        # don't have to try to make `PSegsNuScenes` support reverse indexing
-        # itself.
-      util.log.info("... NuScenes done loading & indexing JSON data ...")
-      
-      table_names = list(nusc.table_names)
-      if (Path(self.table_root) / 'lidarseg.json').exists():
-        table_names += ['lidarseg']
-      
-      for table_name in nusc.table_names:
-        cache_path = self._get_cache_path(table_name)
-        oputil.mkdir(cache_path.parent)
+    FLOCK_PATH = self._get_cache_path('cache.flock')
+    if not FLOCK_PATH.exists():
+      oputil.mkdir(FLOCK_PATH.parent)
+      with open(FLOCK_PATH, 'a') as f:
+        pass
+    
+    DONE_PATH = self._get_cache_path('cache.done')
+    if not DONE_PATH.exists():
+      import fasteners
+      lock = fasteners.InterProcessLock(FLOCK_PATH)
+      with lock:
+        if not DONE_PATH.exists():
+          util.log.info(
+            "Creating shelve caches; will use ~8-10GB of RAM ...")
+          nusc = NuScenes(**kwargs)
+          # NB: The above ctor call not only loads all JSON but also runs
+          # 'reverse indexing', which **EDITS** the data loaded into memory.
+          # We'll then write the edited data below using `shelve` so that we
+          # don't have to try to make `PSegsNuScenes` support reverse indexing
+          # itself.
+          util.log.info("... NuScenes done loading & indexing JSON data ...")
+          
+          table_names = list(nusc.table_names)
+          if (Path(self.table_root) / 'lidarseg.json').exists():
+            table_names += ['lidarseg']
+          
+          for table_name in nusc.table_names:
+            cache_path = self._get_cache_path(table_name)
+            oputil.mkdir(cache_path.parent)
 
-        util.log.info(
-          "Building shelve cache for %s (in %s) ..." % (
-            table_name, cache_path))
-        
-        d = shelve.open(str(cache_path), protocol=pickle.HIGHEST_PROTOCOL)
-        rows = getattr(nusc, table_name) # E.g. self.sample_data
-        d.update((r['token'], r) for r in rows)
-        d.close()
-      
-      # This cache helps speed up full-scene lookups by 10x
-      util.log.info("Building scene name -> sample_data token cache ...")
-      scene_name_to_sd_token = self._build_scene_name_to_sd_token(nusc)
-      cache_path = self._get_cache_path('scene_name_to_sd_token')
-      d = shelve.open(str(cache_path), protocol=pickle.HIGHEST_PROTOCOL)
-      d.update(scene_name_to_sd_token)
-      d.close()
+            util.log.info(
+              "Building shelve cache for %s (in %s) ..." % (
+                table_name, cache_path))
+            
+            d = shelve.open(str(cache_path), protocol=pickle.HIGHEST_PROTOCOL)
+            rows = getattr(nusc, table_name) # E.g. self.sample_data
+            d.update((r['token'], r) for r in rows)
+            d.close()
+          
+          # This cache helps speed up full-scene lookups by 10x
+          util.log.info("Building scene name -> sample_data token cache ...")
+          scene_name_to_sd_token = self._build_scene_name_to_sd_token(nusc)
+          cache_path = self._get_cache_path('scene_name_to_sd_token')
+          d = shelve.open(str(cache_path), protocol=pickle.HIGHEST_PROTOCOL)
+          d.update(scene_name_to_sd_token)
+          d.close()
 
-      util.log.info("... done.")
-      del nusc # Free several GB memory
+          util.log.info("... done.")
+          del nusc # Free several GB memory
+
+          with open(DONE_PATH, 'a') as f:
+            pass
 
     super(PSegsNuScenes, self).__init__(**kwargs)
 
@@ -732,6 +749,18 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
 
     scene_split = nusc.get_split_for_scene(segment_id)
 
+    # Infer the ordering of sample_datums and keyframes; this helps
+    # establish a time-increasing numeric index for users that
+    # care about sequences and ordering of Nusc samples and keyframes
+    ordered_sample_datums = sorted(
+                      nusc.iter_sample_data_for_scene(segment_id),
+                      key=lambda sd: sd['timestamp'])
+    sd_token_to_seg_offset = dict(
+      (sd['sample_token'], i) for i, sd in enumerate(ordered_sample_datums))
+    sd_token_to_seg_kf_offset = dict(
+      (sd['sample_token'], i) for i, sd in enumerate(ordered_sample_datums)
+      if sd['is_key_frame'])
+
     ## Get sensor data and ego pose
     for sd in nusc.iter_sample_data_for_scene(segment_id):
       # Use these for creating frames based upon NuScenes / Lyft groupings
@@ -752,6 +781,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                 'nuscenes-token': 'ego_pose|' + sd['ego_pose_token'],
                 'nuscenes-sample-token': sample_token,
                 'nuscenes-is-keyframe': is_key_frame,
+                'nuscenes-segment-sd-offset': 
+                  str(sd_token_to_seg_offset[sample_token]),
+                'nuscenes-segment-keyframe-offset':
+                  str(sd_token_to_seg_kf_offset.get(sample_token)),
               })
 
       # Maybe skip the sensor data if we're only doing keyframes
@@ -769,6 +802,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                 'nuscenes-token': 'sample_data|' + sd['token'],
                 'nuscenes-sample-token': sample_token,
                 'nuscenes-is-keyframe': is_key_frame,
+                'nuscenes-segment-sd-offset': 
+                  str(sd_token_to_seg_offset[sample_token]),
+                'nuscenes-segment-keyframe-offset':
+                  str(sd_token_to_seg_kf_offset.get(sample_token)),
               })
 
       # Get labels (non-keyframes; interpolated one per track)
@@ -785,6 +822,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                   'nuscenes-sample-token': sample_token,
                   'nuscenes-is-keyframe': is_key_frame,
                   'nuscenes-label-channel': sd['channel'],
+                  'nuscenes-segment-sd-offset': 
+                    str(sd_token_to_seg_offset[sample_token]),
+                  'nuscenes-segment-keyframe-offset':
+                    str(sd_token_to_seg_kf_offset.get(sample_token)),
                 })
 
     ## Get labels (keyframes only, but interpolated for each sensor
@@ -814,6 +855,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                     'nuscenes-sample-token': sample_token,
                     'nuscenes-is-keyframe': 'True',
                     'nuscenes-label-channel': channel,
+                    'nuscenes-segment-sd-offset': 
+                      str(sd_token_to_seg_offset[sample_token]),
+                    'nuscenes-segment-keyframe-offset':
+                      str(sd_token_to_seg_kf_offset.get(sample_token)),
                   })
 
   @classmethod
@@ -909,60 +954,73 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
   def __create_point_cloud(cls, uri, sample_data):
     # Based upon nuscenes.py#map_pointcloud_to_image()
 
-    from pyquaternion import Quaternion
-    from nuscenes.utils.data_classes import LidarPointCloud
-    from nuscenes.utils.data_classes import RadarPointCloud
+    nusc = cls.get_nusc()
+    sd = sample_data
+    pcl_path = os.path.join(nusc.dataroot, sd['filename'])
+    target_pose_token = sd['ego_pose_token']
+    cs_record = nusc.get(
+                  'calibrated_sensor', sd['calibrated_sensor_token'])
+    poserecord1 = nusc.get('ego_pose', sd['ego_pose_token'])
+    poserecord2 = nusc.get('ego_pose', target_pose_token)
+    add_lidarseg = (cls.INCLUDE_LIDARSEG and 
+                          nusc.has_lidarseg() and
+                          sd['sensor_modality'] == 'lidar' and
+                          sd['is_key_frame'])
+    lidarseg_labels_filename = ''
+    if add_lidarseg:
+      sample_record = nusc.get('sample', sd['sample_token'])
+      pointsensor_token = sample_record['data'][sd['channel']]
+      lidarseg_datum = nusc.get('lidarseg', pointsensor_token)
+      lidarseg_labels_filename = os.path.join(
+                                        nusc.dataroot,
+                                        lidarseg_datum['filename'])
 
-    def _get_cloud(sd):
-      nusc = cls.get_nusc()
-
-      target_pose_token = sd['ego_pose_token']
-
-      pcl_path = os.path.join(nusc.dataroot, sd['filename'])
+    def _get_cloud(
+          sd,
+          pcl_path,
+          cs_record,
+          poserecord1,
+          poserecord2,
+          lidarseg_labels_filename):
+        
+      from pyquaternion import Quaternion
+      from nuscenes.utils.data_classes import LidarPointCloud
+      from nuscenes.utils.data_classes import RadarPointCloud
+      import numpy as np
+        
       if 'host-a011_lidar1_1233090652702363606.bin' in pcl_path:
-        util.log.warn('Lyft Level 5: Kaggle download has a broken file') #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      if sample_data['sensor_modality'] == 'lidar':
+        raise ValueError('Lyft Level 5: Kaggle download has a broken file')
+      if sd['sensor_modality'] == 'lidar':
         pc = LidarPointCloud.from_file(pcl_path)
           # NB: In NuScenes, lidar is +y = forward, +x = right, +z = up
       else:
         pc = RadarPointCloud.from_file(pcl_path)
           # NB: In NuScenes, radar is +x = forward, +y = left, +z = up
 
+      ## Adapted from Nuscenes code.  Not sure why they project through
+      ## the world frame, but we'll do that to be consistent with their API.
+
       # Step 1: Points live in the point sensor frame.  First transform to
       # world frame:
       # 1a transform to ego
       # First step: transform the point-cloud to the ego vehicle frame for the
       # timestamp of the sweep.
-      cs_record = nusc.get(
-                    'calibrated_sensor', sd['calibrated_sensor_token'])
       pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
       pc.translate(np.array(cs_record['translation']))
 
       # 1b transform to the global frame.
-      poserecord = nusc.get('ego_pose', sd['ego_pose_token'])
-      pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
-      pc.translate(np.array(poserecord['translation']))
+      pc.rotate(Quaternion(poserecord1['rotation']).rotation_matrix)
+      pc.translate(np.array(poserecord1['translation']))
 
       # Step 2: Send points into the ego frame at the target timestamp
-      poserecord = nusc.get('ego_pose', target_pose_token)
-      pc.translate(-np.array(poserecord['translation']))
-      pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
+      pc.translate(-np.array(poserecord2['translation']))
+      pc.rotate(Quaternion(poserecord2['rotation']).rotation_matrix.T)
 
       # n_xyz = pc.points[:3, :].T
       #   # Throw out intensity (lidar) and ... other stuff (radar) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       n_xyz = pc.points.T
 
-      add_lidarseg = (cls.INCLUDE_LIDARSEG and 
-                        nusc.has_lidarseg() and
-                        sd['sensor_modality'] == 'lidar' and
-                        sd['is_key_frame'])
-      if add_lidarseg:
-        sample_record = nusc.get('sample', sd['sample_token'])
-        pointsensor_token = sample_record['data'][sd['channel']]
-        lidarseg_datum = nusc.get('lidarseg', pointsensor_token)
-        lidarseg_labels_filename = os.path.join(
-                                          nusc.dataroot,
-                                          lidarseg_datum['filename'])
+      if lidarseg_labels_filename:
         # Load labels from .bin file.
         labels = np.fromfile(lidarseg_labels_filename, dtype=np.uint8)
         labels = np.reshape(labels, [-1, 1])
@@ -970,10 +1028,102 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
           "Expected one label per point, have %s vs %s" % (
             n_xyz.shape, labels.shape)
         n_xyz = np.hstack([n_xyz, labels])
-      
+          
       return n_xyz.astype(np.float32)
-    #cloud = _get_cloud(sample_data)
-    cloud_factory = lambda: _get_cloud(sample_data)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # from pyquaternion import Quaternion
+    # from nuscenes.utils.data_classes import LidarPointCloud
+    # from nuscenes.utils.data_classes import RadarPointCloud
+
+
+
+
+
+
+
+    # def _get_cloud(sd):
+    #   nusc = cls.get_nusc()
+
+    #   target_pose_token = sd['ego_pose_token']
+
+    #   pcl_path = os.path.join(nusc.dataroot, sd['filename'])
+    #   if 'host-a011_lidar1_1233090652702363606.bin' in pcl_path:
+    #     util.log.warn('Lyft Level 5: Kaggle download has a broken file') #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #   if sample_data['sensor_modality'] == 'lidar':
+    #     pc = LidarPointCloud.from_file(pcl_path)
+    #       # NB: In NuScenes, lidar is +y = forward, +x = right, +z = up
+    #   else:
+    #     pc = RadarPointCloud.from_file(pcl_path)
+    #       # NB: In NuScenes, radar is +x = forward, +y = left, +z = up
+
+    #   # Step 1: Points live in the point sensor frame.  First transform to
+    #   # world frame:
+    #   # 1a transform to ego
+    #   # First step: transform the point-cloud to the ego vehicle frame for the
+    #   # timestamp of the sweep.
+    #   cs_record = nusc.get(
+    #                 'calibrated_sensor', sd['calibrated_sensor_token'])
+    #   pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
+    #   pc.translate(np.array(cs_record['translation']))
+
+    #   # 1b transform to the global frame.
+    #   poserecord1 = nusc.get('ego_pose', sd['ego_pose_token'])
+    #   pc.rotate(Quaternion(poserecord1['rotation']).rotation_matrix)
+    #   pc.translate(np.array(poserecord1['translation']))
+
+    #   # Step 2: Send points into the ego frame at the target timestamp
+    #   poserecord2 = nusc.get('ego_pose', target_pose_token)
+    #   pc.translate(-np.array(poserecord2['translation']))
+    #   pc.rotate(Quaternion(poserecord2['rotation']).rotation_matrix.T)
+
+    #   # n_xyz = pc.points[:3, :].T
+    #   #   # Throw out intensity (lidar) and ... other stuff (radar) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #   n_xyz = pc.points.T
+
+    #   add_lidarseg = (cls.INCLUDE_LIDARSEG and 
+    #                     nusc.has_lidarseg() and
+    #                     sd['sensor_modality'] == 'lidar' and
+    #                     sd['is_key_frame'])
+    #   if add_lidarseg:
+    #     sample_record = nusc.get('sample', sd['sample_token'])
+    #     pointsensor_token = sample_record['data'][sd['channel']]
+    #     lidarseg_datum = nusc.get('lidarseg', pointsensor_token)
+    #     lidarseg_labels_filename = os.path.join(
+    #                                       nusc.dataroot,
+    #                                       lidarseg_datum['filename'])
+    #     # Load labels from .bin file.
+    #     labels = np.fromfile(lidarseg_labels_filename, dtype=np.uint8)
+    #     labels = np.reshape(labels, [-1, 1])
+    #     assert n_xyz.shape[0] == labels.shape[0], \
+    #       "Expected one label per point, have %s vs %s" % (
+    #         n_xyz.shape, labels.shape)
+    #     n_xyz = np.hstack([n_xyz, labels])
+      
+    #   return n_xyz.astype(np.float32)
+    
+    
+    # cloud = _get_cloud(sample_data)
+    cloud_factory = lambda: _get_cloud(
+                                sd,
+                                pcl_path,
+                                cs_record,
+                                poserecord1,
+                                poserecord2,
+                                lidarseg_labels_filename)
 
     # if sample_data['sensor_modality'] == 'lidar':
     #   n_xyz = n_xyz[:, [1, 0, 2]]

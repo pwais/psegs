@@ -2577,8 +2577,8 @@ class FusedFlowDFFactory(object):
               pickle.dump(row_out, f, protocol=pickle.HIGHEST_PROTOCOL)
             print('saved pkl to', path)
 
-            thruput_pairs.stop_block(n=1)
-            thruput_pairs.maybe_log_progress(every_n=1)
+          thruput_pairs.stop_block(n=1)
+          thruput_pairs.maybe_log_progress(every_n=1)
 
 
           # cname_to_ci1 = dict((c.sensor_name, c) for c in ci1s)
