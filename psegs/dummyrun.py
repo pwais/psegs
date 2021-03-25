@@ -300,7 +300,6 @@ class NuscSampleDFFactory(SampleDFFactory):
   LIDAR_KEYFRAMES_ONLY = False
   CAMERAS_KEYFRAMES_ONLY = True
   CUBOIDS_KEYFRAMES_ONLY = True
-  GROUP_SAMPLES_BY_KEYFRAME = True
 
   @classmethod
   def build_df_for_segment(cls, spark, segment_uri):
@@ -315,11 +314,6 @@ class NuscSampleDFFactory(SampleDFFactory):
       spark.catalog.dropTempView('nusc_datums')
       datum_df.registerTempTable('nusc_datums')
 
-      sample_id_key = (
-        'uri.extra.`nuscenes-segment-keyframe-offset`'
-        if cls.GROUP_SAMPLES_BY_KEYFRAME else
-        'uri.extra.`nuscenes-segment-sd-offset`')
-
       kf_filter = "AND uri.extra.`nuscenes-is-keyframe` = 'True'"
       pc_kf_filter = kf_filter if cls.LIDAR_KEYFRAMES_ONLY else ''
       ci_kf_filter = kf_filter if cls.CAMERAS_KEYFRAMES_ONLY else ''
@@ -331,7 +325,7 @@ class NuscSampleDFFactory(SampleDFFactory):
             nusc_sample_df
             OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
           SELECT 
-            INT({sample_id_key}) AS sample_id,
+            INT(uri.extra.`nuscenes-sample-offset`) AS sample_id,
             COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
                 FILTER (WHERE uri.topic LIKE '%lidar%' {pc_kf_filter}) AS pc_sds,
             COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
@@ -343,15 +337,10 @@ class NuscSampleDFFactory(SampleDFFactory):
             uri.topic LIKE '%cuboid%' OR
             uri.topic LIKE '%lidar%' OR
             uri.topic LIKE '%camera%'
-          ) AND (
-            camera_image is NULL OR (camera_image.extra.`kitti-360.has-valid-ego-pose` = 'True')
-          ) AND (
-            point_cloud is NULL OR (point_cloud.extra.`kitti-360.has-valid-ego-pose` = 'True')
           )
           GROUP BY sample_id
           ORDER BY sample_id
       """.format(
-        sample_id_key=sample_id_key,
         pc_kf_filter=pc_kf_filter,
         ci_kf_filter=ci_kf_filter,
         cu_kf_filter=cu_kf_filter))

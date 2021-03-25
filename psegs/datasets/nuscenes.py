@@ -752,14 +752,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     # Infer the ordering of sample_datums and keyframes; this helps
     # establish a time-increasing numeric index for users that
     # care about sequences and ordering of Nusc samples and keyframes
-    ordered_sample_datums = sorted(
-                      nusc.iter_sample_data_for_scene(segment_id),
-                      key=lambda sd: sd['timestamp'])
-    sd_token_to_seg_offset = dict(
-      (sd['sample_token'], i) for i, sd in enumerate(ordered_sample_datums))
-    sd_token_to_seg_kf_offset = dict(
-      (sd['sample_token'], i) for i, sd in enumerate(ordered_sample_datums)
-      if sd['is_key_frame'])
+    sample_token_to_offset = cls._build_token_offsets(segment_id)
 
     ## Get sensor data and ego pose
     for sd in nusc.iter_sample_data_for_scene(segment_id):
@@ -781,13 +774,12 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                 'nuscenes-token': 'ego_pose|' + sd['ego_pose_token'],
                 'nuscenes-sample-token': sample_token,
                 'nuscenes-is-keyframe': is_key_frame,
-                'nuscenes-segment-sd-offset': 
-                  str(sd_token_to_seg_offset[sample_token]),
-                'nuscenes-segment-keyframe-offset':
-                  str(sd_token_to_seg_kf_offset.get(sample_token)),
+                'nuscenes-sample-offset': 
+                  str(sample_token_to_offset[sample_token]),
               })
 
-      # Maybe skip the sensor data if we're only doing keyframes
+      # Maybe skip the sensor data (and associated label) if we're only
+      # doing keyframes
       if cls.SENSORS_KEYFRAMES_ONLY:
         if sd['sensor_modality'] and not sd['is_key_frame']:
           continue
@@ -802,10 +794,8 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                 'nuscenes-token': 'sample_data|' + sd['token'],
                 'nuscenes-sample-token': sample_token,
                 'nuscenes-is-keyframe': is_key_frame,
-                'nuscenes-segment-sd-offset': 
-                  str(sd_token_to_seg_offset[sample_token]),
-                'nuscenes-segment-keyframe-offset':
-                  str(sd_token_to_seg_kf_offset.get(sample_token)),
+                'nuscenes-sample-offset': 
+                  str(sample_token_to_offset[sample_token]),
               })
 
       # Get labels (non-keyframes; interpolated one per track)
@@ -822,10 +812,8 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                   'nuscenes-sample-token': sample_token,
                   'nuscenes-is-keyframe': is_key_frame,
                   'nuscenes-label-channel': sd['channel'],
-                  'nuscenes-segment-sd-offset': 
-                    str(sd_token_to_seg_offset[sample_token]),
-                  'nuscenes-segment-keyframe-offset':
-                    str(sd_token_to_seg_kf_offset.get(sample_token)),
+                  'nuscenes-sample-offset': 
+                    str(sample_token_to_offset[sample_token]),
                 })
 
     ## Get labels (keyframes only, but interpolated for each sensor
@@ -856,9 +844,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                     'nuscenes-is-keyframe': 'True',
                     'nuscenes-label-channel': channel,
                     'nuscenes-segment-sd-offset': 
-                      str(sd_token_to_seg_offset[sample_token]),
-                    'nuscenes-segment-keyframe-offset':
-                      str(sd_token_to_seg_kf_offset.get(sample_token)),
+                      str(sample_token_to_offset[sample_token]),
                   })
 
   @classmethod
@@ -886,6 +872,25 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
 
 
   ## Support
+
+  @classmethod
+  def _build_token_offsets(cls, segment_id):
+    nusc = cls.get_nusc()
+    
+    sample_to_ts = {}
+    for sd in nusc.iter_sample_data_for_scene(segment_id):
+      sample_token = sd['sample_token']
+      t = sd['timestamp']
+      if sample_token in sample_to_ts:
+        sample_to_ts[sample_token] = min(sample_to_ts[sample_token], t)
+      else:
+        sample_to_ts[sample_token] = t
+    sample_token_to_offset = dict(
+      (st, i)
+      for i, (st, _) in enumerate(
+        sorted(sample_to_ts.items(), key=lambda kv: kv[0])))
+    
+    return sample_token_to_offset
 
   @classmethod
   def __get_row(cls, uri):

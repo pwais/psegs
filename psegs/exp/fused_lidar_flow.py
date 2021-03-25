@@ -37,6 +37,7 @@ import numpy as np
 def get_point_idx_in_cuboid(cuboid, pc=None, cloud_ego=None):
   import numpy as np
 
+  given = cloud_ego
   if cloud_ego is None:
     assert pc is not None
     cloud = pc.get_cloud()
@@ -177,7 +178,7 @@ class SampleDFFactory(object):
 
 
 
-class FusedLidarCloudTableBase(StampedDatumTableBase):
+class FusedLidarCloudTableBase(object):
   """
   read SD table and emit a topic lidar|objects_fused ; write plys to disk
 
@@ -272,7 +273,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
   @classmethod
   def _get_seg_indx(cls, segment_uri):
     path = cls.obj_cloud_idx_path(segment_uri)
-    if path.exists(path):
+    if path.exists():
       return pd.read_csv(path)
     else:
       return None
@@ -280,8 +281,9 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
   @classmethod
   def _get_track_ids(cls, sample_df):
     from pyspark.sql import functions as F
-    cuboids = sample_df.select(F.explode(F.col('cuboids_sds')))
-    track_id_df = cuboids.select('track_id').distinct()
+    sd_df = sample_df.select(F.explode(F.col('cuboids_sds')))
+    cuboid_df = sd_df.select(F.explode(F.col('col.cuboids')))
+    track_id_df = cuboid_df.select('col.track_id')
     return set(r.track_id for r in track_id_df.collect())
   
   @classmethod
@@ -303,6 +305,7 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
     C_acc = sc.accumulator(Counter(), CounterAccumulator())
 
     def iter_obj_cloud_kv(sample_row):
+      import itertools
       from oarphpy.spark import RowAdapter
       from collections import Counter
       FROM_ROW = RowAdapter.from_row
@@ -313,14 +316,18 @@ class FusedLidarCloudTableBase(StampedDatumTableBase):
 
       cis = []
       if hasattr(sample_row, 'ci_sds'):
-        cis = [FROM_ROW(ci) for ci in sample_row.ci_sds]
-      pcs = [FROM_ROW(pc) for pc in sample_row.pc_sds]
+        cis = [FROM_ROW(rr).camera_image for rr in sample_row.ci_sds]
+      pcs = [FROM_ROW(rr).point_cloud for rr in sample_row.pc_sds]
       cloud_ego = _move_clouds_to_ego_and_concat(pcs, camera_images=cis)
+      print('cloud_ego', cloud_ego.shape, len(pcs))
 
-      cuboids = [
+      cuboid_sds = [
         FROM_ROW(cu) for cu in sample_row.cuboids_sds
-        if cu.track_id in track_ids_to_build
       ]
+      cuboids = list(itertools.chain.from_iterable(
+        (cu for cu in sd.cuboids if cu.track_id in track_ids_to_build)
+        for sd in cuboid_sds))
+
       for cuboid in cuboids:
         in_box, cloud_obj = get_point_idx_in_cuboid(cuboid, cloud_ego=cloud_ego)
         cloud_obj = cloud_obj[in_box]
@@ -2572,9 +2579,11 @@ class FusedFlowDFFactory(object):
 
 
 
-        fused_sd_rdd = cls.FUSED_LIDAR_SD_TABLE.get_segment_datum_rdd(
-                                                    spark, suri)
+        fused_sds = cls.FUSED_LIDAR_SD_TABLE.get_fused_obj_sds(
+                                                    spark, suri, sample_df)
         from pyspark import StorageLevel
+        fused_sd_rdd = spark.sparkContext.parallelize(
+                        fused_sds, numSlices=len(fused_sds))
         fused_sd_rdd = fused_sd_rdd.persist(StorageLevel.DISK_ONLY)
         print('fused_sd_rdd', fused_sd_rdd.count())
         

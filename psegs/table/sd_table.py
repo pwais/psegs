@@ -248,14 +248,8 @@ class StampedDatumTableBase(object):
   @classmethod
   def _sd_rdd_to_sd_df(cls, spark, sd_rdd):
     """ comments ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
-    def my_to_row(x):
-      import time
-      start = time.time()
-      r = StampedDatumTableBase.to_row(x)
-      print('serialize time', r.uri.topic, time.time() - start)
-      return r
     
-    row_rdd = sd_rdd.map(my_to_row)#StampedDatumTableBase.to_row)
+    row_rdd = sd_rdd.map(StampedDatumTableBase.to_row)
     df = spark.createDataFrame(row_rdd, schema=cls.table_schema())
     return df
 
