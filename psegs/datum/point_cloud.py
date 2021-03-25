@@ -177,7 +177,7 @@ class PointCloud(object):
 
   @staticmethod
   def paint_ego_cloud(cloud, camera_images=None):
-    """ TODO """
+    """ TODO comment """
     xyzrgb = np.ones((cloud.shape[0], 3 + 3)) * 128.
     xyzrgb[:, :3] = cloud[:, :3]
 

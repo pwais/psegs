@@ -47,7 +47,7 @@ class SemanticKITTSampleDFFactory(SampleDFFactory):
         return df
 
 class SemanticKITTIFusedWorldCloudTable(FusedLidarCloudTableBase):
-    TASK_DF_FACTORY = SemanticKITTSampleDFFactory
+    FUSED_LIDAR_SD_TABLE = SemanticKITTSampleDFFactory
 
     # SemanticKITTI has no cuboids, so we skip this step.
     HAS_OBJ_CLOUDS = False
@@ -112,7 +112,7 @@ class KITTI360_OurFused_SampleDFFactory(SampleDFFactory):
         return sample_df
 
 class KITTI360_OurFused_WorldCloudTableBase(FusedLidarCloudTableBase):
-  TASK_DF_FACTORY = KITTI360_OurFused_SampleDFFactory
+  FUSED_LIDAR_SD_TABLE = KITTI360_OurFused_SampleDFFactory
 
 class KITTI360_OurFused_FusedFlowDFFactory(FusedFlowDFFactory):
   SAMPLE_DF_FACTORY = KITTI360_OurFused_SampleDFFactory
@@ -377,7 +377,7 @@ class NuscWorldCloudCleaner(WorldCloudCleaner):
 
 
 class NuscWorldCloudTableBase(FusedLidarCloudTableBase):
-  TASK_DF_FACTORY = NuscSampleDFFactory
+  FUSED_LIDAR_SD_TABLE = NuscSampleDFFactory
 
 class NuscFusedFlowDFFactory(FusedFlowDFFactory):
   SAMPLE_DF_FACTORY = NuscSampleDFFactory
@@ -513,10 +513,10 @@ class NuscFusedFlowDFFactory(FusedFlowDFFactory):
 #         return cloud_ego
     
 # class NuscKFOnlyFusedWorldCloudTable(NuscWorldCloudTableBase):
-#     TASK_DF_FACTORY = NuscKFOnlyLCCDFFactory
+#     FUSED_LIDAR_SD_TABLE = NuscKFOnlyLCCDFFactory
 
 # class NuscAllFramesFusedWorldCloudTable(NuscWorldCloudTableBase):
-#     TASK_DF_FACTORY = NuscAllFramesLCCDFFactory
+#     FUSED_LIDAR_SD_TABLE = NuscAllFramesLCCDFFactory
     
 
 # class NuscKeyframesOFlowRenderer(OpticalFlowRenderBase):
