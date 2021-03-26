@@ -2661,9 +2661,9 @@ class FusedFlowDFFactory(object):
 
                   cloud_obj = pc.get_cloud()
 
-                  def render_world(t2c):                  
+                  def render_world(t2c):
                     cuboid = t2c[track_id]
-                    cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj).T
+                    cloud_ego = cuboid.obj_from_ego['ego', 'obj'].apply(cloud_obj[:, :3]).T
                     cloud_world = cuboid.ego_pose.apply(cloud_ego).T
                     return cloud_world
 

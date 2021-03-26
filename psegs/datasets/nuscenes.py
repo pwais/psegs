@@ -1147,10 +1147,10 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                       nusc.get('ego_pose', sample_data['ego_pose_token']),
                       dest_frame='city',
                       src_frame='ego')
-    ego_to_sensor = transform_from_record(
-                      cs_record,
-                      src_frame='ego',
-                      dest_frame=sample_data['channel']) # ?????????????????????????
+    # ego_to_sensor = transform_from_record(
+    #                   cs_record,
+    #                   src_frame='ego',
+    #                   dest_frame=sample_data['channel']) # ?????????????????????????
     
     # real_ego_to_sensor = transform_from_record(
     #                   cs_record,
@@ -1159,15 +1159,14 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
     # print('real_ego_to_sensor', real_ego_to_sensor) ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
             # TODO FIXME
     # TODO save this xform as context ................................................
-    # ego_to_sensor = datum.Transform(
-    #   src_frame='ego', dest_frame=sample_data['channel'])
+    ego_to_sensor = datum.Transform(
+      src_frame='ego', dest_frame=sample_data['channel'])  # why didn't the one above work?
 
     pc = datum.PointCloud(
             sensor_name=sample_data['channel'],
             timestamp=to_nanostamp(sample_data['timestamp']),
             # cloud=cloud,#n_xyz.astype(np.float32),
             cloud_factory=cloud_factory,
-            # motion_corrected=motion_corrected,~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             ego_to_sensor=ego_to_sensor,
             ego_pose=ego_pose,
     )
