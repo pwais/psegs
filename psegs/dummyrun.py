@@ -3,7 +3,7 @@ sys.path.append('/opt/psegs')
 
 import numpy as np
 
-from psegs.exp.fused_lidar_flow import FusedLidarCloudTableBase
+from psegs.exp.fused_lidar_flow import CloudFuser
 from psegs.exp.fused_lidar_flow import SampleDFFactory
 from psegs.exp.fused_lidar_flow import FusedFlowDFFactory
 
@@ -46,7 +46,7 @@ class SemanticKITTSampleDFFactory(SampleDFFactory):
         df = df.persist()
         return df
 
-class SemanticKITTIFusedWorldCloudTable(FusedLidarCloudTableBase):
+class SemanticKITTIFusedWorldCloudTable(CloudFuser):
     FUSED_LIDAR_SD_TABLE = SemanticKITTSampleDFFactory
 
     # SemanticKITTI has no cuboids, so we skip this step.
@@ -111,7 +111,7 @@ class KITTI360_OurFused_SampleDFFactory(SampleDFFactory):
         util.log.info('... done.')
         return sample_df
 
-class KITTI360_OurFused_WorldCloudTableBase(FusedLidarCloudTableBase):
+class KITTI360_OurFused_WorldCloudTableBase(CloudFuser):
   FUSED_LIDAR_SD_TABLE = KITTI360_OurFused_SampleDFFactory
 
 class KITTI360_OurFused_FusedFlowDFFactory(FusedFlowDFFactory):
@@ -276,12 +276,12 @@ from psegs.datasets.nuscenes import NuscStampedDatumTableLabelsAllFrames
 
 class NuscFlowSDTable(NuscStampedDatumTableBase):
   SENSORS_KEYFRAMES_ONLY = False
-  LABELS_KEYFRAMES_ONLY = False
+  LABELS_KEYFRAMES_ONLY = True
   INCLUDE_LIDARSEG = False
 
   @classmethod
   def _get_all_segment_uris(cls):
-    segment_uris = NuscStampedDatumTableBase._get_all_segment_uris()
+    segment_uris = super(cls, NuscFlowSDTable)._get_all_segment_uris()
     
     # Simplify 'train' for 'train-detect' and 'train-track'
     for suri in segment_uris:  
@@ -365,7 +365,7 @@ class NuscWorldCloudCleaner(WorldCloudCleaner):
       return cloud_ego
 
 
-class NuscWorldCloudTableBase(FusedLidarCloudTableBase):
+class NuscWorldCloudTableBase(CloudFuser):
   FUSED_LIDAR_SD_TABLE = NuscSampleDFFactory
 
 class NuscFusedFlowDFFactory(FusedFlowDFFactory):
@@ -375,7 +375,7 @@ class NuscFusedFlowDFFactory(FusedFlowDFFactory):
 
 
 
-# class NuscWorldCloudTableBase(FusedLidarCloudTableBase):
+# class NuscWorldCloudTableBase(CloudFuser):
 #     SPLITS = ['train_detect', 'train_track']
     
 #     @classmethod
@@ -486,7 +486,7 @@ class NuscFusedFlowDFFactory(FusedFlowDFFactory):
 #         print('... done.')
 #         return tasks_df
         
-# class NuscWorldCloudTableBase(FusedLidarCloudTableBase):
+# class NuscWorldCloudTableBase(CloudFuser):
 #     SPLITS = ['train_detect', 'train_track']
     
 #     @classmethod

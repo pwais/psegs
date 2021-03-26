@@ -660,7 +660,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
   
   @classmethod
   def _get_all_segment_uris(cls):
-    nusc = cls.get_nusc()
+    nusc = cls.get_nusc(use_cached=False)
     segment_ids = (s['name'] for s in nusc.scene)
     return [datum.URI(
               dataset=cls.dataset_name(),
@@ -734,11 +734,17 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
   ## Public API
 
   @classmethod
-  def get_nusc(cls):
-    if not hasattr(cls, '_nusc'):
-      cls._nusc = cls.API_CLS(version=cls.NUSC_VERSION, verbose=False)
-    return cls._nusc
-  
+  def get_nusc(cls, use_cached=True):
+    # NB: the nusc handle is not serializable so in some cases we need to
+    # use a fresh handle for Spark interop
+    factory = lambda: cls.API_CLS(version=cls.NUSC_VERSION, verbose=False)
+    if use_cached:
+      if not hasattr(cls, '_nusc'):
+        cls._nusc = factory()
+      return cls._nusc
+    else:
+      return factory()
+
   @classmethod
   def get_segment_ids(cls):
     return sorted(uri.segment_id for uri in cls.get_all_segment_uris())
@@ -843,7 +849,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                     'nuscenes-sample-token': sample_token,
                     'nuscenes-is-keyframe': 'True',
                     'nuscenes-label-channel': channel,
-                    'nuscenes-segment-sd-offset': 
+                    'nuscenes-sample-offset': 
                       str(sample_token_to_offset[sample_token]),
                   })
 
