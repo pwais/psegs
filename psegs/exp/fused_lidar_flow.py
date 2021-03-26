@@ -72,8 +72,8 @@ def _move_clouds_to_ego_and_concat(point_clouds, camera_images=None):
     c_ego = pc.ego_to_sensor.get_inverse().apply(c).T
 
     if camera_images:
-      from psegs.datum.point_cloud import PointCloud
-      c_ego = PointCloud.paint_ego_cloud(c_ego, camera_images=camera_images)
+      from psegs import datum
+      c_ego = datum.PointCloud.paint_ego_cloud(c_ego, camera_images=camera_images)
 
     clouds_ego.append(c_ego)
   if clouds_ego:
@@ -259,10 +259,10 @@ class CloudFuser(object):
               segment_uri.segment_id )
 
   @classmethod
-  def obj_cloud_path(cls, segment_uri, track_id):
+  def obj_cloud_path(cls, segment_uri, tag):
     from slugify import slugify
     base_path = cls.obj_cloud_seg_basepath(segment_uri)
-    fname = 'fused_obj.%s.ply' % slugify(track_id)
+    fname = 'fused_obj.%s.ply' % slugify(tag)
     return base_path / fname
 
   @classmethod
@@ -295,6 +295,13 @@ class CloudFuser(object):
     if not cls.FUSE_OBJ_INCLUDE_RGB:
       sample_df.select('sample_id', 'pc_sds', 'cuboids_sds')
     
+    from pyspark.sql import functions as F
+    sd_df = sample_df.select(F.explode(F.col('cuboids_sds')))
+    cuboid_df = sd_df.select(F.explode(F.col('col.cuboids')))
+    track_df = cuboid_df.select('col.track_id', 'col.category_name')
+    track_id_to_category = dict(
+      (r.track_id, r.category_name) for r in track_df.collect())
+
     from pyspark.accumulators import AccumulatorParam
     from collections import Counter
     class CounterAccumulator(AccumulatorParam):
@@ -382,9 +389,10 @@ class CloudFuser(object):
     idx_rows = []
     for tid_cloud in tid_to_obj_cloud_rdd.toLocalIterator():
       track_id, obj_cloud = tid_cloud
+      category = track_id_to_category[track_id]
 
       n_points = obj_cloud.shape[0]
-      dest_path = cls.obj_cloud_path(segment_uri, track_id)
+      dest_path = cls.obj_cloud_path(segment_uri, track_id + '.' + category)
       oputil.mkdir(dest_path.parent)
       
       if n_points > 0:
@@ -398,6 +406,7 @@ class CloudFuser(object):
 
       idx_row = {
         'track_id': str(track_id),
+        'category': category,
         'n_points': n_points,
         'cloud_shape': obj_cloud.shape,
         'cloud_MBytes': 1e-6 * oputil.get_size_of_deep(obj_cloud),
@@ -2476,8 +2485,14 @@ class FusedFlowDFFactory(object):
   @classmethod
   def build(cls, spark=None, only_segments=None):
     with Spark.sess(spark) as spark:
-      segment_uris = only_segments or cls.SRC_SD_T().get_all_segment_uris()
-      
+      segment_uris = cls.SRC_SD_T().get_all_segment_uris()
+      if only_segments:
+        only_segments = [datum.URI.from_str(s) for s in only_segments]
+        segment_uris = [
+          suri for suri in segment_uris
+          if any(s.soft_matches_segment(suri) for s in only_segments)
+        ]
+
       for suri in segment_uris:
         sample_df = cls.SAMPLE_DF_FACTORY.build_df_for_segment(spark, suri)
         print('sample_df size', sample_df.count())
@@ -2746,7 +2761,7 @@ class FusedFlowDFFactory(object):
             print('final uvd_viz1_uvd_viz2', uvd_viz1_uvd_viz2.shape)
 
             base_path = '/opt/psegs/test_run_output/'
-            fname = 'refactor_%s_%s.png' % (row.flow_pair_id, sensor_name)
+            fname = 'refactor_%s_%s_%s.png' % (suri.segment_id, row.flow_pair_id, sensor_name)
             debug = viz_oflow_pair(ci1, ci2, uvd_viz1_uvd_viz2)
             import imageio
             imageio.imwrite(base_path + fname, debug)
@@ -2779,7 +2794,8 @@ class FusedFlowDFFactory(object):
               # * --> just the cuboid URIs?
               # * info that will let us trace a xyz point over frames / time ? ...
 
-            path = os.path.join(base_path, 'refactor_%s_%s_oflow.pkl' % (row.flow_pair_id, sensor_name))
+            path = os.path.join(base_path, 'refactor_%s_%s_%s_oflow.pkl' % (
+              suri.segment_id, row.flow_pair_id, sensor_name))
             import pickle
             with open(path, 'wb') as f:
               pickle.dump(row_out, f, protocol=pickle.HIGHEST_PROTOCOL)

@@ -78,7 +78,7 @@ class KITTI360_OurFused_SampleDFFactory(SampleDFFactory):
         datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
         datum_df.registerTempTable('datums')
         
-        util.log.info('Building sample table for %s ...' % segment_uri.segment_id)
+        util.log.info('Building sample table for %s ...' % segment_uri)
         
         spark.catalog.dropTempView('kitti360_sample_df')
         spark.sql("""
@@ -138,7 +138,7 @@ class KITTI360_KITTIFused_SampleDFFactory(SampleDFFactory):
         from psegs import util
         
         util.log.info(
-          'Building sample table for %s ...' % segment_uri.segment_id)
+          'Building sample table for %s ...' % segment_uri)
 
         datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
         # datum_df = datum_df.persist()
@@ -306,7 +306,7 @@ class NuscSampleDFFactory(SampleDFFactory):
       from psegs import util
       
       util.log.info(
-        'Building sample table for %s ...' % segment_uri.segment_id)
+        'Building sample table for %s ...' % segment_uri)
 
       datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
         # datum_df = datum_df.persist()
@@ -527,7 +527,7 @@ if __name__ == '__main__':
   R = NuscFusedFlowDFFactory
 
   seg_uris = R.SRC_SD_T().get_all_segment_uris()
-  R.build(spark=spark, only_segments=[seg_uris[0]])
+  R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
 
 
 
