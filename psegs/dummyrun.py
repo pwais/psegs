@@ -320,8 +320,8 @@ class NuscSampleDFFactory(SampleDFFactory):
 
       all_topics = datum_df.select('uri.topic').distinct().collect()
       all_topics = [r[0] for r in all_topics]
-      lidar_topics = [t for t in all_topics if 'lidar' in t]
-      camera_topics = [t for t in all_topics if 'camera' in t]
+      lidar_topics = sorted(t for t in all_topics if 'lidar' in t)
+      camera_topics = sorted(t for t in all_topics if 'camera' in t)
       
       from pyspark.sql import Row
       samples_by_time = spark.sql("""
@@ -502,8 +502,8 @@ class NuscWorldCloudCleaner(WorldCloudCleaner):
       # But have not filtered out ego self-returns
       cloud_ego = cloud_ego[np.where(  ~(
                       (cloud_ego[:, 0] <= 1.5) & (cloud_ego[:, 0] >= -1.5) &  # Nusc lidar +x is +right
-                      (cloud_ego[:, 1] <= 2.5) & (cloud_ego[:, 0] >= -2.5) &  # Nusc lidar +y is +forward
-                      (cloud_ego[:, 1] <= 1.5) & (cloud_ego[:, 0] >= -1.5)    # Nusc lidar +z is +up
+                      (cloud_ego[:, 1] <= 3) & (cloud_ego[:, 0] >= -3) &  # Nusc lidar +y is +forward
+                      (cloud_ego[:, 1] <= 2.5) & (cloud_ego[:, 0] >= -2.5)    # Nusc lidar +z is +up
       ))]
       return cloud_ego
 
@@ -671,7 +671,7 @@ if __name__ == '__main__':
 
   seg_uris = R.SRC_SD_T().get_all_segment_uris()
   # R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
-  R.build(spark=spark, only_segments=seg_uris[0:1])
+  R.build(spark=spark, only_segments=seg_uris[:10])
 
 
 
