@@ -53,7 +53,7 @@ def get_point_idx_in_cuboid(cuboid, pc=None, cloud_ego=None):
 #     print(cuboid.track_id, 'cuboid.obj_from_ego', cuboid.obj_from_ego.translation, 'cloud_obj', np.mean(cloud_obj, axis=0))
   
   # Filter to just object
-  hl, hw, hh = .5 * cuboid.length_meters, .5 * cuboid.width_meters, .5 * cuboid.height_meters
+  hl, hw, hh = .5 * cuboid.length_meters + 3, .5 * cuboid.width_meters+ 3, .5 * cuboid.height_meters+ 3
   in_box = (#np.where(
       (cloud_obj[:, 0] >= -hl) & (cloud_obj[:, 0] <= hl) &
       (cloud_obj[:, 1] >= -hw) & (cloud_obj[:, 1] <= hw) &
@@ -84,6 +84,8 @@ def _move_clouds_to_ego_and_concat(point_clouds, camera_images=None):
     else:
       cloud_ego = np.zeros((0, 3))
   return cloud_ego
+
+
 
 # def iter_cleaned_world_clouds(SD_Table, task):
 #     pcs = [T.from_row(rr) for rr in task.pcs]
@@ -2584,6 +2586,8 @@ class FusedFlowDFFactory(object):
             WHERE
               SIZE(cuci_1.ci_sds) > 0 AND
               SIZE(cuci_2.ci_sds) > 0 AND
+              cuci_1.sample_id >= 0 AND
+              cuci_2.sample_id >= 0 AND
               ( {task_id_join_clause} ) {sample_id_filter_clause}
             ORDER BY RAND(1337)
           """.format(

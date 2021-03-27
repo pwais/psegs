@@ -276,7 +276,7 @@ from psegs.datasets.nuscenes import NuscStampedDatumTableLabelsAllFrames
 
 class NuscFlowSDTable(NuscStampedDatumTableBase):
   SENSORS_KEYFRAMES_ONLY = False
-  LABELS_KEYFRAMES_ONLY = True
+  LABELS_KEYFRAMES_ONLY = False
   INCLUDE_LIDARSEG = False
 
   @classmethod
@@ -295,11 +295,17 @@ class NuscSampleDFFactory(SampleDFFactory):
 
   # For NuScenes, labels (and keyframes) are only available at 2Hz and are
   # otherwise interpolated. The lidar scans at 2x the frequence of the cameras.
-  # For best alignment, we fuse all lidar clouds, but only render flow
-  # for keyframes.
-  LIDAR_KEYFRAMES_ONLY = False
-  CAMERAS_KEYFRAMES_ONLY = True
-  CUBOIDS_KEYFRAMES_ONLY = True
+  # For best label alignment, we:
+  # * Create some sample groups just for fusion (loose camera-lidar
+  #      constraints for decent lidar painting).
+  # * Create sample groups for rendering with only exact label-sensor alignment.
+  # You can control which sensors are grouped for rendering below.
+  GROUP_LIDAR_FOR_RENDERING = False
+  GROUP_CAMERAS_FOR_RENDERING = True
+  INCLUDE_LOOSE_LIDAR_CAMERA_FOR_FUSION = True
+  LOOSE_FUSION_TIME_WINDOW_SEC = 0.1
+
+  SAMPLE_IDS_BETWEEN_SENSORS = 10000
 
   @classmethod
   def build_df_for_segment(cls, spark, segment_uri):
@@ -309,45 +315,179 @@ class NuscSampleDFFactory(SampleDFFactory):
         'Building sample table for %s ...' % segment_uri)
 
       datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
-        # datum_df = datum_df.persist()
-        
       spark.catalog.dropTempView('nusc_datums')
       datum_df.registerTempTable('nusc_datums')
 
-      kf_filter = "AND uri.extra.`nuscenes-is-keyframe` = 'True'"
-      pc_kf_filter = kf_filter if cls.LIDAR_KEYFRAMES_ONLY else ''
-      ci_kf_filter = kf_filter if cls.CAMERAS_KEYFRAMES_ONLY else ''
-      cu_kf_filter = kf_filter if cls.CUBOIDS_KEYFRAMES_ONLY else ''
-
-      spark.catalog.dropTempView('nusc_sample_df')
-      spark.sql("""
-          CACHE TABLE 
-            nusc_sample_df
-            OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
-          SELECT 
-            INT(uri.extra.`nuscenes-sample-offset`) AS sample_id,
-            COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
-                FILTER (WHERE uri.topic LIKE '%lidar%' {pc_kf_filter}) AS pc_sds,
-            COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
-                FILTER (WHERE uri.topic LIKE '%cuboid%' {cu_kf_filter}) AS cuboids_sds,
-            COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
-                FILTER (WHERE uri.topic LIKE '%camera%' {ci_kf_filter}) AS ci_sds
+      all_topics = datum_df.select('uri.topic').distinct().collect()
+      all_topics = [r[0] for r in all_topics]
+      lidar_topics = [t for t in all_topics if 'lidar' in t]
+      camera_topics = [t for t in all_topics if 'camera' in t]
+      
+      from pyspark.sql import Row
+      samples_by_time = spark.sql("""
+        SELECT
+          uri.extra.`nuscenes-sample-token` AS sample_token,
+          MIN(uri.timestamp) AS first_time
           FROM nusc_datums
-          WHERE (
-            uri.topic LIKE '%cuboid%' OR
-            uri.topic LIKE '%lidar%' OR
-            uri.topic LIKE '%camera%'
-          )
-          GROUP BY sample_id
-          ORDER BY sample_id
-      """.format(
-        pc_kf_filter=pc_kf_filter,
-        ci_kf_filter=ci_kf_filter,
-        cu_kf_filter=cu_kf_filter))
-        
-      sample_df = spark.sql('SELECT * FROM nusc_sample_df')
-      util.log.info('... done.')
+          GROUP BY sample_token
+        """).collect()
+      samples_by_time = sorted(samples_by_time, key=lambda r: r.first_time)
+      samples = [
+        Row(sample_n=n, sample_token=r.sample_token)
+        for n, r in enumerate(samples_by_time)
+      ]
+      spark.catalog.dropTempView('nusc_samples')
+      nusc_samples_df = spark.createDataFrame(samples)
+      nusc_samples_df.registerTempTable('nusc_samples')
+      util.log.info("... have %s Nusc samples ..." % nusc_samples_df.count())
+
+
+      ## Fusion Samples
+      fusion_dfs = []
+      sample_id_base = -1
+      if cls.INCLUDE_LOOSE_LIDAR_CAMERA_FOR_FUSION:
+        lidar_times_df = spark.sql("""
+          SELECT
+            uri.topic AS lidar_topic,
+            uri.timestamp AS lidar_time 
+          FROM nusc_datums
+          WHERE uri.topic like '%lidar%'
+          """)
+        spark.catalog.dropTempView('nusc_lidar_times_df')
+        lidar_times_df.registerTempTable('nusc_lidar_times_df')
+        util.log.info(
+          "... adding %s lidar clouds for rendering only ..." % (
+            lidar_times_df.count(),))
+
+        fusion_df = spark.sql("""
+              SELECT 
+                -1 * lidar_time AS sample_id,
+                COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
+                    FILTER (WHERE uri.topic LIKE '%lidar%') AS pc_sds,
+                COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
+                    FILTER (WHERE uri.topic LIKE '%cuboid%') AS cuboids_sds,
+                COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
+                    FILTER (WHERE uri.topic LIKE '%camera%') AS ci_sds
+              FROM nusc_datums, nusc_lidar_times_df
+              WHERE
+                (
+                  uri.topic = nusc_lidar_times_df.lidar_topic AND
+                  uri.timestamp = nusc_lidar_times_df.lidar_time
+                ) OR
+                (
+                  uri.topic LIKE '%cuboid%' AND
+                  uri.timestamp = nusc_lidar_times_df.lidar_time AND
+                  uri.extra.`nuscenes-label-channel` = 
+                            SUBSTRING(
+                              nusc_lidar_times_df.lidar_topic,
+                              LENGTH('lidar|') + 1,
+                              100)
+                ) OR
+                (
+                  uri.topic LIKE '%camera%' AND
+                  nusc_lidar_times_df.lidar_time - {buf} <= uri.timestamp AND
+                  uri.timestamp <= nusc_lidar_times_df.lidar_time + {buf}
+                )
+              GROUP BY sample_id
+          """.format(
+            buf=int(1e9 * cls.LOOSE_FUSION_TIME_WINDOW_SEC)))
+        fusion_dfs.append(fusion_df.persist())
+
+      ## Render Samples
+      render_dfs = []
+      sample_id_base = 0
+      topics_to_render = []
+      if cls.GROUP_LIDAR_FOR_RENDERING:
+        topics_to_render += lidar_topics
+      if cls.GROUP_CAMERAS_FOR_RENDERING:
+        topics_to_render += camera_topics
+      for topic in topics_to_render:
+        sample_id_base += cls.SAMPLE_IDS_BETWEEN_SENSORS
+        if 'camera' in topic:
+          channel = topic[len('camera|'):]
+        elif 'lidar' in topic:
+          channel = topic[len('lidar|'):]
+        else:
+          raise ValueError(topic)
+
+        topics_clause = """
+            (uri.topic LIKE '%cuboid%' OR uri.topic = '{topic}')
+          """.format(topic=topic)
+
+        util.log.info(
+          "... adding rendering for %s with sample id base %s ..." % (
+            topic, sample_id_base))
+        render_df = spark.sql("""
+              SELECT 
+                {sample_id_base} + nusc_samples.sample_n AS sample_id,
+                COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
+                    FILTER (WHERE uri.topic LIKE '%lidar%') AS pc_sds,
+                COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
+                    FILTER (
+                      WHERE uri.topic LIKE '%cuboid%' AND
+                            uri.extra.`nuscenes-label-channel` = '{channel}'
+                      ) AS cuboids_sds,
+                COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
+                    FILTER (WHERE uri.topic LIKE '%camera%') AS ci_sds
+              FROM nusc_datums, nusc_samples
+              WHERE
+                uri.extra.`nuscenes-sample-token` = nusc_samples.sample_token AND
+                {topics_clause} AND
+                uri.extra.`nuscenes-is-keyframe` = 'True'
+              GROUP BY sample_id
+          """.format(
+            sample_id_base=sample_id_base,
+            channel=channel,
+            topics_clause=topics_clause))
+        render_dfs.append(render_df.persist())
+      assert render_dfs, "Nothing to render?"
+
+      from oarphpy import spark as S
+      all_dfs = render_dfs + fusion_dfs
+      sample_df = S.union_dfs(*all_dfs)
+      util.log.info('... done building %s dataframes.' % len(all_dfs))
       return sample_df
+
+
+      # if cls.GROUP_CAMERAS_FOR_RENDERING:
+
+
+      # kf_filter = "AND uri.extra.`nuscenes-is-keyframe` = 'True'"
+      # pc_kf_filter = kf_filter if cls.LIDAR_KEYFRAMES_ONLY else ''
+      # ci_kf_filter = kf_filter if cls.CAMERAS_KEYFRAMES_ONLY else ''
+      # cu_kf_filter = kf_filter if cls.CUBOIDS_KEYFRAMES_ONLY else ''
+
+      # spark.catalog.dropTempView('nusc_sample_df')
+      # spark.sql("""
+      #     CACHE TABLE 
+      #       nusc_sample_df
+      #       OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
+      #     SELECT 
+      #       INT(uri.extra.`nuscenes-sample-offset`) AS sample_id,
+      #       COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
+      #           FILTER (WHERE uri.topic LIKE '%lidar%' {pc_kf_filter}) AS pc_sds,
+      #       COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
+      #           FILTER (WHERE uri.topic LIKE '%cuboid%' {cu_kf_filter}) AS cuboids_sds,
+      #       COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
+      #           FILTER (WHERE uri.topic LIKE '%camera%' {ci_kf_filter}) AS ci_sds
+      #     FROM nusc_datums
+      #     WHERE (
+      #       uri.topic LIKE '%cuboid%' OR
+      #       uri.topic LIKE '%lidar%' OR
+      #       uri.topic LIKE '%camera%'
+      #     )
+      #     GROUP BY sample_id
+      #     ORDER BY sample_id
+      # """.format(
+      #   pc_kf_filter=pc_kf_filter,
+      #   ci_kf_filter=ci_kf_filter,
+      #   cu_kf_filter=cu_kf_filter))
+
+      # import pdb; pdb.set_trace()
+
+      # sample_df = spark.sql('SELECT * FROM nusc_sample_df')
+      # util.log.info('... done.')
+      # return sample_df
 
 from psegs.exp.fused_lidar_flow import WorldCloudCleaner
 class NuscWorldCloudCleaner(WorldCloudCleaner):
@@ -366,7 +506,7 @@ class NuscWorldCloudCleaner(WorldCloudCleaner):
 
 
 class NuscWorldCloudTableBase(CloudFuser):
-  FUSED_LIDAR_SD_TABLE = NuscSampleDFFactory
+  pass
 
 class NuscFusedFlowDFFactory(FusedFlowDFFactory):
   SAMPLE_DF_FACTORY = NuscSampleDFFactory
@@ -527,7 +667,8 @@ if __name__ == '__main__':
   R = NuscFusedFlowDFFactory
 
   seg_uris = R.SRC_SD_T().get_all_segment_uris()
-  R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
+  # R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
+  R.build(spark=spark, only_segments=seg_uris[0:1])
 
 
 
