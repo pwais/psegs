@@ -53,7 +53,7 @@ def get_point_idx_in_cuboid(cuboid, pc=None, cloud_ego=None):
 #     print(cuboid.track_id, 'cuboid.obj_from_ego', cuboid.obj_from_ego.translation, 'cloud_obj', np.mean(cloud_obj, axis=0))
   
   # Filter to just object
-  hl, hw, hh = .5 * cuboid.length_meters + 3, .5 * cuboid.width_meters+ 3, .5 * cuboid.height_meters+ 3
+  hl, hw, hh = .5 * cuboid.length_meters, .5 * cuboid.width_meters, .5 * cuboid.height_meters
   in_box = (#np.where(
       (cloud_obj[:, 0] >= -hl) & (cloud_obj[:, 0] <= hl) &
       (cloud_obj[:, 1] >= -hw) & (cloud_obj[:, 1] <= hw) &
@@ -2382,6 +2382,8 @@ class FusedFlowDFFactory(object):
           return Row(**rowdata)
 
     licu_df = sample_df.select('sample_id', 'pc_sds', 'cuboids_sds')
+    licu_df = licu_df.filter("SIZE(pc_sds) > 0")
+    assert licu_df.count() > 0
     # licu_df = licu_df.repartition(
     #             10 * licu_df.rdd.getNumPartitions(), 'sample_id')
 

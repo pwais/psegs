@@ -445,7 +445,10 @@ class NuscSampleDFFactory(SampleDFFactory):
       from oarphpy import spark as S
       all_dfs = render_dfs + fusion_dfs
       sample_df = S.union_dfs(*all_dfs)
-      util.log.info('... done building %s dataframes.' % len(all_dfs))
+      n_samples = sample_df.count()
+      util.log.info(
+        '... done building %s dataframes for %s total samples.' % (
+          len(all_dfs), n_samples))
       return sample_df
 
 
