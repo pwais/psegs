@@ -132,7 +132,7 @@ def test_nuscenes_trainval_stats():
   # import ipdb; ipdb.set_trace()
 
 def test_nuscenes_fused_lidar():
-  samples = ['psegs://dataset=nuscenes&split=train_track&segment_id=scene-0594']
+  samples = ['psegs://segment_id=scene-0594']
   suri = samples[0]
 
   T = psnusc.NuscStampedDatumTableBase
@@ -140,12 +140,22 @@ def test_nuscenes_fused_lidar():
     datum_rdd = T.get_segment_datum_rdd(spark, suri)
     datum_rdd = datum_rdd.cache()
 
+    # import ipdb; ipdb.set_trace()
+
     lidar_rdd = datum_rdd.filter(lambda sd: 'lidar' in sd.uri.topic)
     def to_world_cloud(sd):
       pc = sd.point_cloud
-      world_from_sensor = (
-        pc.ego_pose.get_inverse() @ pc.ego_to_sensor.get_inverse())
-      return world_from_sensor.apply(pc.cloud).T
+
+      cloud = pc.get_cloud()[:, :3] # TODO: can we keep colors?
+      cloud_ego = pc.ego_to_sensor.get_inverse().apply(cloud).T
+    
+      T_world_to_ego = pc.ego_pose
+      cloud_world = T_world_to_ego.apply(cloud_ego).T
+      return cloud_world
+
+      # world_from_sensor = (
+      #   pc.ego_pose.get_inverse() @ pc.ego_to_sensor.get_inverse())
+      # return world_from_sensor.apply(pc.get_cloud()[:, :3]).T
     clouds = lidar_rdd.map(to_world_cloud).collect()
 
     import numpy as np

@@ -391,7 +391,7 @@ class NuscSampleDFFactory(SampleDFFactory):
               GROUP BY sample_id
           """.format(
             buf=int(1e9 * cls.LOOSE_FUSION_TIME_WINDOW_SEC)))
-        fusion_dfs.append(fusion_df.persist())
+        fusion_dfs.append(fusion_df)
 
       ## Render Samples
       render_dfs = []
@@ -439,13 +439,15 @@ class NuscSampleDFFactory(SampleDFFactory):
             sample_id_base=sample_id_base,
             channel=channel,
             topics_clause=topics_clause))
-        render_dfs.append(render_df.persist())
+        render_dfs.append(render_df)
       assert render_dfs, "Nothing to render?"
 
       from oarphpy import spark as S
       all_dfs = render_dfs + fusion_dfs
       sample_df = S.union_dfs(*all_dfs)
       n_samples = sample_df.count()
+      sample_df = sample_df.coalesce(max(10, n_samples // 10))
+      sample_df = sample_df.persist()
       util.log.info(
         '... done building %s dataframes for %s total samples.' % (
           len(all_dfs), n_samples))
@@ -671,7 +673,7 @@ if __name__ == '__main__':
 
   seg_uris = R.SRC_SD_T().get_all_segment_uris()
   # R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
-  R.build(spark=spark, only_segments=seg_uris[:10])
+  R.build(spark=spark, only_segments=seg_uris[10:20])
 
 
 
