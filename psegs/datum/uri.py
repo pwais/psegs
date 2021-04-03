@@ -127,13 +127,22 @@ class URI(object):
             split=self.split,
             segment_id=self.segment_id)
   
-  def soft_matches_segment(self, other):
+  def soft_matches_segment_of(self, other):
     """Return true only if this URI soft-matches the segment_id, dataset,
     and/or split of URI `other`.  A soft match allows us to wildcard ('*')
     the one or all of the three components that define a distinct segment.
     Note that while most datasets have globally distinct segment_id
     names, this contraint isn't guaranteed; e.g. a segment_id name might 
-    appear in more than one split (by error or by intention)."""
+    appear in more than one split (by error or by intention).
+    
+    For example:
+      psegs://segment_id=s soft matches with psegs://segment_id=s&dataset=d
+    BUT
+      psegs://dataset=d&segment_id=s 
+        DOES NOT
+      soft match with psegs://segment_id=s 
+
+    """
     return (
       ((not self.segment_id) or (self.segment_id == other.segment_id)) and
       ((not self.dataset) or (self.dataset == other.dataset)) and
@@ -149,8 +158,8 @@ class URI(object):
           yield (k, v)
 
     toks = itertools.chain.from_iterable(
-      to_tokens(attr, getattr(self, attr))
-      for attr in self.__slots__)
+      to_tokens(f.name, getattr(self, f.name))
+      for f in attr.fields(self.__class__))
     return tuple(toks)
 
   def to_str(self):
@@ -165,6 +174,20 @@ class URI(object):
   
   def __str__(self):
     return self.to_str()
+  
+  # def __hash__(self):
+  #   # NB: read attrs warnings: https://www.attrs.org/en/stable/hashing.html#fn1
+  #   # Consequences here:
+  #   # * We get URIs to hash like their tuple/string encoding, which is what
+  #   #    we want.
+  #   # * We do this instead of frozen=True so that URIs can be updated in-place
+  #   #    (e.g. via oarphpy.spark.RowAdapter.from_row(), or updating `.extra`).
+  #   #    Furthermore, frozen=True doesn't prevent updates inside mutable 
+  #   #    members anyways.
+  #   # * URIs will probaby never be mutated *after* being inserted into a 
+  #   #     container, thus the update-causes-silent-hash-bugs issue is likely
+  #   #     a rare edge case.
+  #   return hash(self.as_tuple())
 
   # def __repr__(self):
   #   kvs = ((attr, getattr(self, attr)) for attr in self.__slots__)

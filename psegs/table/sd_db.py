@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
+
+import attr
+
 from psegs import util
 from psegs.datum.uri import URI
 from psegs.table.sd_table import StampedDatumTableBase
 from psegs.datum.stamped_datum import Sample
 
 
+URI_ATTRNAMES = set(a.name for a in attr.fields(URI))
 
 def to_seg_uri_str(obj):
   import six
@@ -26,13 +31,24 @@ def to_seg_uri_str(obj):
   elif isinstance(obj, six.string_types):
     uri = URI.from_str(obj)
   elif hasattr(obj, 'asDict'):
-    uri = URI(**obj.asDict())
+    d = dict(
+      (k, v)
+      for k, v in obj.asDict().items()
+      if k in URI_ATTRNAMES)
+    uri = URI(**d)
   else:
     raise ValueError("Can't convert %s" % (obj,))
   return str(uri.to_segment_uri())
 
+class NoKnownTable(Exception):
+  pass
 
 class StampedDatumDB(object):
+  """
+
+  TODO rename this UnionTable or something and put with sd_table
+
+  """
 
   # @classmethod
   # def all_tables(cls):
@@ -70,7 +86,7 @@ class StampedDatumDB(object):
 
   def __init__(self, tables=[], spark=None):
     self._tables = tables
-    self._segments = set()
+    self._segments = []
     self._df = None
     self._spark = spark
   
@@ -87,24 +103,22 @@ class StampedDatumDB(object):
       from oarphpy.spark import union_dfs
       self._df = union_dfs(self._df, datum_df)
       
-    self._segments.add(str(seg_uri))
+    self._segments.append(seg_uri)
     util.log.info("Added DF for %s" % seg_uri)
       
   def _build_datum_df(self, uri, spark=None):
     spark = self._spark or spark
     suri = URI.from_str(uri).to_segment_uri()
-    ssuri = str(suri)
     
     T = None
     for table in self._tables:
-      seg_uris = table.get_all_segment_uris()
-      print('seg_uris', seg_uris)
-      if any(ssuri == str(s) for s in seg_uris):
+      t_seg_uris = table.get_all_segment_uris()
+      if any(suri.soft_matches_segment_of(tu) for tu in t_seg_uris):
         T = table
         break
         
     if T is None:
-      raise ValueError("No known table for %s" % uri)
+      raise NoKnownTable("No known table for %s in %s" % (uri, self._tables))
     
     util.log.info("Building DF for %s" % uri)
     datum_df = T.get_segment_datum_df(spark, suri)
@@ -113,27 +127,44 @@ class StampedDatumDB(object):
   def _maybe_add_segment(self, uri, spark=None):
     spark = self._spark or spark
     suri = URI.from_str(uri).to_segment_uri()
-    ssuri = str(suri)
-    
-    if ssuri not in self._segments:
+    if not any(suri.soft_matches_segment_of(u) for u in self._segments):
       datum_df = self._build_datum_df(uri, spark=spark)
       self._add_datum_df(datum_df, seg_uri=suri)
   
   @staticmethod
   def select_datum_df_from_uris(uris, datum_df):
+    # Compile `uris` into the query itself for maximum speed
+    
     import pyspark.sql.functions as F
     from functools import reduce
+
+    def _to_match(uri):
+      toks = []
+      if uri.dataset:
+        toks += [F.col('uri.dataset') == uri.dataset]
+      if uri.split:
+        toks += [F.col('uri.split') == uri.split]
+      if uri.segment_id:
+        toks += [F.col('uri.segment_id') == uri.segment_id]
+      if uri.topic:
+        # Topic implies both topic and timestamp are valid
+        toks += [
+          F.col('uri.topic') == uri.topic,
+          F.col('uri.timestamp') == uri.timestamp
+        ]
+      
+      return reduce(lambda a, b: a & b, toks)
+      
+    # Construct SELECT * FROM T WHERE uri = uri1 OR uri = uri2 OR ...
+    print(reduce(
+            lambda a, b: a | b,
+            (_to_match(uri) for uri in uris)
+          ))
     df = datum_df.where(
           reduce(
-            lambda a, b: a | b, (
-            (
-              (F.col('uri.dataset') ==      uri.dataset) & 
-              (F.col('uri.split') ==        uri.split) & 
-              (F.col('uri.segment_id') ==   uri.segment_id) & 
-              (F.col('uri.topic') ==        uri.topic) & 
-              (F.col('uri.timestamp') ==    uri.timestamp)
-            )
-            for uri in uris)))
+            lambda a, b: a | b,
+            (_to_match(uri) for uri in uris)
+          ))
     return df
 
   @staticmethod
@@ -155,9 +186,11 @@ class StampedDatumDB(object):
     return StampedDatumDB.select_datum_df_from_uri_df(uri_df, datum_df)
 
   def get_sample(self, uri, spark=None):
+    uri = URI.from_str(uri)
     self._maybe_add_segment(uri, spark=spark)
     
-    datum_df = self.get_datum_df(uris=[uri], spark=spark)
+    uris = uri.get_datum_uris() or [uri]
+    datum_df = self.get_datum_df(uris=uris, spark=spark)
     datum_rdd = StampedDatumTableBase.sd_df_to_rdd(datum_df)
     return Sample(uri=uri, datums=datum_rdd.collect())
 
@@ -187,4 +220,12 @@ class StampedDatumDB(object):
     else:
       seg_uris = list(set(to_seg_uri_str(u) for u in uris))
       _ensure_have_data(seg_uris)
+
+      uris = [URI.from_str(u) for u in uris]
+      uris = list(itertools.chain.from_iterable(
+        (u.get_datum_uris() or [u])
+        for u in uris
+      ))
+      print('urisuris', uris)
+      
       return StampedDatumDB.select_datum_df_from_uris(uris, self._df)

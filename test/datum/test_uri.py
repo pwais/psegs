@@ -141,7 +141,7 @@ def test_uri_soft_match():
   def soft_matches(left, right):
     left = URI.from_str(left)
     right = URI.from_str(right)
-    return left.soft_matches_segment(right)
+    return left.soft_matches_segment_of(right)
   
   # Empty URI is a wildcard match for any
   assert soft_matches(
@@ -182,6 +182,9 @@ def test_uri_soft_match():
   assert not soft_matches(
             'psegs://dataset=d&segment_id=s1',
             'psegs://dataset=d')
+  assert not soft_matches(
+            'psegs://dataset=d&segment_id=s1',
+            'psegs://segment_id=s1')
   assert not soft_matches(
             'psegs://split=s&segment_id=s1',
             'psegs://split=s')

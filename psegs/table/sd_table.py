@@ -37,7 +37,7 @@ class StampedDatumTableBase(object):
   
   @classmethod
   def get_all_segment_uris(cls):
-    return cls._get_all_segment_uris()
+    return [URI.from_str(u) for u in cls._get_all_segment_uris()]
 
   @classmethod
   def build(cls, spark=None, only_segments=None):
