@@ -2792,6 +2792,7 @@ class FusedFlowDFFactory(object):
               'ci1_uri': ci_sd1.uri,
               'ci2_uri': ci_sd1.uri,
               'uvdij1_visible_uvdij2_visible': uvd_viz1_uvd_viz2,
+                # TODO rename, ij part is gone ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
               'v2v_flow': v2v_flow,
             }
               # want for eval:

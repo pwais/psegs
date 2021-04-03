@@ -25,8 +25,10 @@ def to_seg_uri_str(obj):
     uri = obj
   elif isinstance(obj, six.string_types):
     uri = URI.from_str(obj)
-  elif hasattr(obj, '__dict__'):
-    uri = URI(**obj.__dict__)
+  elif hasattr(obj, 'asDict'):
+    uri = URI(**obj.asDict())
+  else:
+    raise ValueError("Can't convert %s" % (obj,))
   return str(uri.to_segment_uri())
 
 
@@ -96,7 +98,8 @@ class StampedDatumDB(object):
     T = None
     for table in self._tables:
       seg_uris = table.get_all_segment_uris()
-      if ssuri in set(str(s) for s in seg_uris):
+      print('seg_uris', seg_uris)
+      if any(ssuri == str(s) for s in seg_uris):
         T = table
         break
         
@@ -173,7 +176,7 @@ class StampedDatumDB(object):
                 spark or self._spark,
                 uri_rdd,
                 self._df)
-    elif hasattr(uris, '_rdd'):
+    elif hasattr(uris, 'rdd'):
       uri_df = uris
       uri_df = uri_df.select('dataset', 'split', 'segment_id').distinct()
       seg_uris = uri_df.rdd.map(to_seg_uri_str).distinct().collect()

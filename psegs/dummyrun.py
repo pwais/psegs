@@ -445,9 +445,10 @@ class NuscSampleDFFactory(SampleDFFactory):
       from oarphpy import spark as S
       all_dfs = render_dfs + fusion_dfs
       sample_df = S.union_dfs(*all_dfs)
-      n_samples = sample_df.count()
-      sample_df = sample_df.coalesce(max(10, n_samples // 10))
+      sample_df = sample_df.repartition('sample_id')
       sample_df = sample_df.persist()
+      
+      n_samples = sample_df.count()
       util.log.info(
         '... done building %s dataframes for %s total samples.' % (
           len(all_dfs), n_samples))
@@ -666,80 +667,85 @@ if __name__ == '__main__':
   from psegs.spark import Spark
   spark = Spark.getOrCreate()
 
-  # R = KITTI360_OurFused_FusedFlowDFFactory
-  # R = KITTI360_KITTIFused_FusedFlowDFFactory
+  # # R = KITTI360_OurFused_FusedFlowDFFactory
+  # # R = KITTI360_KITTIFused_FusedFlowDFFactory
 
-  R = NuscFusedFlowDFFactory
+  # R = NuscFusedFlowDFFactory
 
-  seg_uris = R.SRC_SD_T().get_all_segment_uris()
-  # R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
-  R.build(spark=spark, only_segments=seg_uris[10:20])
-
-
-
-
-  # R = NuscKeyframesOFlowRenderer
-
-  # R = SemanticKITTIOFlowRenderer
-
-  # R = KITTI360OFlowRenderer
-
-  # # R.MAX_TASKS_PER_SEGMENT = 2
-
-  # seg_uris = R.FUSED_LIDAR_SD_TABLE.get_all_segment_uris()
-  # R.build(spark=spark, only_segments=[seg_uris[0]])
+  # seg_uris = R.SRC_SD_T().get_all_segment_uris()
+  # # R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
+  # R.build(spark=spark, only_segments=seg_uris[20:100])
 
 
 
 
+  # # R = NuscKeyframesOFlowRenderer
 
-  # from oarphpy import util as oputil
-  # import os
-  # PSEGS_OFLOW_PKL_PATHS = [
-  #     os.path.abspath(p)
-  #     for p in oputil.all_files_recursive('test_run_output', pattern='refactor*.pkl')
-  # ]
-  # print('len PSEGS_OFLOW_PKL_PATHS', len(PSEGS_OFLOW_PKL_PATHS))
-  # # print(PSEGS_OFLOW_PKL_PATHS)
+  # # R = SemanticKITTIOFlowRenderer
 
-  # # PSEGS_OFLOW_PKL_PATHS = PSEGS_OFLOW_PKL_PATHS[:10]
-  # path_rdd = spark.sparkContext.parallelize(
-  #               PSEGS_OFLOW_PKL_PATHS,
-  #               numSlices=len(PSEGS_OFLOW_PKL_PATHS))
+  # # R = KITTI360OFlowRenderer
 
-  # from oarphpy.spark import RowAdapter
-  # from pyspark.sql import Row
-  # def to_row(path):
-  #   import pickle
-  #   with open(path, 'rb') as f:
-  #       row = pickle.load(f)
+  # # # R.MAX_TASKS_PER_SEGMENT = 2
+
+  # # seg_uris = R.FUSED_LIDAR_SD_TABLE.get_all_segment_uris()
+  # # R.build(spark=spark, only_segments=[seg_uris[0]])
+
+
+
+
+
+  from oarphpy import util as oputil
+  import os
+  PSEGS_OFLOW_PKL_PATHS = [
+      os.path.abspath(p)
+      for p in oputil.all_files_recursive(
+                  '/opt/psegs/dataroot/fused_oflow_pickles',
+                  pattern='*.pkl')
+  ]
+  print('len PSEGS_OFLOW_PKL_PATHS', len(PSEGS_OFLOW_PKL_PATHS))
+  # print(PSEGS_OFLOW_PKL_PATHS)
+
+  import random
+  random.shuffle(PSEGS_OFLOW_PKL_PATHS)
+  PSEGS_OFLOW_PKL_PATHS = PSEGS_OFLOW_PKL_PATHS[:100]
+  path_rdd = spark.sparkContext.parallelize(
+                PSEGS_OFLOW_PKL_PATHS,
+                numSlices=len(PSEGS_OFLOW_PKL_PATHS))
+
+  from oarphpy.spark import RowAdapter
+  from pyspark.sql import Row
+  def to_row(path):
+    import pickle
+    with open(path, 'rb') as f:
+        row = pickle.load(f)
     
-  #   asdf = row.pop('uvdij1_visible_uvdij2_visible')
-  #   row['uvd_viz1_uvd_viz2'] = asdf
-  #   # from psegs.datum import URI
-  #   # row['segment_uri'] = URI.from_str(row['ci1_uri']).to_segment_uri()
-  #   return RowAdapter.to_row(Row(**row))
+    row.pop('v2v_flow')
+    asdf = row.pop('uvdij1_visible_uvdij2_visible')
+    row['uvd_viz1_uvd_viz2'] = asdf
+    # from psegs.datum import URI
+    # row['segment_uri'] = URI.from_str(row['ci1_uri']).to_segment_uri()
+    return RowAdapter.to_row(Row(**row))
 
-  # row_rdd = path_rdd.map(to_row)
-  # import pyspark
-  # row_rdd = row_rdd.persist(pyspark.StorageLevel.DISK_ONLY)
+  row_rdd = path_rdd.map(to_row)
+  import pyspark
+  row_rdd = row_rdd.persist(pyspark.StorageLevel.DISK_ONLY)
   
-  # from psegs.datum.stamped_datum import URI_PROTO
-  # import numpy as np
-  # schema = RowAdapter.to_schema(Row(
-  #   ci1_uri=URI_PROTO,
-  #   ci2_uri=URI_PROTO,
-  #   uvd_viz1_uvd_viz2=np.zeros((1, 4 + 4)),
-  #   v2v_flow=np.zeros((10, 20, 2))
-  # ))
-  # df = spark.createDataFrame(row_rdd, schema=schema)
+  from psegs.datum.stamped_datum import URI_PROTO
+  import numpy as np
+  schema = RowAdapter.to_schema(Row(
+    ci1_uri=URI_PROTO,
+    ci2_uri=URI_PROTO,
+    uvd_viz1_uvd_viz2=np.zeros((1, 4 + 4)),
+  ))
+  df = spark.createDataFrame(row_rdd, schema=schema)
   
-  # df = df.withColumn('dataset', df['ci1_uri.dataset'])
-  # df = df.withColumn('segment_id', df['ci1_uri.segment_id'])
+  df = df.withColumn('dataset', df['ci1_uri.dataset'])
+  df = df.withColumn('split', df['ci1_uri.split'])
+  df = df.withColumn('segment_id', df['ci1_uri.segment_id'])
   
-  # df.write.save(
-  #       path='test_run_output/psegs_oflow.parquet',
-  #       format='parquet',
-  #       partitionBy=['dataset', 'segment_id'],
-  #       compression='lz4')
+  df.write.save(
+        path='/opt/psegs/dataroot/fused_oflow_pickles/psegs_oflow.parquet',
+        format='parquet',
+        partitionBy=['dataset', 'split', 'segment_id'],
+        compression='lz4')
   
