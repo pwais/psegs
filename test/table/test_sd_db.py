@@ -103,8 +103,8 @@ class T2(TestTableBase):
       camera_image=CameraImage()),
   ]
 
-def _create_db_simple():
-  spark = testutil.LocalSpark.getOrCreate()
+def _create_db_simple(spark=None):
+  spark = spark or testutil.LocalSpark.getOrCreate()
   db = StampedDatumDB([T1, T2], spark=spark)
   return db
 
@@ -143,18 +143,75 @@ def test_db_get_sample():
 
 
 
+def _get_actual_uris(datum_df):
+    return [
+      r.uri for r in datum_df.select('uri').rdd.map(T1.from_row).collect()
+    ]
+
 def test_db_get_datum_df_uri_list():
   db = _create_db_simple()
-  sample = db.get_datum_df(
-    uris=['psegs://dataset=t1&segment_id=segt1.1&sel_datums=c1,1'])
-  import ipdb; ipdb.set_trace()
-  print()
+
+  def _get_actual_uris(datum_df):
+    return [
+      r.uri for r in datum_df.select('uri').rdd.map(T1.from_row).collect()
+    ]
+
+  uris_exist = [
+    URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=1, topic='c'),
+    URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=2, topic='c'),
+    URI(dataset='t2', split='s', segment_id='segt2.2', timestamp=1, topic='c1'),
+  ]
+  datum_df = db.get_datum_df(uris=uris_exist)
+  actual_uris = _get_actual_uris(datum_df)
+  assert sorted(uris_exist) == sorted(actual_uris)
+
+  uris_no_exist = [
+    URI(dataset='no-exist', segment_id='no-exist', timestamp=1, topic='c1')
+  ]
+  with pytest.raises(NoKnownTable):
+    db.get_datum_df(uris=uris_no_exist)
+
+
 
 def test_db_get_datum_df_uri_rdd():
-  pass
+  uris_exist = [
+    URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=1, topic='c'),
+    URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=2, topic='c'),
+    URI(dataset='t2', split='s', segment_id='segt2.2', timestamp=1, topic='c1'),
+  ]
+  uris_no_exist = [
+    URI(dataset='no-exist', segment_id='no-exist', timestamp=1, topic='c1')
+  ]
+  with testutil.LocalSpark.sess() as spark:
+    db = _create_db_simple(spark=spark)
+
+    uri_rdd = spark.sparkContext.parallelize(uris_exist + uris_no_exist)
+
+    datum_df = db.get_datum_df(uris=uri_rdd)
+    actual_uris = _get_actual_uris(datum_df)
+    assert sorted(uris_exist) == sorted(actual_uris)
+    
 
 def test_db_get_datum_df_uri_df():
-  pass
+  uris_exist = [
+    URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=1, topic='c'),
+    URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=2, topic='c'),
+    URI(dataset='t2', split='s', segment_id='segt2.2', timestamp=1, topic='c1'),
+  ]
+  uris_no_exist = [
+    URI(dataset='no-exist', segment_id='no-exist', timestamp=1, topic='c1')
+  ]
+  with testutil.LocalSpark.sess() as spark:
+    db = _create_db_simple(spark=spark)
+
+    from oarphpy.spark import RowAdapter
+    uris = uris_exist + uris_no_exist
+    schema = RowAdapter.to_schema(URI())
+    uri_df = spark.createDataFrame(
+              [RowAdapter.to_row(u) for u in uris], schema=schema)
+    datum_df = db.get_datum_df(uris=uri_df)
+    actual_uris = _get_actual_uris(datum_df)
+    assert sorted(uris_exist) == sorted(actual_uris)
 
 
 

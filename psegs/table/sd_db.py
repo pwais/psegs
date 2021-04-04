@@ -171,18 +171,19 @@ class StampedDatumDB(object):
   def select_datum_df_from_uri_df(uri_df, datum_df):
     df = datum_df.join(
           uri_df,
-          (datum_df.dataset == uri_df.dataset) &
-          (datum_df.split == uri_df.split) &
-          (datum_df.segment_id == uri_df.segment_id) &
-          (datum_df.topic == uri_df.topic) &
-          (datum_df.timestamp == uri_df.timestamp))
+          (datum_df.uri.dataset == uri_df.dataset) &
+          (datum_df.uri.split == uri_df.split) &
+          (datum_df.uri.segment_id == uri_df.segment_id) &
+          (datum_df.uri.topic == uri_df.topic) &
+          (datum_df.uri.timestamp == uri_df.timestamp))
     return df
 
   @staticmethod
   def select_datum_df_from_uri_rdd(spark, uri_rdd, datum_df):
     from oarphpy.spark import RowAdapter
     row_rdd = uri_rdd.map(RowAdapter.to_row)
-    uri_df = spark.createDataFrame(row_rdd)
+    schema = RowAdapter.to_schema(URI())
+    uri_df = spark.createDataFrame(row_rdd, schema=schema)
     return StampedDatumDB.select_datum_df_from_uri_df(uri_df, datum_df)
 
   def get_sample(self, uri, spark=None):
@@ -197,23 +198,27 @@ class StampedDatumDB(object):
   def get_datum_df(self, uris=None, spark=None):
     spark = self._spark or spark
 
-    def _ensure_have_data(seg_uris):
+    def _ensure_have_data(seg_uris, ignore_unknown=False):
       for u in seg_uris:
-        self._maybe_add_segment(u, spark=spark)
+        try:
+          self._maybe_add_segment(u, spark=spark)
+        except NoKnownTable as e:
+          if not ignore_unknown:
+            raise e
 
     if hasattr(uris, '_jrdd'):
       uri_rdd = uris
       seg_uris = uri_rdd.map(to_seg_uri_str).distinct().collect()
-      _ensure_have_data(seg_uris)
+      _ensure_have_data(seg_uris, ignore_unknown=True)
       return StampedDatumDB.select_datum_df_from_uri_rdd(
                 spark or self._spark,
                 uri_rdd,
                 self._df)
     elif hasattr(uris, 'rdd'):
       uri_df = uris
-      uri_df = uri_df.select('dataset', 'split', 'segment_id').distinct()
-      seg_uris = uri_df.rdd.map(to_seg_uri_str).distinct().collect()
-      _ensure_have_data(seg_uris)
+      suri_df = uri_df.select('dataset', 'split', 'segment_id').distinct()
+      seg_uris = suri_df.rdd.map(to_seg_uri_str).distinct().collect()
+      _ensure_have_data(seg_uris, ignore_unknown=True)
       return StampedDatumDB.select_datum_df_from_uri_df(
                 uri_df,
                 self._df)
