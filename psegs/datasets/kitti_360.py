@@ -488,7 +488,7 @@ class KITTI360SDTable(StampedDatumTableBase):
       seg_uris = [
         uri for uri in seg_uris
         if any(
-          suri.soft_matches_segment(uri) for suri in only_segments)
+          suri.soft_matches_segment_of(uri) for suri in only_segments)
       ]
     
     ## ... now construct datum RDDS in chunks.

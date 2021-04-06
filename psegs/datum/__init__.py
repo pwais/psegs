@@ -15,9 +15,13 @@
 from psegs.datum.bbox2d import BBox2D
 from psegs.datum.cuboid import Cuboid
 from psegs.datum.camera_image import CameraImage
-# from psegs.datum.frame import Frame
 from psegs.datum.point_cloud import PointCloud
 from psegs.datum.stamped_datum import Sample
 from psegs.datum.stamped_datum import StampedDatum
+from psegs.datum.stamped_datum import URI_PROTO
+from psegs.datum.stamped_datum import TRANSFORM_PROTO
+from psegs.datum.stamped_datum import POINTCLOUD_PROTO
+from psegs.datum.stamped_datum import CAMERAIMAGE_PROTO
+from psegs.datum.stamped_datum import STAMPED_DATUM_PROTO
 from psegs.datum.transform import Transform
 from psegs.datum.uri import URI

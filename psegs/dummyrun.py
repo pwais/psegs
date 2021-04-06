@@ -660,6 +660,136 @@ class NuscFusedFlowDFFactory(FusedFlowDFFactory):
 # class NuscAllFramesOFlowRenderer(OpticalFlowRenderBase):
 #     FUSED_LIDAR_SD_TABLE = NuscAllFramesFusedWorldCloudTable
 
+def build_sample_id_map(
+      spark,
+      outpath="/opt/psegs/dataroot/sample_id_map.parquet"):
+  
+  Rs = (
+    NuscFusedFlowDFFactory,
+    KITTI360_KITTIFused_FusedFlowDFFactory,
+    KITTI360_OurFused_FusedFlowDFFactory,
+  )
+
+  t = 0
+  for R in Rs:
+    seg_uris = R.SRC_SD_T().get_all_segment_uris()
+    for suri in seg_uris:
+      print(suri)
+      sample_df = R.SAMPLE_DF_FACTORY.build_df_for_segment(spark, suri)
+      spark.catalog.dropTempView('sample_df')
+      sample_df.registerTempTable('sample_df')
+
+      uri_exps = (
+        'EXPLODE(TRANSFORM(pc_sds, x -> x.uri)) AS uri',
+        'EXPLODE(TRANSFORM(cuboids_sds, x -> x.uri)) AS uri',
+        'EXPLODE(TRANSFORM(ci_sds, x -> x.uri)) AS uri',
+      )
+      index_df = None
+      for expr in uri_exps:
+        df = spark.sql("""
+                SELECT
+                  "{dataset}"     AS dataset,
+                  "{split}"       AS split,
+                  "{segment_id}"  AS segment_id,
+                  
+                  sample_id AS sample_id,
+                  {expr}
+                FROM sample_df
+            """.format(
+                  dataset=suri.dataset,
+                  split=suri.split,
+                  segment_id=suri.segment_id,
+                  expr=expr))
+        if index_df is None:
+          index_df = df
+        else:
+          index_df = index_df.union(df)
+      
+      index_df = index_df.persist()
+      index_df.show()
+      print(index_df.count())
+      # index_df = index_df.coalesce(1)
+      schema = index_df.schema
+      index_df = spark.createDataFrame(index_df.collect(), schema=schema)
+      index_df.write.save(
+        mode='append',
+        path=outpath + '/task_' + str(t),
+        format='parquet',
+        compression='lz4')
+      print('done', suri)
+      t += 1
+
+
+
+import attr
+import numpy as np
+
+from psegs import datum
+
+@attr.s(slots=True, eq=True, weakref_slot=False)
+class RenderedClouds(object):
+  sample_id = attr.ib(default=0)
+  ego_pose_uri = uri = attr.ib(
+    type=datum.URI, default=None, converter=datum.URI.from_str)
+  
+  uvdvis = attr.ib(type=np.ndarray, default=None)
+
+  ci_uris = attr.ib(default=[[]])
+  cuboids_uris = attr.ib(default=[[]])
+  pc_uris = attr.ib(default=[[]])
+
+RENDERED_CLOUD_PROTO = RenderedClouds(
+                        sample_id=0,
+                        ego_pose_uri= datum.URI_PROTO,
+                        uvdvis=       np.zeros((0, 4)),
+                        ci_uris=      [[datum.URI_PROTO]],
+                        cuboids_uris= [[datum.URI_PROTO]],
+                        pc_uris=      [[datum.URI_PROTO]])
+
+import attr
+@attr.s(slots=True, eq=True, weakref_slot=False)
+class FlowRecord(object):
+
+  segment_uri = attr.ib(
+    type=datum.URI, default=None, converter=datum.URI.from_str)
+
+  clouds = attr.ib(default=[])
+
+  u_min = attr.ib(default=0.0, type=float)
+  u_max = attr.ib(default=0.0, type=float)
+  v_min = attr.ib(default=0.0, type=float)
+  v_max = attr.ib(default=0.0, type=float)
+
+  def num_clouds(self):
+    return len(self.clouds)
+  
+FLOW_TUBE_PROTO = FlowRecord(
+                    segment_uri=datum.URI_PROTO,
+                    clouds=[RENDERED_CLOUD_PROTO])
+  
+
+
+"""
+
+analysis:
+  * cuboid hit rates
+  * sample-to-sample could nearest neighbor "error" 
+
+general (beyond-just-pairs) design:
+sample_ids [s1, s2, ... ]
+ci_uris [ [ ci1 ], [ ci2 ], ... ] <-- len-1 for oflow, could be len N for sflow
+cu_uris [ [ cu11, cu12, .. ], [ cu21, cu22, ... ], ... ]
+pc_uris [ [ pc1 ], [ pc2 ], ... ] 
+ego_pose_uris [ ego1, ego2, ... ] <-- always len 1, for sflow these are the uvd origins ?
+
+uvdvis [ uvdvis1, uvdvis2, ... ]
+
+(these arrays could also include not just uvd but world frame xyz perhaps.  perhaps
+even rgb-normal?  .. surfel...)
+
+
+
+"""
 
 
 
@@ -667,16 +797,17 @@ if __name__ == '__main__':
   from psegs.spark import Spark
   spark = Spark.getOrCreate()
 
-  # R = KITTI360_OurFused_FusedFlowDFFactory
-  # R = KITTI360_KITTIFused_FusedFlowDFFactory
+  # # R = KITTI360_OurFused_FusedFlowDFFactory
+  # # R = KITTI360_KITTIFused_FusedFlowDFFactory
 
-  R = NuscFusedFlowDFFactory
+  # R = NuscFusedFlowDFFactory
 
-  seg_uris = R.SRC_SD_T().get_all_segment_uris()
-  # R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
-  R.build(spark=spark, only_segments=seg_uris[150:200])
+  # seg_uris = R.SRC_SD_T().get_all_segment_uris()
+  # # R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
+  # R.build(spark=spark, only_segments=seg_uris[150:200])
 
 
+  build_sample_id_map(spark)
 
 
   # R = NuscKeyframesOFlowRenderer
@@ -690,7 +821,7 @@ if __name__ == '__main__':
   # seg_uris = R.FUSED_LIDAR_SD_TABLE.get_all_segment_uris()
   # R.build(spark=spark, only_segments=[seg_uris[0]])
 
-
+  
 
 
 

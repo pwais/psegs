@@ -15,6 +15,7 @@
 import copy
 import os
 
+import attr
 import numpy as np
 import pandas as pd
 
@@ -84,6 +85,277 @@ def _move_clouds_to_ego_and_concat(point_clouds, camera_images=None):
     else:
       cloud_ego = np.zeros((0, 3))
   return cloud_ego
+
+
+
+###############################################################################
+### Output Data Structures and Utils
+
+
+def draw_flow(img, flow, step=8):
+  """Based upon OpenCV sample: https://github.com/opencv/opencv/blob/master/samples/python/opt_flow.py"""
+  import cv2
+  h, w = img.shape[:2]
+  y, x = np.mgrid[step/2:h:step, step/2:w:step].reshape(2,-1).astype(int)
+  fx, fy = flow[y,x].T
+  lines = np.vstack([x, y, x+fx, y+fy]).T.reshape(-1, 2, 2)
+  lines = np.int32(lines + 0.5)
+  vis = img.copy()
+  cv2.polylines(vis, lines, 0, (0, 255, 0))
+  for (x1, y1), (_x2, _y2) in lines:
+      cv2.circle(vis, (x1, y1), 1, (0, 255, 0), -1)
+  return vis
+
+
+def warp_flow_forwards(img, flow):
+    """Given an image, apply the given optical flow `flow`.  Returns not only the warped
+    image, but a `mask` indicating warped pixels (i.e. there was non-zero flow *into* these pixels ).
+    With some help from https://stackoverflow.com/questions/41703210/inverting-a-real-valued-index-grid/46009462#46009462
+    """
+    h, w = img.shape[:2]
+    pts = flow.copy()
+    pts[:, :, 0] += np.arange(w)
+    pts[:, :, 1] += np.arange(h)[:, np.newaxis]
+    exclude = (flow[:, :, :2] == np.array([0, 0])).all(axis=-1)
+    if exclude.all():
+        # No flow anywhere!
+        return img.copy(), np.zeros((h, w)).astype(np.bool)
+    else:
+        inpts = pts[~exclude]
+    
+    from scipy.interpolate import griddata
+    inpts = np.reshape(inpts, [-1, 2])
+    grid_y, grid_x = np.mgrid[:h, :w]
+    chan_out = []
+    for ch in range(img.shape[-1]):
+        spts = img[:, :, ch][~exclude].reshape([-1, 1])
+        mapped = griddata(inpts, spts, (grid_x, grid_y), method='linear')
+        chan_out.append(mapped.astype(img.dtype))
+    out = np.stack(chan_out, axis=-1)
+    out = out.reshape([h, w, len(chan_out)])
+
+    # mask = np.reshape(inpts, [-1, 2])
+    # mask = np.rint(mask).astype(np.int)
+    # mask = mask[np.where((mask[:, 0] >= 0) & (mask[:, 0] < w) & (mask[:, 1] >= 0) & (mask[:, 1] < h))]
+    # valid_mask = np.zeros((h, w))
+    # valid_mask[mask[:, 1], mask[:, 0]] = 1
+    
+    # return out, valid_mask.astype(np.bool)
+    return out
+
+
+def viz_oflow_pair(ci1, ci2, uvdvis1, uvdvis2, v2v_flow=None):
+  from psegs.util.plotting import draw_xy_depth_in_image
+
+  im1 = ci1.image
+  im2 = ci2.image
+
+  uvd1 = uvdvis1[uvdvis1[:, -1] == 1, :3]
+  uvd2 = uvdvis2[uvdvis2[:, -1] == 1, :3]
+
+  def put_label(img, s):
+    import cv2
+    FONT_SCALE = 0.8
+    FONT = cv2.FONT_HERSHEY_PLAIN
+    PADDING = 2 # In pixels
+
+    ret = cv2.getTextSize(s, FONT, fontScale=FONT_SCALE, thickness=1)
+    ((text_width, text_height), _) = ret
+
+    cv2.putText(
+        img,
+        s,
+        (10, 10),
+        FONT,
+        FONT_SCALE,
+        (128, 128, 128), # text_color
+        1) # thickness
+
+  debug_im1_uvd1 = im1.copy()
+  draw_xy_depth_in_image(debug_im1_uvd1, uvd1)
+  put_label(debug_im1_uvd1, 'img1+cloud1')
+  
+  debug_im1_uvd2 = im1.copy()
+  draw_xy_depth_in_image(debug_im1_uvd2, uvd2)
+  put_label(debug_im1_uvd2, 'img1+cloud2')
+  
+  debug_im2_uvd1 = im2.copy()
+  draw_xy_depth_in_image(debug_im2_uvd1, uvd1)
+  put_label(debug_im2_uvd1, 'img2+cloud2')
+  
+  debug_im2_uvd2 = im2.copy()
+  draw_xy_depth_in_image(debug_im2_uvd2, uvd2)
+  put_label(debug_im2_uvd2, 'img2+cloud2')
+
+  debug_rows = [
+    np.concatenate([debug_im1_uvd1, debug_im1_uvd2], axis=1),
+    np.concatenate([debug_im2_uvd1, debug_im2_uvd2], axis=1),
+  ]
+
+  if v2v_flow is not None:
+    debug_im1_flow = draw_flow(im1.copy(), v2v_flow)
+    debug_im1_warped = warp_flow_forwards(im1.copy(), v2v_flow)
+    debug_rows += [
+      np.concatenate([debug_im1_flow, debug_im1_warped], axis=1),
+    ]
+  
+  debug_full = np.concatenate(debug_rows, axis=0)
+  return debug_full
+
+
+@attr.s(slots=True, eq=True, weakref_slot=False)
+class RenderedClouds(object):
+  sample_id = attr.ib(default=0)
+  ego_pose_uri = uri = attr.ib(
+    type=datum.URI, default=None, converter=datum.URI.from_str)
+  
+  uvdvis = attr.ib(type=np.ndarray, default=None)
+
+  ci_uris = attr.ib(default=[[]])
+  cuboids_uris = attr.ib(default=[[]])
+  pc_uris = attr.ib(default=[[]])
+
+  def to_html(self):
+    
+    def mmm(col):
+      return (col.min(), col.max(), col.mean())
+
+    rows = [
+      ['sample_id',     '', self.sample_id],
+      ['ego_pose_uri',  '', str(self.ego_pose_uri)],
+      ['uvdvis',        'shape', self.uvdvis.shape],
+      ['uvdvis', 'u min | max | mean', mmm(self.uvdvis[:, 0])],
+      ['uvdvis', 'v min | max | mean', mmm(self.uvdvis[:, 1])],
+      ['uvdvis', 'd min | max | mean', mmm(self.uvdvis[:, 2])],
+      ['uvdvis', 'num visible', np.sum(self.uvdvis[:, 3] == 1)]
+    ]
+    rows += [['Camera Image URIs', '', '']]
+    for uri in self.ci_uris:
+      rows += [['', '', str(uri)]]
+    rows += [['Cuboids URIs', '', '']]
+    for uri in self.cuboids_uris:
+      rows += [['', '', str(uri)]]
+    rows += [['Point Cloud URIs', '', '']]
+    for uri in self.pc_uris:
+      rows += [['', '', str(uri)]]
+
+    from tabulate import tabulate
+    return tabulate(rows, tablefmt="html")
+
+
+@attr.s(slots=True, eq=True, weakref_slot=False)
+class FlowRecord(object):
+
+  segment_uri = attr.ib(
+    type=datum.URI, default=None, converter=datum.URI.from_str)
+
+  clouds = attr.ib(default=[])
+
+  u_min = attr.ib(default=0.0, type=float)
+  u_max = attr.ib(default=0.0, type=float)
+  v_min = attr.ib(default=0.0, type=float)
+  v_max = attr.ib(default=0.0, type=float)
+
+  def num_clouds(self):
+    return len(self.clouds)
+  
+  def to_optical_flow(self):
+    # Only support pairs of images for now
+    assert self.num_clouds() == 2, self.num_clouds()
+    assert self.u_min == 0, self.u_min
+    assert self.v_min == 0, self.v_min
+
+    h, w = self.v_max, self.u_max
+    uvdvis1 = self.clouds[0].uvdvis
+    uvdvis2 = self.clouds[1].uvdvis
+    visible_both = ((uvdvis1[:, -1] == 1) & (uvdvis2[:, -1] == 1))
+    visboth_uv1 = uvdvis1[visible_both, :2]
+    visboth_uv2 = uvdvis2[visible_both, :2]
+    ij1 = np.rint(visboth_uv1[:, (0, 1)])
+    ij_flow = np.hstack([
+      ij1, visboth_uv2 - visboth_uv1
+    ])
+    v2v_flow = np.zeros((h, w, 2))
+    xx = ij_flow[:, 0].astype(np.int)
+    yy = ij_flow[:, 1].astype(np.int)
+    v2v_flow[yy, xx] = ij_flow[:, 2:4]
+
+    return v2v_flow
+  
+  def get_debug_image(self, camera_images=[]):
+    if camera_images:
+      # Only support optical flow pairs for now
+      assert len(camera_images) == 2, len(camera_images)
+      ci1, ci2 = camera_images
+      uvdvis1 = self.clouds[0].uvdvis
+      uvdvis2 = self.clouds[1].uvdvis
+      v2v_flow = self.to_optical_flow()
+      return viz_oflow_pair(ci1, ci2, uvdvis1, uvdvis2, v2v_flow=v2v_flow)
+    else:
+      # TODO pure cloud viz
+      return None
+    
+  def to_html(self, camera_images=[]):
+
+    from tabulate import tabulate
+    rows = [
+      ['segment_uri', str(self.segment_uri)],
+      ['u min/max', (self.u_min, self.u_max)],
+      ['v min/max', (self.v_min, self.v_max)],
+    ]
+    core_html = tabulate(rows, tablefmt="html")
+
+    debug_img = self.get_debug_image(camera_images=camera_images)
+    if debug_img is not None:
+      from oarphpy.plotting import img_to_img_tag
+      debug_img_html = oputil.img_to_img_tag(debug_img, format='png')
+    else:
+      debug_img_html = ''
+
+    HTML = """
+      FlowRecord<br/>
+      {core}<br/>
+      {debug_img}<br/><br/>
+
+      Clouds<br/>
+      {clouds}
+      """.format(
+            core=core_html,
+            debug_img_html=debug_img_html,
+            clouds="<br/>".join(c.to_html() for c in self.clouds))
+    return HTML
+
+
+    
+
+
+
+    rows += [['Clouds', '']]
+    for cloud in self.clouds:
+      rows += [['', cloud.to_html()]]
+    
+
+
+      ['ego_pose_uri',  '', str(self.ego_pose_uri)],
+      ['uvdvis',        'shape', self.uvdvis.shape],
+      ['uvdvis', 'u min | max | mean', mmm(self.uvdvis[:, 0])],
+      ['uvdvis', 'v min | max | mean', mmm(self.uvdvis[:, 1])],
+      ['uvdvis', 'd min | max | mean', mmm(self.uvdvis[:, 2])],
+      ['uvdvis', 'num visible', np.sum(self.uvdvis[:, 3] == 1)]
+    ]
+
+RENDERED_CLOUD_PROTO = RenderedClouds(
+                        sample_id=0,
+                        ego_pose_uri= datum.URI_PROTO,
+                        uvdvis=       np.zeros((0, 4)),
+                        ci_uris=      [[datum.URI_PROTO]],
+                        cuboids_uris= [[datum.URI_PROTO]],
+                        pc_uris=      [[datum.URI_PROTO]])
+  
+FLOW_TUBE_PROTO = FlowRecord(
+                    segment_uri=datum.URI_PROTO,
+                    clouds=[RENDERED_CLOUD_PROTO])
+
 
 
 
@@ -1320,60 +1592,6 @@ def render_oflow_pair(
     ])
   
   return uvd_viz1_uvd_viz2
-
-
-def viz_oflow_pair(ci1, ci2, uvd_viz1_uvd_viz2):
-  from psegs.util.plotting import draw_xy_depth_in_image
-
-  im1 = ci1.image
-  im2 = ci2.image
-
-  uvdvis1 = uvd_viz1_uvd_viz2[:, :4]
-  uvd1 = uvdvis1[uvdvis1[:, -1] == 1, :3]
-  uvdvis2 = uvd_viz1_uvd_viz2[:, 4:]
-  uvd2 = uvdvis2[uvdvis2[:, -1] == 1, :3]
-
-  def put_label(img, s):
-    import cv2
-    FONT_SCALE = 0.8
-    FONT = cv2.FONT_HERSHEY_PLAIN
-    PADDING = 2 # In pixels
-
-    ret = cv2.getTextSize(s, FONT, fontScale=FONT_SCALE, thickness=1)
-    ((text_width, text_height), _) = ret
-
-    cv2.putText(
-        img,
-        s,
-        (10, 10),
-        FONT,
-        FONT_SCALE,
-        (128, 128, 128), # text_color
-        1) # thickness
-
-  debug_im1_uvd1 = im1.copy()
-  draw_xy_depth_in_image(debug_im1_uvd1, uvd1)
-  put_label(debug_im1_uvd1, 'img1+cloud1')
-  
-  debug_im1_uvd2 = im1.copy()
-  draw_xy_depth_in_image(debug_im1_uvd2, uvd2)
-  put_label(debug_im1_uvd2, 'img1+cloud2')
-  
-  debug_im2_uvd1 = im2.copy()
-  draw_xy_depth_in_image(debug_im2_uvd1, uvd1)
-  put_label(debug_im2_uvd1, 'img2+cloud2')
-  
-  debug_im2_uvd2 = im2.copy()
-  draw_xy_depth_in_image(debug_im2_uvd2, uvd2)
-  put_label(debug_im2_uvd2, 'img2+cloud2')
-
-  debug_full = np.concatenate([
-    np.concatenate([debug_im1_uvd1, debug_im1_uvd2], axis=1),
-    np.concatenate([debug_im2_uvd1, debug_im2_uvd2], axis=1),
-  ], axis=0)
-
-  return debug_full
-
 
 
 
