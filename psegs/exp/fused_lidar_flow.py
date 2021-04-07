@@ -204,16 +204,16 @@ def viz_oflow_pair(ci1, ci2, uvdvis1, uvdvis2, v2v_flow=None):
 
 
 @attr.s(slots=True, eq=True, weakref_slot=False)
-class RenderedClouds(object):
+class RenderedCloud(object):
   sample_id = attr.ib(default=0)
-  ego_pose_uri = uri = attr.ib(
+  ego_pose_uri = attr.ib(
     type=datum.URI, default=None, converter=datum.URI.from_str)
   
   uvdvis = attr.ib(type=np.ndarray, default=None)
 
-  ci_uris = attr.ib(default=[[]])
-  cuboids_uris = attr.ib(default=[[]])
-  pc_uris = attr.ib(default=[[]])
+  ci_uris = attr.ib(default=[])
+  cuboids_uris = attr.ib(default=[])
+  pc_uris = attr.ib(default=[])
 
   def to_html(self):
     
@@ -330,31 +330,31 @@ class FlowRecord(object):
 
 
 
-    rows += [['Clouds', '']]
-    for cloud in self.clouds:
-      rows += [['', cloud.to_html()]]
+    # rows += [['Clouds', '']]
+    # for cloud in self.clouds:
+    #   rows += [['', cloud.to_html()]]
     
 
 
-      ['ego_pose_uri',  '', str(self.ego_pose_uri)],
-      ['uvdvis',        'shape', self.uvdvis.shape],
-      ['uvdvis', 'u min | max | mean', mmm(self.uvdvis[:, 0])],
-      ['uvdvis', 'v min | max | mean', mmm(self.uvdvis[:, 1])],
-      ['uvdvis', 'd min | max | mean', mmm(self.uvdvis[:, 2])],
-      ['uvdvis', 'num visible', np.sum(self.uvdvis[:, 3] == 1)]
-    ]
+    #   ['ego_pose_uri',  '', str(self.ego_pose_uri)],
+    #   ['uvdvis',        'shape', self.uvdvis.shape],
+    #   ['uvdvis', 'u min | max | mean', mmm(self.uvdvis[:, 0])],
+    #   ['uvdvis', 'v min | max | mean', mmm(self.uvdvis[:, 1])],
+    #   ['uvdvis', 'd min | max | mean', mmm(self.uvdvis[:, 2])],
+    #   ['uvdvis', 'num visible', np.sum(self.uvdvis[:, 3] == 1)]
+    # ]
 
-RENDERED_CLOUD_PROTO = RenderedClouds(
-                        sample_id=0,
+RENDERED_CLOUD_PROTO = RenderedCloud(
+                        sample_id=(1 << 65), # Force bigint
                         ego_pose_uri= datum.URI_PROTO,
-                        uvdvis=       np.zeros((0, 4)),
-                        ci_uris=      [[datum.URI_PROTO]],
-                        cuboids_uris= [[datum.URI_PROTO]],
-                        pc_uris=      [[datum.URI_PROTO]])
+                        uvdvis=       np.ones((10, 4), dtype=np.float32),
+                        ci_uris=      [datum.URI_PROTO],
+                        cuboids_uris= [datum.URI_PROTO],
+                        pc_uris=      [datum.URI_PROTO])
   
-FLOW_TUBE_PROTO = FlowRecord(
-                    segment_uri=datum.URI_PROTO,
-                    clouds=[RENDERED_CLOUD_PROTO])
+FLOW_RECORD_PROTO = FlowRecord(
+                      segment_uri=datum.URI_PROTO,
+                      clouds=[RENDERED_CLOUD_PROTO])
 
 
 
@@ -3008,7 +3008,7 @@ class FusedFlowDFFactory(object):
             v2v_flow[yy, xx] = ij_flow[:, 2:4]
             row_out = {
               'ci1_uri': ci_sd1.uri,
-              'ci2_uri': ci_sd1.uri,
+              'ci2_uri': ci_sd2.uri, # fixed 4/7
               'uvdij1_visible_uvdij2_visible': uvd_viz1_uvd_viz2,
                 # TODO rename, ij part is gone ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
               'v2v_flow': v2v_flow,

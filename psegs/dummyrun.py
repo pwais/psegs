@@ -279,16 +279,16 @@ class NuscFlowSDTable(NuscStampedDatumTableBase):
   LABELS_KEYFRAMES_ONLY = False
   INCLUDE_LIDARSEG = False
 
-  @classmethod
-  def _get_all_segment_uris(cls):
-    segment_uris = super(cls, NuscFlowSDTable)._get_all_segment_uris()
+  # @classmethod
+  # def _get_all_segment_uris(cls):
+  #   segment_uris = super(cls, NuscFlowSDTable)._get_all_segment_uris()
     
-    # Simplify 'train' for 'train-detect' and 'train-track'
-    for suri in segment_uris:  
-      if 'train' in suri.split:
-        suri.split = 'train'
+  #   # Simplify 'train' for 'train-detect' and 'train-track'
+  #   for suri in segment_uris:  
+  #     if 'train' in suri.split:
+  #       suri.split = 'train'
     
-    return segment_uris
+  #   return segment_uris
 
 class NuscSampleDFFactory(SampleDFFactory):
   SRC_SD_TABLE = NuscFlowSDTable
@@ -660,112 +660,378 @@ class NuscFusedFlowDFFactory(FusedFlowDFFactory):
 # class NuscAllFramesOFlowRenderer(OpticalFlowRenderBase):
 #     FUSED_LIDAR_SD_TABLE = NuscAllFramesFusedWorldCloudTable
 
-def build_sample_id_map(
-      spark,
-      outpath="/opt/psegs/dataroot/sample_id_map.parquet"):
-  
+def build_sample_id_map(spark, outpath, only_segments=[]):
+  from pathlib import Path
+  from psegs import util
+  from psegs import datum
+
+  only_segments = [datum.URI.from_str(u) for u in only_segments]
+
+  n_total = len(only_segments) if only_segments else None
+  from oarphpy import util as oputil
+
+  t = oputil.ThruputObserver(name='build_sample_idx', n_total=n_total)
+
   Rs = (
     NuscFusedFlowDFFactory,
     KITTI360_KITTIFused_FusedFlowDFFactory,
     KITTI360_OurFused_FusedFlowDFFactory,
   )
-
-  t = 0
   for R in Rs:
-    seg_uris = R.SRC_SD_T().get_all_segment_uris()
+    seg_uris = R.SAMPLE_DF_FACTORY.SRC_SD_TABLE.get_all_segment_uris()
+    if only_segments:
+      seg_uris = [
+        datum.URI.from_str(u)
+        for u in (
+          set(str(s) for s in only_segments) & set(str(s) for s in seg_uris)
+        )
+      ]
     for suri in seg_uris:
-      print(suri)
+      t.start_block()
+
+      sdest = (
+        Path(outpath) / 
+          ('dataset=' + suri.dataset) / 
+          ('split=' + suri.split) / 
+          ('segment_id=' + suri.segment_id))
+      if sdest.exists():
+        util.log.info("Have %s" % sdest)
+        t.stop_block(n=1)
+        continue
+
+      util.log.info("Indexing %s" % suri)
+      
       sample_df = R.SAMPLE_DF_FACTORY.build_df_for_segment(spark, suri)
       spark.catalog.dropTempView('sample_df')
       sample_df.registerTempTable('sample_df')
 
       uri_exps = (
-        'EXPLODE(TRANSFORM(pc_sds, x -> x.uri)) AS uri',
-        'EXPLODE(TRANSFORM(cuboids_sds, x -> x.uri)) AS uri',
-        'EXPLODE(TRANSFORM(ci_sds, x -> x.uri)) AS uri',
+        ('pc_sds', '0 AS ci_height, 0 AS ci_width'),
+        ('cuboids_sds', '0 AS ci_height, 0 AS ci_width'),
+        ('ci_sds',
+          """
+            sd.camera_image.height AS ci_height,
+            sd.camera_image.width AS ci_width
+          """),
       )
       index_df = None
       for expr in uri_exps:
+        attrname, ci_expr = expr
         df = spark.sql("""
                 SELECT
                   "{dataset}"     AS dataset,
                   "{split}"       AS split,
                   "{segment_id}"  AS segment_id,
-                  
-                  sample_id AS sample_id,
-                  {expr}
-                FROM sample_df
-            """.format(
+                  BIGINT(sample_id) AS sample_id,
+                  sd.uri AS uri,
+                  {ci_expr}
+                
+                FROM (
+                  SELECT sample_id, EXPLODE({attrname}) AS sd
+                  FROM sample_df
+                )
+        """.format(
                   dataset=suri.dataset,
                   split=suri.split,
                   segment_id=suri.segment_id,
-                  expr=expr))
+                  attrname=attrname,
+                  ci_expr=ci_expr))
         if index_df is None:
           index_df = df
         else:
           index_df = index_df.union(df)
-      
+
       index_df = index_df.persist()
-      index_df.show()
-      print(index_df.count())
-      # index_df = index_df.coalesce(1)
-      schema = index_df.schema
-      index_df = spark.createDataFrame(index_df.collect(), schema=schema)
+      index_df = index_df.coalesce(5)
       index_df.write.save(
         mode='append',
-        path=outpath + '/task_' + str(t),
+        path=outpath,
+        partitionBy=['dataset', 'split', 'segment_id'],
         format='parquet',
         compression='lz4')
-      print('done', suri)
-      t += 1
+      
+      util.log.info("Done with %s" % suri)
+      t.stop_block(n=1)
+      t.maybe_log_progress(every_n=1)
 
+def task_row_to_flow_record(task_row):
+  pkl_path = task_row['pkl_path']
+  import pickle
+  with open(pkl_path, 'rb') as f:
+    pkldata = pickle.load(f)
+  ci1_uri = pkldata['ci1_uri']
+  # ci2_uri = pkldata['ci2_uri'] # broken before 4/7
+  uvdv1_uvdv2 = pkldata['uvdij1_visible_uvdij2_visible']
 
+  # hacks we screwed up
+  toks = pkl_path.split('->')
+  assert len(toks) == 2, pkl_path
+  ci1_sid_fname = int(toks[0].split('_')[-1])
+  ci2_sid_fname = int(toks[1].split('_')[0])
 
-import attr
-import numpy as np
-
-from psegs import datum
-
-@attr.s(slots=True, eq=True, weakref_slot=False)
-class RenderedClouds(object):
-  sample_id = attr.ib(default=0)
-  ego_pose_uri = uri = attr.ib(
-    type=datum.URI, default=None, converter=datum.URI.from_str)
+  import itertools
+  sampledata_rows = list(itertools.chain.from_iterable(
+    rs for rs in task_row['collect_list(sample_datas)']))
+  assert sampledata_rows
   
-  uvdvis = attr.ib(type=np.ndarray, default=None)
-
-  ci_uris = attr.ib(default=[[]])
-  cuboids_uris = attr.ib(default=[[]])
-  pc_uris = attr.ib(default=[[]])
-
-RENDERED_CLOUD_PROTO = RenderedClouds(
-                        sample_id=0,
-                        ego_pose_uri= datum.URI_PROTO,
-                        uvdvis=       np.zeros((0, 4)),
-                        ci_uris=      [[datum.URI_PROTO]],
-                        cuboids_uris= [[datum.URI_PROTO]],
-                        pc_uris=      [[datum.URI_PROTO]])
-
-import attr
-@attr.s(slots=True, eq=True, weakref_slot=False)
-class FlowRecord(object):
-
-  segment_uri = attr.ib(
-    type=datum.URI, default=None, converter=datum.URI.from_str)
-
-  clouds = attr.ib(default=[])
-
-  u_min = attr.ib(default=0.0, type=float)
-  u_max = attr.ib(default=0.0, type=float)
-  v_min = attr.ib(default=0.0, type=float)
-  v_max = attr.ib(default=0.0, type=float)
-
-  def num_clouds(self):
-    return len(self.clouds)
+  from oarphpy.spark import RowAdapter
+  sid_to_rows = dict()
+  for r in sampledata_rows:
+    r = RowAdapter.from_row(r)
+    sid_to_rows.setdefault(r.sample_id, [])
+    sid_to_rows[r.sample_id].append(r)
+  assert ci1_sid_fname in sid_to_rows, (ci1_sid_fname, sid_to_rows.keys())
+  assert ci2_sid_fname in sid_to_rows, (ci2_sid_fname, sid_to_rows.keys())
+  ci1_sid = ci1_sid_fname
+  ci2_sid = ci2_sid_fname
   
-FLOW_TUBE_PROTO = FlowRecord(
-                    segment_uri=datum.URI_PROTO,
-                    clouds=[RENDERED_CLOUD_PROTO])
+  ci1_rows = sid_to_rows[ci1_sid]
+  ci2_rows = sid_to_rows[ci2_sid]
+
+
+  ci1_recs = [r for r in ci1_rows if r.uri == ci1_uri]
+  assert len(ci1_recs) == 1, ci1_recs
+  ci1_rec = ci1_recs[0]
+
+  ci2_recs = [r for r in ci2_rows if 'camera' in r.uri.topic] 
+    # b/c ci2_uri broken in pickles before 4/7
+  assert len(ci2_recs) == 1, ci2_recs
+  ci2_rec = ci2_recs[0]
+  ci2_uri = ci2_rec.uri
+    # b/c ci2_uri broken in pickles before 4/7
+
+  ci1_h, ci1_w = ci1_rec.ci_height, ci1_rec.ci_width
+  assert (ci1_h, ci1_w) != (0, 0), (ci1_h, ci1_w)
+  ci2_h, ci2_w = ci2_rec.ci_height, ci2_rec.ci_width
+  assert (ci2_h, ci2_w) != (0, 0), (ci2_h, ci2_w)
+  
+  from psegs.exp.fused_lidar_flow import RenderedCloud
+  uvdvis1 = uvdv1_uvdv2[:, :4]
+  uvdvis2 = uvdv1_uvdv2[:, 4:]
+
+  clouds = [
+    RenderedCloud(
+      sample_id=ci1_sid,
+      ego_pose_uri=ci1_uri,
+      uvdvis=uvdvis1,
+      ci_uris=[r.uri for r in ci1_rows if 'camera' in r.uri.topic],
+      cuboids_uris=[r.uri for r in ci1_rows if 'cuboids' in r.uri.topic],
+      pc_uris=[r.uri for r in ci1_rows if 'lidar' in r.uri.topic],
+    ),
+    RenderedCloud(
+      sample_id=ci2_sid,
+      ego_pose_uri=ci2_uri,
+      uvdvis=uvdvis2,
+      ci_uris=[r.uri for r in ci2_rows if 'camera' in r.uri.topic],
+      cuboids_uris=[r.uri for r in ci2_rows if 'cuboids' in r.uri.topic],
+      pc_uris=[r.uri for r in ci2_rows if 'lidar' in r.uri.topic],
+    ),
+  ]
+
+  from psegs.exp.fused_lidar_flow import FlowRecord
+  assert (ci1_h, ci1_w) == (ci2_h, ci2_w)
+  flow_record = FlowRecord(
+                  segment_uri=ci1_uri.to_segment_uri(),
+                  clouds=clouds,
+                  u_min=0, u_max=ci1_w,
+                  v_min=0, v_max=ci1_h)
+  
+  return flow_record
+
+def pickles_to_flow_records(
+      pickles_path,
+      dest_path,
+      index_cache_path='/opt/psegs/dataroot/sample_idx/sidx.parquet',
+      max_n=-1):
+
+  from psegs import util
+
+  from psegs.spark import Spark
+  spark = Spark.getOrCreate()
+
+  from oarphpy import util as oputil
+  import os
+  PSEGS_OFLOW_PKL_PATHS = [
+      os.path.abspath(p)
+      for p in oputil.all_files_recursive(
+                  pickles_path,
+                  pattern='*.pkl')
+  ]
+  util.log.info("Have %s pickles" % len(PSEGS_OFLOW_PKL_PATHS))
+
+  import random
+  r = random.Random(1337)
+  r.shuffle(PSEGS_OFLOW_PKL_PATHS)
+  if max_n > 0:
+    PSEGS_OFLOW_PKL_PATHS = PSEGS_OFLOW_PKL_PATHS[:max_n]
+  path_rdd = spark.sparkContext.parallelize(
+                PSEGS_OFLOW_PKL_PATHS,
+                numSlices=len(PSEGS_OFLOW_PKL_PATHS))
+
+  ### Read pkl data in indexed format... 
+  ### ... in the end we'll have to read the pickles twice.
+  def to_join_key(uri, sample_id):
+    return ''.join((
+                uri.dataset, uri.split, uri.segment_id,
+                uri.topic, str(sample_id)))
+  def to_pkl_idx(path):
+    import pickle
+    with open(path, 'rb') as f:
+      row = pickle.load(f)
+    ci1_uri = row['ci1_uri']
+    ci2_uri = row['ci2_uri']
+    
+    # hacks we screwed up
+    toks = path.split('->')
+    assert len(toks) == 2, path
+    ci1_sid_fname = int(toks[0].split('_')[-1])
+    ci2_sid_fname = int(toks[1].split('_')[0])
+
+    return {
+      'ci1_uri_seg': str(row['ci1_uri'].to_segment_uri()),
+      'ci1_uri_key': to_join_key(ci1_uri, ci1_sid_fname),
+      # 'ci2_uri_seg': str(row['ci2_uri'].to_segment_uri()),
+      'ci2_uri_key': to_join_key(ci2_uri, ci2_sid_fname),
+      'pkl_path': path,
+    }
+
+  pkl_idx_rdd = path_rdd.map(to_pkl_idx)
+  pkl_idx_df = spark.createDataFrame(pkl_idx_rdd, samplingRatio=1.0)
+  pkl_idx_df = pkl_idx_df.persist()
+  util.log.info("Have pickle index of size %s" % pkl_idx_df.count())
+
+
+  ### Build Sample Index as necessary
+  seg_uris = [
+    r.ci1_uri_seg
+    for r in pkl_idx_df.select('ci1_uri_seg').distinct().collect()
+  ]
+  util.log.info("Have %s segments to do %s" % (len(seg_uris), sorted(seg_uris)))
+
+  build_sample_id_map(spark, index_cache_path, only_segments=seg_uris)
+  sample_idx_df = spark.read.parquet(index_cache_path)
+  
+  from psegs import datum
+  segs = set(datum.URI.from_str(s).segment_id for s in seg_uris)
+  sample_idx_df = sample_idx_df.filter(sample_idx_df.segment_id.isin(segs))
+  sample_idx_df = sample_idx_df.persist()
+
+  util.log.info(
+    "Read index for %s segments" % (
+      sample_idx_df.select('segment_id').distinct().count()))
+  # util.log.info(sample_idx_df.count())
+
+  # create "map" of ci_uri (str) -> all sample data associated with that ci_uri
+  from oarphpy.spark import RowAdapter
+  jt_rdd = sample_idx_df.rdd.map(
+                              lambda r: (str(r.dataset + r.split + r.segment_id + str(r.sample_id)), r)
+                              ).groupByKey().flatMap(
+                                  lambda kvs: [
+                                    {
+                                      'ci_uri_key': to_join_key(v.uri, v.sample_id),
+                                      'sample_datas': kvs[1].data,
+                                    }
+                                    for v in kvs[1]
+                                    if 'camera' in v.uri.topic
+                                  ])
+  jt_rdd = jt_rdd.cache()
+  jt_df = spark.createDataFrame(jt_rdd, samplingRatio=0.5)
+  jt_df = jt_df.repartition('ci_uri_key').persist()
+  util.log.info("Have %s sample data indexed by camera image" % jt_df.count())
+  
+
+  ### Join indices together and convert!
+
+  joined = pkl_idx_df.join(
+                jt_df,
+                (pkl_idx_df.ci1_uri_key == jt_df.ci_uri_key) |
+                  (pkl_idx_df.ci2_uri_key == jt_df.ci_uri_key) )
+  task_df = joined.groupBy('pkl_path').agg({'sample_datas': 'collect_list'})
+  task_df = task_df.persist()
+  util.log.info("Have %s tasks to do" % task_df.count())
+  import ipdb; ipdb.set_trace()
+
+  frec_rdd = task_df.rdd.map(task_row_to_flow_record)
+  
+  from psegs.exp.fused_lidar_flow import FLOW_RECORD_PROTO  
+  schema = RowAdapter.to_schema(FLOW_RECORD_PROTO)
+  frec_df = spark.createDataFrame(
+    frec_rdd.map(RowAdapter.to_row), schema=schema)
+
+  frec_df = frec_df.persist()
+  frec_df = frec_df.withColumn('dataset', frec_df['segment_uri.dataset'])
+  frec_df = frec_df.withColumn('split', frec_df['segment_uri.split'])
+  frec_df = frec_df.withColumn('segment_id', frec_df['segment_uri.segment_id'])
+
+  frec_df.write.save(
+        path=dest_path,
+        mode='append',
+        format='parquet',
+        partitionBy=['dataset', 'split', 'segment_id'],
+        compression='lz4')
+  util.log.info("Saved to %s" % dest_path)
+
+  # import pickle
+  # pickle.dump(task_df.take(1)[0], open('/tmp/task_row.pkl', 'wb'))
+
+  # import ipdb; ipdb.set_trace()
+  # print()
+
+  # def to_pkl_jrow(path):
+  #   from oarphpy.spark import RowAdapter
+  #   from pyspark.sql import Row
+  #   import pickle
+  #   pkldata_str = open(path, 'rb').read()
+  #   pkldata = pickle.loads(pkldata_str)
+    
+  #   pkldata.pop('v2v_flow')
+
+  #   jrow = Row(
+  #           ci1_uri_str=str(pkldata['ci1_uri']),
+  #           ci2_uri_str=str(pkldata['ci2_uri']),
+  #           pkldata_str=pkldata_str)
+  #   return jrow
+
+  #   # # asdf = row.pop('uvdij1_visible_uvdij2_visible')
+  #   # # row['uvd_viz1_uvd_viz2'] = asdf
+  #   # # from psegs.datum import URI
+  #   # # row['segment_uri'] = URI.from_str(row['ci1_uri']).to_segment_uri()
+  #   # return RowAdapter.to_row(Row(**row))
+
+  # pkl_rdd = path_rdd.map(to_pkl_jrow)
+  # import pyspark
+  # pkl_rdd = pkl_rdd.persist(pyspark.StorageLevel.DISK_ONLY)
+  
+  # # from psegs.datum.stamped_datum import URI_PROTO
+  # # import numpy as np
+  # # schema = RowAdapter.to_schema(Row(
+  # #   ci1_uri=URI_PROTO,
+  # #   ci2_uri=URI_PROTO,
+  # #   uvd_viz1_uvd_viz2=np.zeros((1, 4 + 4)),
+  # # ))
+  # pkl_df = spark.createDataFrame(pkl_rdd, samplingRatio=0.5)
+  
+  # joined = pkl_df.join(
+  #               jt_df,
+  #               (pkl_df.ci1_uri_str == jt_df.ci_uri_str) |
+  #                 (pkl_df.ci2_uri_str == jt_df.ci_uri_str) )
+  # task_df = joined.groupBy('pkl_path').agg({'sample_datas': 'collect_list'})
+
+
+  # import ipdb; ipdb.set_trace()
+  # print()
+
+  # # df = df.withColumn('dataset', df['ci1_uri.dataset'])
+  # # df = df.withColumn('split', df['ci1_uri.split'])
+  # # df = df.withColumn('segment_id', df['ci1_uri.segment_id'])
+  
+  # import ipdb; ipdb.set_trace()
+
+  # df.write.save(
+  #       path=dest_path,
+  #       format='parquet',
+  #       partitionBy=['dataset', 'split', 'segment_id'],
+  #       compression='lz4')
   
 
 
@@ -794,8 +1060,8 @@ even rgb-normal?  .. surfel...)
 
 
 if __name__ == '__main__':
-  from psegs.spark import Spark
-  spark = Spark.getOrCreate()
+  # from psegs.spark import Spark
+  # spark = Spark.getOrCreate()
 
   # # R = KITTI360_OurFused_FusedFlowDFFactory
   # # R = KITTI360_KITTIFused_FusedFlowDFFactory
@@ -806,8 +1072,15 @@ if __name__ == '__main__':
   # # R.build(spark=spark, only_segments=['psegs://segment_id=scene-0594'])#seg_uris[0]])
   # R.build(spark=spark, only_segments=seg_uris[150:200])
 
+  # import pickle
+  # task_row = pickle.load(open('/tmp/task_row.pkl', 'rb'))
+  # rec = task_row_to_flow_record(task_row)
+  # import ipdb; ipdb.set_trace()
 
-  build_sample_id_map(spark)
+  pickles_to_flow_records(
+    '/opt/psegs/dataroot/oflow_pickles',
+    '/opt/psegs/dataroot/psegs_flow_records/records.parquet',
+    max_n=10)
 
 
   # R = NuscKeyframesOFlowRenderer
@@ -825,58 +1098,3 @@ if __name__ == '__main__':
 
 
 
-  # from oarphpy import util as oputil
-  # import os
-  # PSEGS_OFLOW_PKL_PATHS = [
-  #     os.path.abspath(p)
-  #     for p in oputil.all_files_recursive(
-  #                 '/opt/psegs/dataroot/fused_oflow_pickles',
-  #                 pattern='*.pkl')
-  # ]
-  # print('len PSEGS_OFLOW_PKL_PATHS', len(PSEGS_OFLOW_PKL_PATHS))
-  # # print(PSEGS_OFLOW_PKL_PATHS)
-
-  # import random
-  # random.shuffle(PSEGS_OFLOW_PKL_PATHS)
-  # PSEGS_OFLOW_PKL_PATHS = PSEGS_OFLOW_PKL_PATHS[:100]
-  # path_rdd = spark.sparkContext.parallelize(
-  #               PSEGS_OFLOW_PKL_PATHS,
-  #               numSlices=len(PSEGS_OFLOW_PKL_PATHS))
-
-  # from oarphpy.spark import RowAdapter
-  # from pyspark.sql import Row
-  # def to_row(path):
-  #   import pickle
-  #   with open(path, 'rb') as f:
-  #       row = pickle.load(f)
-    
-  #   row.pop('v2v_flow')
-  #   asdf = row.pop('uvdij1_visible_uvdij2_visible')
-  #   row['uvd_viz1_uvd_viz2'] = asdf
-  #   # from psegs.datum import URI
-  #   # row['segment_uri'] = URI.from_str(row['ci1_uri']).to_segment_uri()
-  #   return RowAdapter.to_row(Row(**row))
-
-  # row_rdd = path_rdd.map(to_row)
-  # import pyspark
-  # row_rdd = row_rdd.persist(pyspark.StorageLevel.DISK_ONLY)
-  
-  # from psegs.datum.stamped_datum import URI_PROTO
-  # import numpy as np
-  # schema = RowAdapter.to_schema(Row(
-  #   ci1_uri=URI_PROTO,
-  #   ci2_uri=URI_PROTO,
-  #   uvd_viz1_uvd_viz2=np.zeros((1, 4 + 4)),
-  # ))
-  # df = spark.createDataFrame(row_rdd, schema=schema)
-  
-  # df = df.withColumn('dataset', df['ci1_uri.dataset'])
-  # df = df.withColumn('split', df['ci1_uri.split'])
-  # df = df.withColumn('segment_id', df['ci1_uri.segment_id'])
-  
-  # df.write.save(
-  #       path='/opt/psegs/dataroot/fused_oflow_pickles/psegs_oflow.parquet',
-  #       format='parquet',
-  #       partitionBy=['dataset', 'split', 'segment_id'],
-  #       compression='lz4')
-  
