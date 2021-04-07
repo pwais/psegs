@@ -793,7 +793,7 @@ def task_row_to_flow_record(task_row):
   assert len(ci1_recs) == 1, ci1_recs
   ci1_rec = ci1_recs[0]
 
-  ci2_recs = [r for r in ci2_rows if 'camera' in r.uri.topic] 
+  ci2_recs = [r for r in ci2_rows if r.uri.topic == ci1_uri.topic]
     # b/c ci2_uri broken in pickles before 4/7
   assert len(ci2_recs) == 1, ci2_recs
   ci2_rec = ci2_recs[0]
@@ -833,8 +833,8 @@ def task_row_to_flow_record(task_row):
   flow_record = FlowRecord(
                   segment_uri=ci1_uri.to_segment_uri(),
                   clouds=clouds,
-                  u_min=0, u_max=ci1_w,
-                  v_min=0, v_max=ci1_h)
+                  u_min=0.0, u_max=float(ci1_w),
+                  v_min=0.0, v_max=float(ci1_h))
   
   return flow_record
 
@@ -949,7 +949,6 @@ def pickles_to_flow_records(
   task_df = joined.groupBy('pkl_path').agg({'sample_datas': 'collect_list'})
   task_df = task_df.persist()
   util.log.info("Have %s tasks to do" % task_df.count())
-  import ipdb; ipdb.set_trace()
 
   frec_rdd = task_df.rdd.map(task_row_to_flow_record)
   
@@ -1080,7 +1079,7 @@ if __name__ == '__main__':
   pickles_to_flow_records(
     '/opt/psegs/dataroot/oflow_pickles',
     '/opt/psegs/dataroot/psegs_flow_records/records.parquet',
-    max_n=10)
+    max_n=100)
 
 
   # R = NuscKeyframesOFlowRenderer

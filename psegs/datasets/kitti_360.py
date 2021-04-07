@@ -464,7 +464,7 @@ class KITTI360SDTable(StampedDatumTableBase):
   def _get_all_segment_uris(cls):
     uris = [
       datum.URI(
-        dataset='kitti-360',
+        dataset=cls.DATASET_NAME,
         split='train',
         segment_id=seq)
       for seq in cls.FIXTURES.TRAIN_SEQUENCES
