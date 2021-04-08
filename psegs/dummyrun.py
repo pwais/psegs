@@ -951,26 +951,41 @@ def pickles_to_flow_records(
   task_df = task_df.persist()
   util.log.info("Have %s tasks to do" % task_df.count())
 
-  frec_rdd = task_df.rdd.map(task_row_to_flow_record)
-  frec_rdd = frec_rdd.repartition(task_df.count())
-  
-  from psegs.exp.fused_lidar_flow import FLOW_RECORD_PROTO  
-  schema = RowAdapter.to_schema(FLOW_RECORD_PROTO)
-  frec_df = spark.createDataFrame(
-    frec_rdd.map(RowAdapter.to_row), schema=schema)
+  # Do this in chunks because it keeps failing due to network otherwise
+  task_paths = [r.pkl_path for r in task_df.select('pkl_path').collect()]
 
-  frec_df = frec_df.persist()
-  frec_df = frec_df.withColumn('dataset', frec_df['segment_uri.dataset'])
-  frec_df = frec_df.withColumn('split', frec_df['segment_uri.split'])
-  frec_df = frec_df.withColumn('segment_id', frec_df['segment_uri.segment_id'])
+  from oarphpy import util as oputil
+  t = oputil.ThruputObserver(name='save_chunks', n_total=len(task_paths))
+  for task_chunk in oputil.ichunked(task_paths, 100):
+    t.start_block()
+    chunk_df = task_df.filter(task_df.pkl_path.isin(list(task_chunk)))
 
-  frec_df.write.save(
-        path=dest_path,
-        mode='append',
-        format='parquet',
-        partitionBy=['dataset', 'split', 'segment_id'],
-        compression='lz4')
-  util.log.info("Saved to %s" % dest_path)
+    frec_rdd = chunk_df.rdd.map(task_row_to_flow_record)
+    frec_rdd = frec_rdd.map(RowAdapter.to_row)
+    frec_rdd = frec_rdd.repartition(len(task_chunk))
+
+    import pyspark
+    frec_rdd = frec_rdd.persist(pyspark.StorageLevel.DISK_ONLY)
+    
+    from psegs.exp.fused_lidar_flow import FLOW_RECORD_PROTO  
+    schema = RowAdapter.to_schema(FLOW_RECORD_PROTO)
+    frec_df = spark.createDataFrame(frec_rdd, schema=schema)
+
+    frec_df = frec_df.persist()
+    frec_df = frec_df.withColumn('dataset', frec_df['segment_uri.dataset'])
+    frec_df = frec_df.withColumn('split', frec_df['segment_uri.split'])
+    frec_df = frec_df.withColumn('segment_id', frec_df['segment_uri.segment_id'])
+
+    frec_df.write.save(
+          path=dest_path,
+          mode='append',
+          format='parquet',
+          partitionBy=['dataset', 'split', 'segment_id'],
+          compression='lz4')
+    util.log.info("Saved some to %s" % dest_path)
+    t.stop_block(n=len(task_chunk))
+    t.maybe_log_progress(every_n=1)
+
 
   # import pickle
   # pickle.dump(task_df.take(1)[0], open('/tmp/task_row.pkl', 'wb'))
