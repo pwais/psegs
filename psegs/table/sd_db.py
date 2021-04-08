@@ -235,7 +235,14 @@ class StampedDatumDB(object):
       
       return StampedDatumDB.select_datum_df_from_uris(uris, self._df)
 
-  def get_keyed_sample_df(self, df, key_col='key', uri_col='uri', spark=None):
+  def get_keyed_sample_df(
+                self,
+                df,
+                key_col='key',
+                uri_col='uri',
+                datum_col='datums',
+                spark=None):
+    
     suri_df = df.select(
                     df[uri_col + '.dataset'],
                     df[uri_col + '.split'],
@@ -245,7 +252,7 @@ class StampedDatumDB(object):
 
     datum_df = self._df
     key_uri_df = df.withColumnRenamed(uri_col, 'user_uri')
-    key_datum_df = datum_df.join(
+    joined = datum_df.join(
           key_uri_df,
           (datum_df.uri.dataset == key_uri_df['user_uri.dataset']) &
           (datum_df.uri.split == key_uri_df['user_uri.split']) &
@@ -255,6 +262,18 @@ class StampedDatumDB(object):
 
     import attr
     datum_colnames = [f.name for f in attr.fields(StampedDatum)]
-    aggs = dict((c, 'collect_list') for c in datum_colnames)
-    key_sample_df = key_datum_df.groupBy(key_col).agg(aggs)
+    datum_colnames += ['__pyclass__']
+    
+    from pyspark.sql import functions as F
+    agg = F.collect_list(F.struct(*datum_colnames)).alias(datum_col)
+    key_sample_df = joined.groupBy(key_col).agg(agg)
+    
     return key_sample_df
+
+  @staticmethod
+  def datum_rows_to_sample(datum_rows):
+    from psegs import datum
+    from oarphpy.spark import RowAdapter
+
+    datums = [RowAdapter.from_row(d) for d in datum_rows]
+    return datum.Sample(datums=datums)

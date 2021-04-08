@@ -79,6 +79,10 @@ class T1(TestTableBase):
       uri=BASE_URI.replaced(
         segment_id='segt1.1', topic='c1', timestamp=1),
       camera_image=CameraImage(sensor_name='c1', timestamp=1)),
+    StampedDatum(
+      uri=BASE_URI.replaced(
+        segment_id='segt1.1', topic='l1', timestamp=1),
+      point_cloud=PointCloud(sensor_name='l1', timestamp=1)),
 
     StampedDatum(
       uri=BASE_URI.replaced(
@@ -103,9 +107,24 @@ class T2(TestTableBase):
       camera_image=CameraImage(sensor_name='c1', timestamp=1)),
   ]
 
+class T3(TestTableBase):
+  TEST_DATUMS = ([
+      StampedDatum(
+        uri=URI(dataset='t3', split='s',
+          segment_id='segt3.1', topic='c1', timestamp=t+1),
+        camera_image=CameraImage(sensor_name='c1', timestamp=t+1))
+      for t in range(10)
+    ] + [ 
+      StampedDatum(
+        uri=URI(dataset='t3', split='s',
+          segment_id='segt3.2', topic='c1', timestamp=t+1),
+        camera_image=CameraImage(sensor_name='c1', timestamp=t+1))
+      for t in range(20)
+    ])
+
 def _create_db_simple(spark=None):
   spark = spark or testutil.LocalSpark.getOrCreate()
-  db = StampedDatumDB([T1, T2], spark=spark)
+  db = StampedDatumDB([T1, T2, T3], spark=spark)
   return db
 
 
@@ -215,43 +234,75 @@ def test_db_get_datum_df_uri_df():
 
 
 def test_db_get_keyed_sample_df():
-  key_uris_exist = {
-    'k1':
-      URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=1, topic='c'),
-    'k2':
-      URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=2, topic='c'),
-    'k1':
-      URI(dataset='t2', split='s', segment_id='segt2.2', timestamp=1, topic='c1'),
-  }
-  uris_no_exist = {
-    'k2':
-      URI(dataset='no-exist', segment_id='no-exist', timestamp=1, topic='c1')
-  }
+  key_uris_exist = [
+    ('k-span-segs',
+      URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=1, topic='c')),
+    ('k-span-segs',
+      URI(dataset='t2', split='s', segment_id='segt2.2', timestamp=1, topic='c1')),
+
+    ('solo-seg-datum',
+      URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=2, topic='c')),
+    
+    ('two-topic',
+      URI(dataset='t1', split='s', segment_id='segt1.1', timestamp=1, topic='c1')),
+    ('two-topic',
+      URI(dataset='t1', split='s', segment_id='segt1.1', timestamp=1, topic='l1')),
+  ]
+  key_uris_exist += [
+    ('many',
+      URI(
+        dataset='t3',
+        split='s',
+        segment_id='segt3.2',
+        timestamp=t+1,
+        topic='c1'))
+    for t in range(20)
+  ]
+  uris_no_exist = [
+    ('solo-seg-datum',
+      URI(dataset='no-exist', segment_id='no-exist', timestamp=1, topic='c1')),
+  ]
+  uris_no_exist += [
+    ('no-exist-many',
+      URI(
+        dataset='t3',
+        split='s',
+        segment_id='segt3.1',
+        timestamp=t+1,
+        topic='c1'))
+    for t in range(30, 100)
+  ]
   with testutil.LocalSpark.sess() as spark:
     db = _create_db_simple(spark=spark)
 
-    rows = [{'key': k, 'uri': u} for k, u in key_uris_exist.items()]
-    rows += [{'key': k, 'uri': u} for k, u in uris_no_exist.items()]
+    rows = [{'key': k, 'uri': u} for k, u in key_uris_exist]
+    rows += [{'key': k, 'uri': u} for k, u in uris_no_exist]
     from oarphpy.spark import RowAdapter
     rows = [RowAdapter.to_row(r) for r in rows]
     schema = RowAdapter.to_schema({'key': 's', 'uri': URI()})
     df = spark.createDataFrame(rows, schema=schema)
 
     key_sample_df = db.get_keyed_sample_df(df)
-    key_sample_df.show()
-    import ipdb; ipdb.set_trace()
-    print()
 
+    expected_key_to_uris_exist = {}
+    for k, u in key_uris_exist:
+      expected_key_to_uris_exist.setdefault(k, [])
+      expected_key_to_uris_exist[k].append(u)
+    
+    key_sample_df = key_sample_df.persist()
 
+    actual_keys = set(r.key for r in key_sample_df.select('key').collect())
+    assert actual_keys == set(expected_key_to_uris_exist.keys())
 
+    for key, expected_uris in expected_key_to_uris_exist.items():
+      row_df = key_sample_df.filter(key_sample_df.key == key)
 
+      datum_rows = row_df.collect()[0].asDict()['datums']
+      assert len(datum_rows) == len(expected_uris)
 
-
-
-
-
-
-
-
-
-
+      datums = [RowAdapter.from_row(rr) for rr in datum_rows]
+      assert sorted(d.uri for d in datums) == sorted(expected_uris)
+    
+      samp = db.datum_rows_to_sample(datum_rows)
+      assert len(samp.uri.sel_datums) == len(expected_uris)
+      assert len(samp.datums) == len(expected_uris)
