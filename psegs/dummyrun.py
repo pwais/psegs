@@ -1081,7 +1081,7 @@ if __name__ == '__main__':
   pickles_to_flow_records(
     '/opt/psegs/dataroot/oflow_pickles',
     '/opt/psegs/dataroot/psegs_flow_records/records.parquet',
-    max_n=1000)
+    max_n=-1)
 
 
   # R = NuscKeyframesOFlowRenderer
