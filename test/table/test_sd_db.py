@@ -78,16 +78,16 @@ class T1(TestTableBase):
     StampedDatum(
       uri=BASE_URI.replaced(
         segment_id='segt1.1', topic='c1', timestamp=1),
-      camera_image=CameraImage()),
+      camera_image=CameraImage(sensor_name='c1', timestamp=1)),
 
     StampedDatum(
       uri=BASE_URI.replaced(
         segment_id='segt1.2', topic='c', timestamp=1),
-      camera_image=CameraImage()),
+      camera_image=CameraImage(sensor_name='c', timestamp=1)),
     StampedDatum(
       uri=BASE_URI.replaced(
         segment_id='segt1.2', topic='c', timestamp=2),
-      camera_image=CameraImage()),
+      camera_image=CameraImage(sensor_name='c', timestamp=2)),
   ]
 
 class T2(TestTableBase):
@@ -96,11 +96,11 @@ class T2(TestTableBase):
     StampedDatum(
       uri=BASE_URI.replaced(
         segment_id='segt2.1', topic='c1', timestamp=1),
-      camera_image=CameraImage()),
+      camera_image=CameraImage(sensor_name='c1', timestamp=1)),
     StampedDatum(
       uri=BASE_URI.replaced(
         segment_id='segt2.2', topic='c1', timestamp=1),
-      camera_image=CameraImage()),
+      camera_image=CameraImage(sensor_name='c1', timestamp=1)),
   ]
 
 def _create_db_simple(spark=None):
@@ -214,94 +214,44 @@ def test_db_get_datum_df_uri_df():
     assert sorted(uris_exist) == sorted(actual_uris)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class TestStampedDatumDBBase(StampedDatumTableBase):
-  """Create a clean temp directory for each test table"""
-
-  @classmethod
-  def table_root(cls):
-    if not hasattr(cls, '_table_tempdir'):
-      cls._table_tempdir = testutil.test_tempdir('sd_test_' + cls.__name__)
-    return cls._table_tempdir
-
-
-def test_sd_table_simple():
-  test_datums = [
-    StampedDatum(
-      uri=URI(
-        dataset='d',
-        split='s',
-        segment_id='segment'),
-      transform=Transform()),
-  ]
-
-  class Simple(TestStampedDatumTableBase):
-    @classmethod
-    def _create_datum_rdds(
-          cls, spark, existing_uri_df=None, only_segments=None):
-      return [spark.sparkContext.parallelize(test_datums)]
-    
+def test_db_get_keyed_sample_df():
+  key_uris_exist = {
+    'k1':
+      URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=1, topic='c'),
+    'k2':
+      URI(dataset='t1', split='s', segment_id='segt1.2', timestamp=2, topic='c'),
+    'k1':
+      URI(dataset='t2', split='s', segment_id='segt2.2', timestamp=1, topic='c1'),
+  }
+  uris_no_exist = {
+    'k2':
+      URI(dataset='no-exist', segment_id='no-exist', timestamp=1, topic='c1')
+  }
   with testutil.LocalSpark.sess() as spark:
-    Simple.build(spark)
-    df = Simple.as_df(spark)
-    assert df.count() == 1
-    assert df.filter((df.uri.dataset=='d')).count() == 1
+    db = _create_db_simple(spark=spark)
 
-    datum_rdd = Simple.as_datum_rdd(spark)
-    datums = datum_rdd.collect()
-    assert len(datums) == 1
-    assert datums[0] == test_datums[0]
+    rows = [{'key': k, 'uri': u} for k, u in key_uris_exist.items()]
+    rows += [{'key': k, 'uri': u} for k, u in uris_no_exist.items()]
+    from oarphpy.spark import RowAdapter
+    rows = [RowAdapter.to_row(r) for r in rows]
+    schema = RowAdapter.to_schema({'key': 's', 'uri': URI()})
+    df = spark.createDataFrame(rows, schema=schema)
+
+    key_sample_df = db.get_keyed_sample_df(df)
+    key_sample_df.show()
+    import ipdb; ipdb.set_trace()
+    print()
 
 
-def test_sd_table_one_of_every():
-  BASE_URI = URI(dataset='d', split='s', segment_id='seg')
-  test_datums = [
-    StampedDatum(
-      uri=BASE_URI.replaced(topic='camera|front', timestamp=1),
-      camera_image=CameraImage()),
-    StampedDatum(
-      uri=BASE_URI.replaced(topic='labels|cuboids', timestamp=1),
-      cuboids=[Cuboid()]),
-    StampedDatum(
-      uri=BASE_URI.replaced(topic='lidar|front', timestamp=1),
-      point_cloud=PointCloud()),
-    StampedDatum(
-      uri=BASE_URI.replaced(topic='ego_pose', timestamp=1),
-      transform=Transform()),
-  ]
 
-  class OneOfEvery(TestStampedDatumTableBase):
-    @classmethod
-    def _create_datum_rdds(
-          cls, spark, existing_uri_df=None, only_segments=None):
-      return [spark.sparkContext.parallelize(test_datums)]
-    
-  with testutil.LocalSpark.sess() as spark:
-    OneOfEvery.build(spark)
-    df = OneOfEvery.as_df(spark)
-    assert df.count() == len(test_datums)
-    
-    # Let's do a basic query
-    TOPICS = [datum.uri.topic for datum in test_datums]
-    assert (
-      sorted(TOPICS) ==
-      sorted(r.topic for r in df.select('uri.topic').collect()))
 
-    datum_rdd = OneOfEvery.as_datum_rdd(spark)
-    datums = datum_rdd.collect()
-    assert sorted(datums) == sorted(test_datums)
+
+
+
+
+
+
+
+
+
+

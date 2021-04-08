@@ -896,6 +896,7 @@ def pickles_to_flow_records(
     }
 
   pkl_idx_rdd = path_rdd.map(to_pkl_idx)
+  pkl_idx_rdd = pkl_idx_rdd.cache()
   pkl_idx_df = spark.createDataFrame(pkl_idx_rdd, samplingRatio=1.0)
   pkl_idx_df = pkl_idx_df.persist()
   util.log.info("Have pickle index of size %s" % pkl_idx_df.count())
@@ -951,6 +952,7 @@ def pickles_to_flow_records(
   util.log.info("Have %s tasks to do" % task_df.count())
 
   frec_rdd = task_df.rdd.map(task_row_to_flow_record)
+  frec_rdd = frec_rdd.repartition(task_df.count())
   
   from psegs.exp.fused_lidar_flow import FLOW_RECORD_PROTO  
   schema = RowAdapter.to_schema(FLOW_RECORD_PROTO)
@@ -1079,7 +1081,7 @@ if __name__ == '__main__':
   pickles_to_flow_records(
     '/opt/psegs/dataroot/oflow_pickles',
     '/opt/psegs/dataroot/psegs_flow_records/records.parquet',
-    max_n=100)
+    max_n=1000)
 
 
   # R = NuscKeyframesOFlowRenderer

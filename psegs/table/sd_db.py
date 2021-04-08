@@ -19,7 +19,7 @@ import attr
 from psegs import util
 from psegs.datum.uri import URI
 from psegs.table.sd_table import StampedDatumTableBase
-from psegs.datum.stamped_datum import Sample
+from psegs.datum.stamped_datum import Sample, StampedDatum
 
 
 URI_ATTRNAMES = set(a.name for a in attr.fields(URI))
@@ -131,6 +131,14 @@ class StampedDatumDB(object):
       datum_df = self._build_datum_df(uri, spark=spark)
       self._add_datum_df(datum_df, seg_uri=suri)
   
+  def _ensure_have_data(self, seg_uris, spark=None, ignore_unknown=False):
+    for u in seg_uris:
+      try:
+        self._maybe_add_segment(u, spark=spark)
+      except NoKnownTable as e:
+        if not ignore_unknown:
+          raise e
+
   @staticmethod
   def select_datum_df_from_uris(uris, datum_df):
     # Compile `uris` into the query itself for maximum speed
@@ -198,18 +206,10 @@ class StampedDatumDB(object):
   def get_datum_df(self, uris=None, spark=None):
     spark = self._spark or spark
 
-    def _ensure_have_data(seg_uris, ignore_unknown=False):
-      for u in seg_uris:
-        try:
-          self._maybe_add_segment(u, spark=spark)
-        except NoKnownTable as e:
-          if not ignore_unknown:
-            raise e
-
     if hasattr(uris, '_jrdd'):
       uri_rdd = uris
       seg_uris = uri_rdd.map(to_seg_uri_str).distinct().collect()
-      _ensure_have_data(seg_uris, ignore_unknown=True)
+      self._ensure_have_data(seg_uris, ignore_unknown=True, spark=spark)
       return StampedDatumDB.select_datum_df_from_uri_rdd(
                 spark or self._spark,
                 uri_rdd,
@@ -218,13 +218,13 @@ class StampedDatumDB(object):
       uri_df = uris
       suri_df = uri_df.select('dataset', 'split', 'segment_id').distinct()
       seg_uris = suri_df.rdd.map(to_seg_uri_str).distinct().collect()
-      _ensure_have_data(seg_uris, ignore_unknown=True)
+      self._ensure_have_data(seg_uris, ignore_unknown=True, spark=spark)
       return StampedDatumDB.select_datum_df_from_uri_df(
                 uri_df,
                 self._df)
     else:
       seg_uris = list(set(to_seg_uri_str(u) for u in uris))
-      _ensure_have_data(seg_uris)
+      self._ensure_have_data(seg_uris, spark=spark)
 
       uris = [URI.from_str(u) for u in uris]
       uris = list(itertools.chain.from_iterable(
@@ -234,3 +234,27 @@ class StampedDatumDB(object):
       print('urisuris', uris)
       
       return StampedDatumDB.select_datum_df_from_uris(uris, self._df)
+
+  def get_keyed_sample_df(self, df, key_col='key', uri_col='uri', spark=None):
+    suri_df = df.select(
+                    df[uri_col + '.dataset'],
+                    df[uri_col + '.split'],
+                    df[uri_col + '.segment_id']).distinct()
+    seg_uris = suri_df.rdd.map(to_seg_uri_str).distinct().collect()
+    self._ensure_have_data(seg_uris, ignore_unknown=True, spark=spark)
+
+    datum_df = self._df
+    key_uri_df = df.withColumnRenamed(uri_col, 'user_uri')
+    key_datum_df = datum_df.join(
+          key_uri_df,
+          (datum_df.uri.dataset == key_uri_df['user_uri.dataset']) &
+          (datum_df.uri.split == key_uri_df['user_uri.split']) &
+          (datum_df.uri.segment_id == key_uri_df['user_uri.segment_id']) &
+          (datum_df.uri.topic == key_uri_df['user_uri.topic']) &
+          (datum_df.uri.timestamp == key_uri_df['user_uri.timestamp']))
+
+    import attr
+    datum_colnames = [f.name for f in attr.fields(StampedDatum)]
+    aggs = dict((c, 'collect_list') for c in datum_colnames)
+    key_sample_df = key_datum_df.groupBy(key_col).agg(aggs)
+    return key_sample_df
