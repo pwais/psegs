@@ -86,26 +86,9 @@ class StampedDatumDB(object):
 
   def __init__(self, tables=[], spark=None):
     self._tables = tables
-    self._segments = []
-    self._df = None
+    self._segment_to_df = {}
     self._spark = spark
   
-  def _add_datum_df(self, datum_df, seg_uri=None):
-    if not seg_uri:
-      row = datum_df.select('uri').take(1)
-      row = StampedDatumTableBase.from_row(row)
-      uri = row.uri
-      seg_uri = uri.to_segment_uri()
-    
-    if self._df is None:
-      self._df = datum_df
-    else:
-      from oarphpy.spark import union_dfs
-      self._df = union_dfs(self._df, datum_df)
-      
-    self._segments.append(seg_uri)
-    util.log.info("Added DF for %s" % seg_uri)
-      
   def _build_datum_df(self, uri, spark=None):
     spark = self._spark or spark
     suri = URI.from_str(uri).to_segment_uri()
@@ -124,20 +107,92 @@ class StampedDatumDB(object):
     datum_df = T.get_segment_datum_df(spark, suri)
     return datum_df
 
-  def _maybe_add_segment(self, uri, spark=None):
+  def _get_df_for_segment(self, suri, spark=None):
     spark = self._spark or spark
-    suri = URI.from_str(uri).to_segment_uri()
-    if not any(suri.soft_matches_segment_of(u) for u in self._segments):
-      datum_df = self._build_datum_df(uri, spark=spark)
-      self._add_datum_df(datum_df, seg_uri=suri)
-  
-  def _ensure_have_data(self, seg_uris, spark=None, ignore_unknown=False):
-    for u in seg_uris:
+    suri = URI.from_str(suri).to_segment_uri()
+
+    matching_seg = None
+    for known_seg_str in self._segment_to_df.keys():
+      known_seg = URI.from_str(known_seg_str)
+      if suri.soft_matches_segment_of(known_seg):
+        matching_seg = known_seg
+        break
+    
+    if matching_seg is None:
+      datum_df = self._build_datum_df(suri, spark=spark)
+
+      # Use the datum_df to get a fully-qualified segment_uri
+      row = datum_df.select('uri').take(1)
+      assert row, "Dataset for %s is empty" % suri
+      uri = StampedDatumTableBase.from_row(row[0].uri)
+      matching_seg = uri.to_segment_uri()
+      self._segment_to_df[str(matching_seg)] = datum_df
+      util.log.info("Added DF for %s" % matching_seg)
+
+    return self._segment_to_df[str(matching_seg)]
+
+  def _get_union_df_for_segments(
+            self,
+            suris,
+            ignore_unknown_tables=False,
+            spark=None):
+    
+    def get_df(suri):
       try:
-        self._maybe_add_segment(u, spark=spark)
+        return self._get_df_for_segment(suri, spark=spark)
       except NoKnownTable as e:
-        if not ignore_unknown:
+        if ignore_unknown_tables:
+          return None
+        else:
           raise e
+
+    dfs = [get_df(suri) for suri in suris]
+    dfs = [d for d in dfs if d is not None]
+    if not dfs:
+      if ignore_unknown_tables:
+        spark = spark or self._spark
+        empty_df = spark.createDataFrame(
+                      [], schema=StampedDatumTableBase.table_schema())
+        return empty_df
+      else:
+        raise NoKnownTable("No tables for segments: %s" % suris)
+    
+    from oarphpy.spark import union_dfs
+    return union_dfs(*dfs)
+
+
+  # def _add_datum_df(self, datum_df, seg_uri=None):
+  #   if not seg_uri:
+  #     row = datum_df.select('uri').take(1)
+  #     row = StampedDatumTableBase.from_row(row)
+  #     uri = row.uri
+  #     seg_uri = uri.to_segment_uri()
+    
+  #   if self._df is None:
+  #     self._df = datum_df
+  #   else:
+  #     from oarphpy.spark import union_dfs
+  #     self._df = union_dfs(self._df, datum_df)
+      
+  #   self._segments.append(seg_uri)
+    
+      
+  
+
+  # def _maybe_add_segment(self, uri, spark=None):
+  #   spark = self._spark or spark
+  #   suri = URI.from_str(uri).to_segment_uri()
+  #   if not any(suri.soft_matches_segment_of(u) for u in self._segments):
+  #     datum_df = self._build_datum_df(uri, spark=spark)
+  #     self._add_datum_df(datum_df, seg_uri=suri)
+  
+  # def _ensure_have_data(self, seg_uris, spark=None, ignore_unknown=False):
+  #   for u in seg_uris:
+  #     try:
+  #       self._maybe_add_segment(u, spark=spark)
+  #     except NoKnownTable as e:
+  #       if not ignore_unknown:
+  #         raise e
 
   @staticmethod
   def select_datum_df_from_uris(uris, datum_df):
@@ -164,10 +219,6 @@ class StampedDatumDB(object):
       return reduce(lambda a, b: a & b, toks)
       
     # Construct SELECT * FROM T WHERE uri = uri1 OR uri = uri2 OR ...
-    print(reduce(
-            lambda a, b: a | b,
-            (_to_match(uri) for uri in uris)
-          ))
     df = datum_df.where(
           reduce(
             lambda a, b: a | b,
@@ -196,8 +247,6 @@ class StampedDatumDB(object):
 
   def get_sample(self, uri, spark=None):
     uri = URI.from_str(uri)
-    self._maybe_add_segment(uri, spark=spark)
-    
     uris = uri.get_datum_uris() or [uri]
     datum_df = self.get_datum_df(uris=uris, spark=spark)
     datum_rdd = StampedDatumTableBase.sd_df_to_rdd(datum_df)
@@ -209,31 +258,33 @@ class StampedDatumDB(object):
     if hasattr(uris, '_jrdd'):
       uri_rdd = uris
       seg_uris = uri_rdd.map(to_seg_uri_str).distinct().collect()
-      self._ensure_have_data(seg_uris, ignore_unknown=True, spark=spark)
+      datum_df = self._get_union_df_for_segments(
+                        seg_uris, ignore_unknown_tables=True, spark=spark)
       return StampedDatumDB.select_datum_df_from_uri_rdd(
                 spark or self._spark,
                 uri_rdd,
-                self._df)
+                datum_df)
     elif hasattr(uris, 'rdd'):
       uri_df = uris
       suri_df = uri_df.select('dataset', 'split', 'segment_id').distinct()
       seg_uris = suri_df.rdd.map(to_seg_uri_str).distinct().collect()
-      self._ensure_have_data(seg_uris, ignore_unknown=True, spark=spark)
+      datum_df = self._get_union_df_for_segments(
+                        seg_uris, ignore_unknown_tables=True, spark=spark)
       return StampedDatumDB.select_datum_df_from_uri_df(
                 uri_df,
-                self._df)
+                datum_df)
     else:
       seg_uris = list(set(to_seg_uri_str(u) for u in uris))
-      self._ensure_have_data(seg_uris, spark=spark)
+      datum_df = self._get_union_df_for_segments(
+                        seg_uris, ignore_unknown_tables=False, spark=spark)
 
       uris = [URI.from_str(u) for u in uris]
       uris = list(itertools.chain.from_iterable(
         (u.get_datum_uris() or [u])
         for u in uris
       ))
-      print('urisuris', uris)
       
-      return StampedDatumDB.select_datum_df_from_uris(uris, self._df)
+      return StampedDatumDB.select_datum_df_from_uris(uris, datum_df)
 
   def get_keyed_sample_df(
                 self,
@@ -248,9 +299,9 @@ class StampedDatumDB(object):
                     df[uri_col + '.split'],
                     df[uri_col + '.segment_id']).distinct()
     seg_uris = suri_df.rdd.map(to_seg_uri_str).distinct().collect()
-    self._ensure_have_data(seg_uris, ignore_unknown=True, spark=spark)
+    datum_df = self._get_union_df_for_segments(
+                        seg_uris, ignore_unknown_tables=True, spark=spark)
 
-    datum_df = self._df
     key_uri_df = df.withColumnRenamed(uri_col, 'user_uri')
     joined = datum_df.join(
           key_uri_df,

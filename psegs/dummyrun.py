@@ -10,256 +10,21 @@ from psegs.exp.fused_lidar_flow import FusedFlowDFFactory
 import IPython.display
 import PIL.Image
 
-from psegs.exp.semantic_kitti import SemanticKITTISDTable
 
-class SemanticKITTSampleDFFactory(SampleDFFactory):
-    
-    SRC_SD_TABLE = SemanticKITTISDTable
-    
-    @classmethod
-    def build_df_for_segment(cls, spark, segment_uri):
-        seg_rdd = cls.SRC_SD_TABLE.get_segment_datum_rdd(spark, segment_uri)
-        
-        def to_task_row(scan_id_iter_sds):
-            scan_id, iter_sds = scan_id_iter_sds
-            camera_images = []
-            point_clouds = []
-            for sd in iter_sds:
-                if sd.camera_image is not None:
-                    camera_images.append(sd)
-                elif sd.point_cloud is not None:
-                    point_clouds.append(sd)
-            
-            from pyspark import Row
-            r = Row(
-                    sample_id=int(scan_id),
-                    pc_sds=point_clouds,
-                    cuboids_sds=[], # SemanticKITTI has no cuboids
-                    ci_sds=camera_images) 
-            from oarphpy.spark import RowAdapter
-            return RowAdapter.to_row(r)
-            
-        grouped = seg_rdd.groupBy(lambda sd: sd.uri.extra['semantic_kitti.scan_id'])
-        row_rdd = grouped.map(to_task_row)
-
-        df = spark.createDataFrame(row_rdd, schema=cls.table_schema())
-        df = df.persist()
-        return df
-
-class SemanticKITTIFusedWorldCloudTable(CloudFuser):
-    FUSED_LIDAR_SD_TABLE = SemanticKITTSampleDFFactory
-
-    # SemanticKITTI has no cuboids, so we skip this step.
-    HAS_OBJ_CLOUDS = False
-
-
-class SemanticKITTIFusedFlowDFFactory(FusedFlowDFFactory):
-  SAMPLE_DF_FACTORY = SemanticKITTSampleDFFactory
-  FUSED_LIDAR_SD_TABLE = SemanticKITTIFusedWorldCloudTable
+from psegs.exp.fused_lidar_flow import SemanticKITTIFusedFlowDFFactory
 
 
 
 # class SemanticKITTIOFlowRenderer(OpticalFlowRenderBase):
 #     FUSED_LIDAR_SD_TABLE = SemanticKITTIFusedWorldCloudTable
 
-from psegs.datasets.kitti_360 import KITTI360SDTable
-class KITTI360_OurFused(KITTI360SDTable):
-    INCLUDE_FISHEYES = False
-    INCLUDE_FUSED_CLOUDS = False  # Use our own fused clouds
+# from psegs.exp.fused_lidar_flow import KITTI360_OurFused_FusedFlowDFFactory
 
-class KITTI360_OurFused_SampleDFFactory(SampleDFFactory):
-    
-    SRC_SD_TABLE = KITTI360_OurFused
-
-    @classmethod
-    def build_df_for_segment(cls, spark, segment_uri):
-        from psegs import util
-        
-        datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
-        datum_df.registerTempTable('datums')
-        
-        util.log.info('Building sample table for %s ...' % segment_uri)
-        
-        spark.catalog.dropTempView('kitti360_sample_df')
-        spark.sql("""
-            CACHE TABLE kitti360_sample_df OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
-            SELECT 
-              INT(uri.extra.`kitti-360.frame_id`) AS sample_id,
-              COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
-                  FILTER (WHERE uri.topic LIKE '%lidar%') AS pc_sds,
-              COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
-                  FILTER (WHERE uri.topic LIKE '%cuboid%') AS cuboids_sds,
-              COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
-                  FILTER (WHERE uri.topic LIKE '%camera%') AS ci_sds
-            FROM datums
-            WHERE (
-              uri.topic LIKE '%cuboid%' OR
-              uri.topic LIKE '%lidar%' OR
-              uri.topic LIKE '%camera%'
-            ) AND (
-              camera_image is NULL OR (camera_image.extra.`kitti-360.has-valid-ego-pose` = 'True')
-            ) AND (
-              point_cloud is NULL OR (point_cloud.extra.`kitti-360.has-valid-ego-pose` = 'True')
-            )
-            GROUP BY sample_id
-            HAVING SIZE(pc_sds) > 0 AND SIZE(ci_sds) > 0
-        """)
-        
-        sample_df = spark.sql('SELECT * FROM kitti360_sample_df')
-        n_parts = int(max(10, sample_df.count() // 10))
-        sample_df = sample_df.repartition(n_parts, 'sample_id')
-        util.log.info('... done.')
-        return sample_df
-
-class KITTI360_OurFused_WorldCloudTableBase(CloudFuser):
-  FUSED_LIDAR_SD_TABLE = KITTI360_OurFused_SampleDFFactory
-
-class KITTI360_OurFused_FusedFlowDFFactory(FusedFlowDFFactory):
-  SAMPLE_DF_FACTORY = KITTI360_OurFused_SampleDFFactory
-  FUSED_LIDAR_SD_TABLE = KITTI360_OurFused_WorldCloudTableBase
-    
+from psegs.exp.fused_lidar_flow import KITTI360_OurFused_FusedFlowDFFactory
+from psegs.exp.fused_lidar_flow import KITTI360_KITTIFused_SampleDFFactory
 
         
-
-
-
-
-class KITTI360_KITTIFused(KITTI360SDTable):
-    INCLUDE_FISHEYES = False
-    INCLUDE_FUSED_CLOUDS = True  # Use KITTI's fused clouds
-    DATASET_NAME = 'kitti-360-fused'
-
-class KITTI360_KITTIFused_SampleDFFactory(SampleDFFactory):
-    
-    SRC_SD_TABLE = KITTI360_KITTIFused
-
-    @classmethod
-    def build_df_for_segment(cls, spark, segment_uri):
-        from psegs import util
-        
-        util.log.info(
-          'Building sample table for %s ...' % segment_uri)
-
-        datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
-        # datum_df = datum_df.persist()
-        
-        spark.catalog.dropTempView('datums')
-        datum_df.registerTempTable('datums')
-
-        # KITTI-360 fused clouds have data for multiple frames in each
-        # individual file.  We only want to read each file once, so let's
-        # prune the 'datums' table to contain only *distinct* clouds from
-        # the available datums (and all other non-cloud data).
-        valid_frames_df = spark.sql("""
-            SELECT
-              FIRST(uri.extra.`kitti-360.frame_id`) AS frame_id,
-              uri.extra.`kitti-360.fused_cloud_path` AS cloud_path
-            FROM datums
-            WHERE uri.topic LIKE '%lidar|fused_static%'
-            GROUP BY uri.extra.`kitti-360.fused_cloud_path`
-            """)
-        valid_fids = set(
-          r.frame_id for r in valid_frames_df.collect()
-          if r.cloud_path is not None
-        )
-        util.log.info(
-          "... found %s distinct world clouds ..." % len(valid_fids))
-        valid_fids_str = ','.join("'%s'" % fid for fid in valid_fids)
-
-        datum_df = spark.sql("""
-            SELECT *
-            FROM datums
-            WHERE
-              uri.topic NOT LIKE '%lidar%' OR
-              (
-                uri.topic LIKE '%lidar|fused_static%' AND
-                uri.extra.`kitti-360.frame_id` IN ( {valid_fids_str} )
-              )
-        """.format(valid_fids_str=valid_fids_str))
-        datum_df.registerTempTable('kitti360_kfused_datums')
-
-
-        # Now collect datums, using only the distinct fused clouds we
-        # collected above
-        spark.catalog.dropTempView('kitti360_kfused_sample_df')
-        spark.sql("""
-            CACHE TABLE 
-              kitti360_kfused_sample_df
-              OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
-            SELECT 
-              INT(uri.extra.`kitti-360.frame_id`) AS sample_id,
-              COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
-                  FILTER (WHERE uri.topic LIKE '%lidar%') AS pc_sds,
-              COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
-                  FILTER (WHERE uri.topic LIKE '%cuboid%') AS cuboids_sds,
-              COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
-                  FILTER (WHERE uri.topic LIKE '%camera%') AS ci_sds
-            FROM kitti360_kfused_datums
-            WHERE (
-              uri.topic LIKE '%cuboid%' OR
-              uri.topic LIKE '%lidar|fused_static%' OR
-              uri.topic LIKE '%camera%'
-            ) AND (
-              camera_image is NULL OR (camera_image.extra.`kitti-360.has-valid-ego-pose` = 'True')
-            ) AND (
-              point_cloud is NULL OR (point_cloud.extra.`kitti-360.has-valid-ego-pose` = 'True')
-            )
-            GROUP BY sample_id
-        """)
-        
-        sample_df = spark.sql('SELECT * FROM kitti360_kfused_sample_df')
-        util.log.info('... done.')
-        return sample_df
-
-from psegs.exp.fused_lidar_flow import WorldCloudCleaner
-class PassThruWorldCloudCleaner(WorldCloudCleaner):
-  
-  def get_cleaned_world_cloud(self, point_clouds, cuboids):
-    # TODO need to prune isVisible for optical flow ............................................................
-    cleaned_clouds = []
-    n_pruned = 0
-    for pc in point_clouds:
-      # self._thruput().start_block()
-
-      cloud = pc.get_cloud()
-
-      # actually this doesn't make a huge difference
-      # # Only keep visible points.  These are points visible to at least one
-      # # camera.  
-      # vis_idx = pc.get_col_idx('is_visible')
-      # cloud = cloud[cloud[:, vis_idx] == 1]
-
-      cloud = cloud[:, :3] # TODO: can we keep colors?
-      cloud_ego = pc.ego_to_sensor.get_inverse().apply(cloud).T
-    
-      cloud_ego = self._filter_ego_vehicle(cloud_ego)
-
-      # skip filtering cuboids
-
-      T_world_to_ego = pc.ego_pose
-      cloud_world = T_world_to_ego.apply(cloud_ego).T # why is this name backwards?? -- hmm works for nusc too
-
-      cleaned_clouds.append(cloud_world)
-      
-      # self._thruput().stop_block(
-      #         n=1, num_bytes=oputil.get_size_of_deep(cloud_world))
-      # self._thruput().maybe_log_progress(every_n=1)
-      # self.__log_pruned()
-    if not cleaned_clouds:
-      return np.zeros((0, 3)), 0
-    else:
-      return np.vstack(cleaned_clouds), n_pruned
-
-
-
-class KITTI360_KITTIFused_FusedFlowDFFactory(FusedFlowDFFactory):
-  SAMPLE_DF_FACTORY = KITTI360_KITTIFused_SampleDFFactory
-  WORLD_CLEANER_CLS = PassThruWorldCloudCleaner
-  FUSED_LIDAR_SD_TABLE = KITTI360_OurFused_WorldCloudTableBase
-    # We'll use our own fused *dynamic objects* but use
-    # KITTI-360's fused *static world clouds*
-
-
+# from psegs.exp.fused_lidar_flow import WorldCloudCleaner
 
 
 
@@ -271,253 +36,7 @@ class KITTI360_KITTIFused_FusedFlowDFFactory(FusedFlowDFFactory):
 
 
 
-from psegs.datasets.nuscenes import NuscStampedDatumTableBase
-from psegs.datasets.nuscenes import NuscStampedDatumTableLabelsAllFrames
 
-class NuscFlowSDTable(NuscStampedDatumTableBase):
-  SENSORS_KEYFRAMES_ONLY = False
-  LABELS_KEYFRAMES_ONLY = False
-  INCLUDE_LIDARSEG = False
-
-  # @classmethod
-  # def _get_all_segment_uris(cls):
-  #   segment_uris = super(cls, NuscFlowSDTable)._get_all_segment_uris()
-    
-  #   # Simplify 'train' for 'train-detect' and 'train-track'
-  #   for suri in segment_uris:  
-  #     if 'train' in suri.split:
-  #       suri.split = 'train'
-    
-  #   return segment_uris
-
-class NuscSampleDFFactory(SampleDFFactory):
-  SRC_SD_TABLE = NuscFlowSDTable
-
-  # For NuScenes, labels (and keyframes) are only available at 2Hz and are
-  # otherwise interpolated. The lidar scans at 2x the frequence of the cameras.
-  # For best label alignment, we:
-  # * Create some sample groups just for fusion (loose camera-lidar
-  #      constraints for decent lidar painting).
-  # * Create sample groups for rendering with only exact label-sensor alignment.
-  # You can control which sensors are grouped for rendering below.
-  GROUP_LIDAR_FOR_RENDERING = False
-  GROUP_CAMERAS_FOR_RENDERING = True
-  INCLUDE_LOOSE_LIDAR_CAMERA_FOR_FUSION = True
-  LOOSE_FUSION_TIME_WINDOW_SEC = 0.1
-
-  SAMPLE_IDS_BETWEEN_SENSORS = 10000
-
-  @classmethod
-  def build_df_for_segment(cls, spark, segment_uri):
-      from psegs import util
-      
-      util.log.info(
-        'Building sample table for %s ...' % segment_uri)
-
-      datum_df = cls.SRC_SD_TABLE.get_segment_datum_df(spark, segment_uri)
-      spark.catalog.dropTempView('nusc_datums')
-      datum_df.registerTempTable('nusc_datums')
-
-      all_topics = datum_df.select('uri.topic').distinct().collect()
-      all_topics = [r[0] for r in all_topics]
-      lidar_topics = sorted(t for t in all_topics if 'lidar' in t)
-      camera_topics = sorted(t for t in all_topics if 'camera' in t)
-      
-      from pyspark.sql import Row
-      samples_by_time = spark.sql("""
-        SELECT
-          uri.extra.`nuscenes-sample-token` AS sample_token,
-          MIN(uri.timestamp) AS first_time
-          FROM nusc_datums
-          GROUP BY sample_token
-        """).collect()
-      samples_by_time = sorted(samples_by_time, key=lambda r: r.first_time)
-      samples = [
-        Row(sample_n=n, sample_token=r.sample_token)
-        for n, r in enumerate(samples_by_time)
-      ]
-      spark.catalog.dropTempView('nusc_samples')
-      nusc_samples_df = spark.createDataFrame(samples)
-      nusc_samples_df.registerTempTable('nusc_samples')
-      util.log.info("... have %s Nusc samples ..." % nusc_samples_df.count())
-
-
-      ## Fusion Samples
-      fusion_dfs = []
-      sample_id_base = -1
-      if cls.INCLUDE_LOOSE_LIDAR_CAMERA_FOR_FUSION:
-        lidar_times_df = spark.sql("""
-          SELECT
-            uri.topic AS lidar_topic,
-            uri.timestamp AS lidar_time 
-          FROM nusc_datums
-          WHERE uri.topic like '%lidar%'
-          """)
-        spark.catalog.dropTempView('nusc_lidar_times_df')
-        lidar_times_df.registerTempTable('nusc_lidar_times_df')
-        util.log.info(
-          "... adding %s lidar clouds for rendering only ..." % (
-            lidar_times_df.count(),))
-
-        fusion_df = spark.sql("""
-              SELECT 
-                -1 * lidar_time AS sample_id,
-                COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
-                    FILTER (WHERE uri.topic LIKE '%lidar%') AS pc_sds,
-                COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
-                    FILTER (WHERE uri.topic LIKE '%cuboid%') AS cuboids_sds,
-                COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
-                    FILTER (WHERE uri.topic LIKE '%camera%') AS ci_sds
-              FROM nusc_datums, nusc_lidar_times_df
-              WHERE
-                (
-                  uri.topic = nusc_lidar_times_df.lidar_topic AND
-                  uri.timestamp = nusc_lidar_times_df.lidar_time
-                ) OR
-                (
-                  uri.topic LIKE '%cuboid%' AND
-                  uri.timestamp = nusc_lidar_times_df.lidar_time AND
-                  uri.extra.`nuscenes-label-channel` = 
-                            SUBSTRING(
-                              nusc_lidar_times_df.lidar_topic,
-                              LENGTH('lidar|') + 1,
-                              100)
-                ) OR
-                (
-                  uri.topic LIKE '%camera%' AND
-                  nusc_lidar_times_df.lidar_time - {buf} <= uri.timestamp AND
-                  uri.timestamp <= nusc_lidar_times_df.lidar_time + {buf}
-                )
-              GROUP BY sample_id
-          """.format(
-            buf=int(1e9 * cls.LOOSE_FUSION_TIME_WINDOW_SEC)))
-        fusion_dfs.append(fusion_df)
-
-      ## Render Samples
-      render_dfs = []
-      sample_id_base = 0
-      topics_to_render = []
-      if cls.GROUP_LIDAR_FOR_RENDERING:
-        topics_to_render += lidar_topics
-      if cls.GROUP_CAMERAS_FOR_RENDERING:
-        topics_to_render += camera_topics
-      for topic in topics_to_render:
-        sample_id_base += cls.SAMPLE_IDS_BETWEEN_SENSORS
-        if 'camera' in topic:
-          channel = topic[len('camera|'):]
-        elif 'lidar' in topic:
-          channel = topic[len('lidar|'):]
-        else:
-          raise ValueError(topic)
-
-        topics_clause = """
-            (uri.topic LIKE '%cuboid%' OR uri.topic = '{topic}')
-          """.format(topic=topic)
-
-        util.log.info(
-          "... adding rendering for %s with sample id base %s ..." % (
-            topic, sample_id_base))
-        render_df = spark.sql("""
-              SELECT 
-                {sample_id_base} + nusc_samples.sample_n AS sample_id,
-                COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
-                    FILTER (WHERE uri.topic LIKE '%lidar%') AS pc_sds,
-                COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
-                    FILTER (
-                      WHERE uri.topic LIKE '%cuboid%' AND
-                            uri.extra.`nuscenes-label-channel` = '{channel}'
-                      ) AS cuboids_sds,
-                COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
-                    FILTER (WHERE uri.topic LIKE '%camera%') AS ci_sds
-              FROM nusc_datums, nusc_samples
-              WHERE
-                uri.extra.`nuscenes-sample-token` = nusc_samples.sample_token AND
-                {topics_clause} AND
-                uri.extra.`nuscenes-is-keyframe` = 'True'
-              GROUP BY sample_id
-          """.format(
-            sample_id_base=sample_id_base,
-            channel=channel,
-            topics_clause=topics_clause))
-        render_dfs.append(render_df)
-      assert render_dfs, "Nothing to render?"
-
-      from oarphpy import spark as S
-      all_dfs = render_dfs + fusion_dfs
-      sample_df = S.union_dfs(*all_dfs)
-      sample_df = sample_df.repartition('sample_id')
-      sample_df = sample_df.persist()
-      
-      n_samples = sample_df.count()
-      util.log.info(
-        '... done building %s dataframes for %s total samples.' % (
-          len(all_dfs), n_samples))
-      return sample_df
-
-
-      # if cls.GROUP_CAMERAS_FOR_RENDERING:
-
-
-      # kf_filter = "AND uri.extra.`nuscenes-is-keyframe` = 'True'"
-      # pc_kf_filter = kf_filter if cls.LIDAR_KEYFRAMES_ONLY else ''
-      # ci_kf_filter = kf_filter if cls.CAMERAS_KEYFRAMES_ONLY else ''
-      # cu_kf_filter = kf_filter if cls.CUBOIDS_KEYFRAMES_ONLY else ''
-
-      # spark.catalog.dropTempView('nusc_sample_df')
-      # spark.sql("""
-      #     CACHE TABLE 
-      #       nusc_sample_df
-      #       OPTIONS ( 'storageLevel' 'DISK_ONLY' ) AS
-      #     SELECT 
-      #       INT(uri.extra.`nuscenes-sample-offset`) AS sample_id,
-      #       COLLECT_LIST(STRUCT(__pyclass__, uri, point_cloud)) 
-      #           FILTER (WHERE uri.topic LIKE '%lidar%' {pc_kf_filter}) AS pc_sds,
-      #       COLLECT_LIST(STRUCT(__pyclass__, uri, cuboids)) 
-      #           FILTER (WHERE uri.topic LIKE '%cuboid%' {cu_kf_filter}) AS cuboids_sds,
-      #       COLLECT_LIST(STRUCT(__pyclass__, uri, camera_image)) 
-      #           FILTER (WHERE uri.topic LIKE '%camera%' {ci_kf_filter}) AS ci_sds
-      #     FROM nusc_datums
-      #     WHERE (
-      #       uri.topic LIKE '%cuboid%' OR
-      #       uri.topic LIKE '%lidar%' OR
-      #       uri.topic LIKE '%camera%'
-      #     )
-      #     GROUP BY sample_id
-      #     ORDER BY sample_id
-      # """.format(
-      #   pc_kf_filter=pc_kf_filter,
-      #   ci_kf_filter=ci_kf_filter,
-      #   cu_kf_filter=cu_kf_filter))
-
-      # import pdb; pdb.set_trace()
-
-      # sample_df = spark.sql('SELECT * FROM nusc_sample_df')
-      # util.log.info('... done.')
-      # return sample_df
-
-from psegs.exp.fused_lidar_flow import WorldCloudCleaner
-class NuscWorldCloudCleaner(WorldCloudCleaner):
-  
-  @classmethod
-  def _filter_ego_vehicle(cls, cloud_ego):
-      # Note: NuScenes authors have already corrected clouds for ego motion:
-      # https://github.com/nutonomy/nuscenes-devkit/issues/481#issuecomment-716250423
-      # But have not filtered out ego self-returns
-      cloud_ego = cloud_ego[np.where(  ~(
-                      (cloud_ego[:, 0] <= 1.5) & (cloud_ego[:, 0] >= -1.5) &  # Nusc lidar +x is +right
-                      (cloud_ego[:, 1] <= 3) & (cloud_ego[:, 0] >= -3) &  # Nusc lidar +y is +forward
-                      (cloud_ego[:, 1] <= 2.5) & (cloud_ego[:, 0] >= -2.5)    # Nusc lidar +z is +up
-      ))]
-      return cloud_ego
-
-
-class NuscWorldCloudTableBase(CloudFuser):
-  pass
-
-class NuscFusedFlowDFFactory(FusedFlowDFFactory):
-  SAMPLE_DF_FACTORY = NuscSampleDFFactory
-  WORLD_CLEANER_CLS = NuscWorldCloudCleaner
-  FUSED_LIDAR_SD_TABLE = NuscWorldCloudTableBase
 
 
 
@@ -673,6 +192,7 @@ def build_sample_id_map(spark, outpath, only_segments=[]):
   t = oputil.ThruputObserver(name='build_sample_idx', n_total=n_total)
 
   Rs = (
+    # SemanticKITTIFusedFlowDFFactory -- none of this as of writing
     NuscFusedFlowDFFactory,
     KITTI360_KITTIFused_FusedFlowDFFactory,
     KITTI360_OurFused_FusedFlowDFFactory,
@@ -1074,133 +594,242 @@ even rgb-normal?  .. surfel...)
 """
 
 
-DEFAULT_SD_TABLES = (
-  # SemanticKITTISDTable,
-  KITTI360_OurFused,
-  KITTI360_KITTIFused,
-  NuscFlowSDTable,
-)
+# from psegs.exp.fused_lidar_flow import KITTI360_OurFused
+# from psegs.exp.fused_lidar_flow import KITTI360_KITTIFused
+# from psegs.exp.fused_lidar_flow import NuscFlowSDTable
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### BEGIN HACK
+
 
 import attr
-@attr.s(slots=True, eq=True, weakref_slot=False)
-class FlowRecordWithSamples(object):
-  flow_record = attr.ib()
+import cv2
+import imageio
+import math
+import os
+import PIL.Image
+import six
 
-  
+import numpy as np
 
-class FlowRecTable(object):
+from oarphpy import plotting as op_plt
+from oarphpy.spark import CloudpickeledCallable
+img_to_data_uri = lambda x: op_plt.img_to_data_uri(x, format='png')
 
-  def __init__(self, spark, pq_root, sd_tables=DEFAULT_SD_TABLES):
-    self._spark = spark
-    self._pq_root = pq_root
-    self._df = None
-    self._sd_tables = sd_tables
-    self._sd_ut = None
-  
-  def _get_sd_ut(self):
-    if self._sd_ut is None:
-      from psegs.table.sd_db import StampedDatumDB
-      self._sd_ut = StampedDatumDB(tables=self._sd_tables, spark=self._spark)
-    return self._sd_ut
-
-  def _get_raw_df(self):
-    if not self._df:
-      psegs_frt_df = self._spark.read.parquet(self._pq_root)
-
-      self._spark.catalog.dropTempView('psegs_frt_df')
-      psegs_frt_df.registerTempTable('psegs_frt_df')
-
-      self._df = self._spark.sql("""
-                    SELECT
-                      CONCAT(
-                        'psegs://dataset=',
-                        segment_uri.dataset,
-                        '&split=',
-                        segment_uri.split,
-                        '&segment_id=',
-                        segment_uri.segment_id,
-                        '&extra.psegs_flow_sids=',
-                        ARRAY_JOIN(
-                          clouds.sample_id,
-                          ',')) AS rec_uri_str,
-                      *
-                    FROM psegs_frt_df
-        """)
-      self._df = self._df.persist()
-
-    return self._df
-
-  def get_record_uris(self):
-    from psegs import datum
-    df = self._get_raw_df()
-    ruri_strs = sorted(
-      r.rec_uri_str for r in df.select('rec_uri_str').collect())
-    return [datum.URI.from_str(s) for s in ruri_strs]
-  
-  def get_records_with_samples_rdd(
-            self,
-            record_uris=[],
-            include_cameras=True,
-            include_cuboids=False,
-            include_point_clouds=False):
-
-    df = self._get_raw_df()
-
-    if record_uris:
-      # Use the segment uri components to leverage parquet partitioning
-      from psegs import datum
-      record_suris = [
-        datum.URI.from_str(r).to_segment_uri() for r in record_uris
-      ]
-      datasets = set(u.dataset for u in record_suris)
-      splits = set(u.split for u in record_suris)
-      segment_ids = set(u.segment_id for u in record_suris)
-
-      df = df.filter(
-              df.dataset.isin(list(datasets)) &
-              df.split.isin(list(splits)) &
-              df.segment_id.isin(list(segment_ids)))
+@attr.s(slots=True, eq=False, weakref_slot=False)
+class OpticalFlowPair(object):
+    """A flyweight for a pair of images with an optical flow field.
+    Supports lazy-loading of large data attributes."""
+        
+    dataset = attr.ib(type=str, default='')
+    """To which dataset does this pair belong?"""
     
-    key_cloud_df = df.selectExpr('rec_uri_str AS key', 'EXPLODE(clouds) AS c')
-    if record_uris:
-      key_cloud_df = key_cloud_df.filter(
-        key_cloud_df.key.isin([str(r) for r in record_uris]))
-
-    key_uri_dfs = []
-    if include_cameras:
-      key_uri_dfs.append(
-        key_cloud_df.selectExpr('key', 'EXPLODE(c.ci_uris) AS uri'))
-    if include_cuboids:
-      key_uri_dfs.append(
-        key_cloud_df.selectExpr('key', 'EXPLODE(c.cuboids_uris) AS uri'))
-    if include_point_clouds:
-      key_uri_dfs.append(
-        key_cloud_df.selectExpr('key', 'EXPLODE(c.pc_uris) AS uri'))
-
-    if key_uri_dfs:
-      from oarphpy import spark as S
-      key_uri_df = S.union_dfs(*key_uri_dfs)
-      sd_ut = self._get_sd_ut()
-      key_sample_df = sd_ut.get_keyed_sample_df(key_uri_df)
-
-      joined = df.join(key_sample_df, key_sample_df.key == df.rec_uri_str)
-
-      def to_record_samples(row):
-        from oarphpy.spark import RowAdapter
-        from psegs.table.sd_db import StampedDatumDB
-        flow_rec = RowAdapter.from_row(row)
-        sample = StampedDatumDB.datum_rows_to_sample(row.datums)
-        return (flow_rec, sample)
-
-      return joined.rdd.map(to_record_samples)
+    id1 = attr.ib(type=str, default='')
+    """Identifier or URI for the first image"""
     
-    else:
+    id2 = attr.ib(type=str, default='')
+    """Identifier or URI for the second image"""
+    
+    img1 = attr.ib(default=None)
+    """URI or numpy array or CloudPickleCallable for the first image (source image)"""
 
-      def to_record_samples(row):
-        from oarphpy.spark import RowAdapter
-        flow_rec = RowAdapter.from_row(row)
-        return (flow_rec, None)
-      return df.rdd.map(to_record_samples)
+    img2 = attr.ib(default=None)
+    """URI or numpy array or CloudpickeledCallable for the second image (target image)"""
+    
+    flow = attr.ib(default=None)
+    """A numpy array or callable or CloudpickeledCallable representing optical flow from img1 -> img2"""
+    
+    # to add:
+    # diff time seconds
+    # semantic image for frame 1, frame 2 [could be painted by cuboids]
+    # instance images for frame 1, frame 2 [could be painted by cuboids]
+    #   -- for colored images, at first just pivot all oflow metrics by colors
+    # get uvdviz1 uvdviz2 (scene flow)
+    #   * for deepeform, their load_flow will work
+    #   * for kitti, we have to read their disparity images
+    # get uvd1 uvd2 (lidar for nearest neighbor stuff)
+    # depth image for frame 1, frame 2 [could be interpolated by cuboids]
+    #   -- at first bucket the depth coarsely and pivot al oflow by colors
+    
+    def get_img1(self):
+        if isinstance(self.img1, CloudpickeledCallable):
+            self.img1 = self.img1()
+        if isinstance(self.img1, six.string_types):
+            self.img1 = imageio.imread(self.img1)
+        return self.img1
+    
+    def get_img2(self):
+        if isinstance(self.img2, CloudpickeledCallable):
+            self.img2 = self.img2()
+        if isinstance(self.img2, six.string_types):
+            self.img2 = imageio.imread(self.img2)
+        return self.img2
+    
+    def get_flow(self):
+        if not isinstance(self.flow, (np.ndarray, np.generic)):
+            self.flow = self.flow()
+        return self.flow
+    
+    def to_html(self):
+        im1 = self.get_img1()
+        im2 = self.get_img2()
+        flow = self.get_flow()
+        fviz = draw_flow(im1, flow)
+        html = """
+            <table>
+            
+            <tr><td style="text-align:left"><b>Dataset:</b> {dataset}</td></tr>
+            
+            <tr><td style="text-align:left"><b>Source Image:</b> {id1}</td></tr>
+            <tr><td><img src="{im1}" /></td></tr>
+
+            <tr><td style="text-align:left"><b>Target Image:</b> {id2}</td></tr>
+            <tr><td><img src="{im2}" /></td></tr>
+
+            <tr><td style="text-align:left"><b>Flow</b></td></tr>
+            <tr><td><img src="{fviz}" /></td></tr>
+            </table>
+        """.format(
+                dataset=self.dataset,
+                id1=self.id1, id2=self.id2,
+                im1=img_to_data_uri(im1), im2=img_to_data_uri(im2),
+                fviz=img_to_data_uri(fviz))
+        return html
+
+def draw_flow(img, flow, step=8):
+    """Based upon OpenCV sample: https://github.com/opencv/opencv/blob/master/samples/python/opt_flow.py"""
+    h, w = img.shape[:2]
+    y, x = np.mgrid[step/2:h:step, step/2:w:step].reshape(2,-1).astype(int)
+    fx, fy = flow[y,x].T
+    lines = np.vstack([x, y, x+fx, y+fy]).T.reshape(-1, 2, 2)
+    lines = np.int32(lines + 0.5)
+    vis = img.copy()
+    cv2.polylines(vis, lines, 0, (0, 255, 0))
+    for (x1, y1), (_x2, _y2) in lines:
+        cv2.circle(vis, (x1, y1), 1, (0, 255, 0), -1)
+    return vis
+
+
+
+#### END HACK
+
+
+
+
+### BEGIN PROPOSE MODULE
+
+# from cheap_optical_flow_eval_analysis.ofp import OpticalFlowPair
+
+from oarphpy.spark import CloudpickeledCallable
+
+from psegs.exp.fused_lidar_flow import FlowRecTable
+
+PSEGS_SYNTHFLOW_DEMO_RECORD_URIS = (
+  'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=11456,11455',
+  'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=6070,6069',
+
+  'psegs://dataset=kitti-360-fused&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=11103,11104',
+  'psegs://dataset=kitti-360-fused&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=1181,1182',
+
+  'psegs://dataset=nuscenes&split=train_detect&segment_id=scene-0002&extra.psegs_flow_sids=10016,10017',
+  'psegs://dataset=nuscenes&split=train_detect&segment_id=scene-0582&extra.psegs_flow_sids=60035,60036',
+
+  'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0393&extra.psegs_flow_sids=50017,50018',
+  'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0501&extra.psegs_flow_sids=40019,40020',
+)
+
+def flow_rec_to_fp(flow_rec, sample):
+  fr = flow_rec
+
+  uri_str_to_datum = sample.get_uri_str_to_datum()
+
+  # Find the camera_images associated with `flow_rec`
+  ci1_url_str = str(flow_rec.clouds[0].ci_uris[0])
+  ci1_sd = uri_str_to_datum[ci1_url_str]
+  ci1 = ci1_sd.camera_image
+
+  ci2_url_str = str(flow_rec.clouds[1].ci_uris[0])
+  ci2_sd = uri_str_to_datum[ci2_url_str]
+  ci2 = ci2_sd.camera_image
+
+  import numpy as np
+  world_T1 = ci1.ego_pose.translation
+  world_T2 = ci2.ego_pose.translation
+  translation_meters = np.linalg.norm(world_T2 - world_T1)
+
+  fp = OpticalFlowPair(
+          dataset=fr.segment_uri.dataset + '-' + fr.segment_uri.split,
+          id1=ci1_url_str + '&extra.psegs_flow_sids=' + fr.clouds[0].sample_id,
+          id2=ci2_url_str + '&extra.psegs_flow_sids=' + fr.clouds[1].sample_id,
+          img1=CloudpickeledCallable(lambda: ci1.image),
+          img2=CloudpickeledCallable(lambda: ci2.image),
+          flow=CloudpickeledCallable(lambda: fr.to_optical_flow()),
+
+          diff_time_sec=abs(ci2_sd.uri.timestamp - ci1_sd.uri.timestamp),
+          translation_meters=translation_meters)
+  return fp
+
+def psegs_synthflow_create_fps(
+        spark,
+        flow_record_pq_table_path,
+        record_uris,
+        include_cuboids=False,
+        include_point_clouds=False):
+
+  T = FlowRecTable(spark, flow_record_pq_table_path)
+  rec_sample_rdd = T.get_records_with_samples_rdd(
+                          record_uris=record_uris,
+                          include_cameras=True,
+                          include_cuboids=include_cuboids,
+                          include_point_clouds=include_point_clouds)
+
+  fps = [
+    flow_rec_to_fp(flow_rec, sample)
+    for flow_rec, sample in rec_sample_rdd.collect()
+  ]
+
+  return fps
+
+def psegs_synthflow_iter_fp_rdds(
+        spark,
+        flow_record_pq_table_path,
+        fps_per_rdd=100,
+        include_cuboids=False,
+        include_point_clouds=False):
+  
+  T = FlowRecTable(spark, flow_record_pq_table_path)
+  ruris = T.get_record_uris()
+
+  # Ensure a sort so that pairs from similar segments will load in the same
+  # RDD -- that makes joins smaller and faster
+  ruris = sorted(ruris)
+
+  from oarphpy import util as oputil
+  for ruri_chunk in oputil.ichunked(ruris, fps_per_rdd):
+    frec_sample_rdd = T.get_records_with_samples_rdd(record_uris=rids)
+    fp_rdd = frec_sample_rdd.map(flow_rec_to_fp)
+    yield fp_rdd
+
+
+### END PROPOSE MODULE
+
+
+
+
+
 
 
 if __name__ == '__main__':

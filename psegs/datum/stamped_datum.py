@@ -197,6 +197,9 @@ class Sample(object):
 
   def get_topics(self):
     return sorted(set(sd.uri.topic for sd in self.datums))
+  
+  def get_uri_str_to_datum(self):
+    return dict((str(datum.uri), datum) for datum in self.datums)
 
 
 ###
