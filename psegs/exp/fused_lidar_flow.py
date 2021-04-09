@@ -246,8 +246,10 @@ class RenderedCloud(object):
 @attr.s(slots=True, eq=True, weakref_slot=False)
 class FlowRecord(object):
 
-  segment_uri = attr.ib(
+  uri = attr.ib(
     type=datum.URI, default=None, converter=datum.URI.from_str)
+
+  uri_key = attr.ib(default=str(datum.URI()))
 
   clouds = attr.ib(default=[])
 
@@ -299,7 +301,7 @@ class FlowRecord(object):
 
     from tabulate import tabulate
     rows = [
-      ['segment_uri', str(self.segment_uri)],
+      ['uri', str(self.uri)],
       ['u min/max', (self.u_min, self.u_max)],
       ['v min/max', (self.v_min, self.v_max)],
     ]
@@ -353,7 +355,7 @@ RENDERED_CLOUD_PROTO = RenderedCloud(
                         pc_uris=      [datum.URI_PROTO])
   
 FLOW_RECORD_PROTO = FlowRecord(
-                      segment_uri=datum.URI_PROTO,
+                      uri=datum.URI_PROTO,
                       clouds=[RENDERED_CLOUD_PROTO])
 
 
@@ -3788,37 +3790,36 @@ class FlowRecTable(object):
 
   def _get_raw_df(self):
     if not self._df:
-      psegs_frt_df = self._spark.read.parquet(self._pq_root)
+      self._df = self._spark.read.parquet(self._pq_root)
 
-      self._spark.catalog.dropTempView('psegs_frt_df')
-      psegs_frt_df.registerTempTable('psegs_frt_df')
+      # self._spark.catalog.dropTempView('psegs_frt_df')
+      # psegs_frt_df.registerTempTable('psegs_frt_df')
 
-      self._df = self._spark.sql("""
-                    SELECT
-                      CONCAT(
-                        'psegs://dataset=',
-                        segment_uri.dataset,
-                        '&split=',
-                        segment_uri.split,
-                        '&segment_id=',
-                        segment_uri.segment_id,
-                        '&extra.psegs_flow_sids=',
-                        ARRAY_JOIN(
-                          clouds.sample_id,
-                          ',')) AS rec_uri_str,
-                      *
-                    FROM psegs_frt_df
-        """)
-      self._df = self._df.persist()
+      # self._df = self._spark.sql("""
+      #               SELECT
+      #                 CONCAT(
+      #                   'psegs://dataset=',
+      #                   segment_uri.dataset,
+      #                   '&split=',
+      #                   segment_uri.split,
+      #                   '&segment_id=',
+      #                   segment_uri.segment_id,
+      #                   '&extra.psegs_flow_sids=',
+      #                   ARRAY_JOIN(
+      #                     clouds.sample_id,
+      #                     ',')) AS uri_key,
+      #                 *
+      #               FROM psegs_frt_df
+      #   """)
+      # self._df = self._df.persist()
 
     return self._df
 
   def get_record_uris(self):
-    from psegs import datum
+    from oarphpy.spark import RowAdapter
     df = self._get_raw_df()
-    ruri_strs = sorted(
-      r.rec_uri_str for r in df.select('rec_uri_str').collect())
-    return [datum.URI.from_str(s) for s in ruri_strs]
+    rows = [r.uri for r in df.select('uri').collect()]
+    return [RowAdapter.from_row(r) for r in rows]
   
   def get_records_with_samples_rdd(
             self,
@@ -3844,7 +3845,7 @@ class FlowRecTable(object):
               df.split.isin(list(splits)) &
               df.segment_id.isin(list(segment_ids)))
     
-    key_cloud_df = df.selectExpr('rec_uri_str AS key', 'EXPLODE(clouds) AS c')
+    key_cloud_df = df.selectExpr('uri_key AS key', 'EXPLODE(clouds) AS c')
     if record_uris:
       key_cloud_df = key_cloud_df.filter(
         key_cloud_df.key.isin([str(r) for r in record_uris]))
@@ -3866,7 +3867,7 @@ class FlowRecTable(object):
       sd_ut = self._get_sd_ut()
       key_sample_df = sd_ut.get_keyed_sample_df(key_uri_df)
 
-      joined = df.join(key_sample_df, key_sample_df.key == df.rec_uri_str)
+      joined = df.join(key_sample_df, key_sample_df.key == df.uri_key)
 
       def to_record_samples(row):
         from oarphpy.spark import RowAdapter

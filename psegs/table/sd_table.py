@@ -151,7 +151,7 @@ class StampedDatumTableBase(object):
     if hasattr(rdd_or_df, 'rdd'):
       return rdd_or_df
     else:
-      return cls._sd_rdd_to_sd_df(spark, rdd_or_df).persist()
+      return cls._sd_rdd_to_sd_df(spark, rdd_or_df)
 
   @classmethod
   def get_sample(cls, uri, spark=None):

@@ -30,8 +30,8 @@ class Spark(spark.SessionFactory):
 
   CONF_KV = {
     'spark.driver.maxResultSize': '20g',
-    'spark.driver.memory': '50g',
-    'spark.executor.memory': '50g',
+    'spark.driver.memory': '32g',
+    'spark.executor.memory': '32g',
     # 'spark.driver.cores': '6',
     # 'spark.memory.offHeap.enabled': 'true',
     # 'spark.memory.offHeap.size': '100g',

@@ -191,6 +191,10 @@ def build_sample_id_map(spark, outpath, only_segments=[]):
 
   t = oputil.ThruputObserver(name='build_sample_idx', n_total=n_total)
 
+  from psegs.exp.fused_lidar_flow import NuscFusedFlowDFFactory
+  from psegs.exp.fused_lidar_flow import KITTI360_KITTIFused_FusedFlowDFFactory
+  from psegs.exp.fused_lidar_flow import KITTI360_OurFused_FusedFlowDFFactory
+
   Rs = (
     # SemanticKITTIFusedFlowDFFactory -- none of this as of writing
     NuscFusedFlowDFFactory,
@@ -350,8 +354,12 @@ def task_row_to_flow_record(task_row):
 
   from psegs.exp.fused_lidar_flow import FlowRecord
   assert (ci1_h, ci1_w) == (ci2_h, ci2_w)
+  uri = ci1_uri.to_segment_uri()
+  sids_str = ','.join(str(c.sample_id) for c in clouds)
+  uri = uri.replaced(extra={'psegs_flow_sids': sids_str})
   flow_record = FlowRecord(
-                  segment_uri=ci1_uri.to_segment_uri(),
+                  uri=uri,
+                  uri_key=str(uri),
                   clouds=clouds,
                   u_min=0.0, u_max=float(ci1_w),
                   v_min=0.0, v_max=float(ci1_h))
@@ -455,7 +463,7 @@ def pickles_to_flow_records(
                                     for v in kvs[1]
                                     if 'camera' in v.uri.topic
                                   ])
-  jt_rdd = jt_rdd.cache()
+  # jt_rdd = jt_rdd.cache()
   jt_df = spark.createDataFrame(jt_rdd, samplingRatio=0.5)
   jt_df = jt_df.repartition('ci_uri_key').persist()
   util.log.info("Have %s sample data indexed by camera image" % jt_df.count())
@@ -484,17 +492,17 @@ def pickles_to_flow_records(
     frec_rdd = frec_rdd.map(RowAdapter.to_row)
     frec_rdd = frec_rdd.repartition(len(task_chunk))
 
-    import pyspark
-    frec_rdd = frec_rdd.persist(pyspark.StorageLevel.DISK_ONLY)
+    # import pyspark
+    # frec_rdd = frec_rdd.persist(pyspark.StorageLevel.DISK_ONLY)
     
     from psegs.exp.fused_lidar_flow import FLOW_RECORD_PROTO  
     schema = RowAdapter.to_schema(FLOW_RECORD_PROTO)
     frec_df = spark.createDataFrame(frec_rdd, schema=schema)
 
-    frec_df = frec_df.persist()
-    frec_df = frec_df.withColumn('dataset', frec_df['segment_uri.dataset'])
-    frec_df = frec_df.withColumn('split', frec_df['segment_uri.split'])
-    frec_df = frec_df.withColumn('segment_id', frec_df['segment_uri.segment_id'])
+    # frec_df = frec_df.persist()
+    frec_df = frec_df.withColumn('dataset', frec_df['uri.dataset'])
+    frec_df = frec_df.withColumn('split', frec_df['uri.split'])
+    frec_df = frec_df.withColumn('segment_id', frec_df['uri.segment_id'])
 
     frec_df.write.save(
           path=dest_path,
@@ -505,6 +513,8 @@ def pickles_to_flow_records(
     util.log.info("Saved some to %s" % dest_path)
     t.stop_block(n=len(task_chunk))
     t.maybe_log_progress(every_n=1)
+    # frec_df.unpersist()
+    # frec_rdd.unpersist()
 
 
   # import pickle
@@ -652,6 +662,14 @@ class OpticalFlowPair(object):
     flow = attr.ib(default=None)
     """A numpy array or callable or CloudpickeledCallable representing optical flow from img1 -> img2"""
     
+    ## Optional Attributes (For Select Datasets)
+    
+    diff_time_sec = attr.ib(type=float, default=0.0)
+    """Difference in time (in seconds) between the views / poses depicted in `img1` and `img2`."""
+    
+    translation_meters = attr.ib(type=float, default=0.0)
+    """Difference in ego translation (in meters) between the views / poses depicted in `img1` and `img2`."""
+
     # to add:
     # diff time seconds
     # semantic image for frame 1, frame 2 [could be painted by cuboids]
@@ -738,17 +756,20 @@ from oarphpy.spark import CloudpickeledCallable
 from psegs.exp.fused_lidar_flow import FlowRecTable
 
 PSEGS_SYNTHFLOW_DEMO_RECORD_URIS = (
-  'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=11456,11455',
-  'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=6070,6069',
+  'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=4340,4339',
+  'psegs://dataset=kitti-360&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=11219,11269',
 
-  'psegs://dataset=kitti-360-fused&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=11103,11104',
-  'psegs://dataset=kitti-360-fused&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=1181,1182',
+  'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0501&extra.psegs_flow_sids=40009,40010',
+  'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0501&extra.psegs_flow_sids=50013,50014',
 
-  'psegs://dataset=nuscenes&split=train_detect&segment_id=scene-0002&extra.psegs_flow_sids=10016,10017',
-  'psegs://dataset=nuscenes&split=train_detect&segment_id=scene-0582&extra.psegs_flow_sids=60035,60036',
+  # 'psegs://dataset=kitti-360-fused&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=11103,11104',
+  # 'psegs://dataset=kitti-360-fused&split=train&segment_id=2013_05_28_drive_0000_sync&extra.psegs_flow_sids=1181,1182',
 
-  'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0393&extra.psegs_flow_sids=50017,50018',
-  'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0501&extra.psegs_flow_sids=40019,40020',
+  # 'psegs://dataset=nuscenes&split=train_detect&segment_id=scene-0002&extra.psegs_flow_sids=10016,10017',
+  # 'psegs://dataset=nuscenes&split=train_detect&segment_id=scene-0582&extra.psegs_flow_sids=60035,60036',
+
+  # 'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0393&extra.psegs_flow_sids=50017,50018',
+  # 'psegs://dataset=nuscenes&split=train_track&segment_id=scene-0501&extra.psegs_flow_sids=40019,40020',
 )
 
 def flow_rec_to_fp(flow_rec, sample):
@@ -770,10 +791,13 @@ def flow_rec_to_fp(flow_rec, sample):
   world_T2 = ci2.ego_pose.translation
   translation_meters = np.linalg.norm(world_T2 - world_T1)
 
+  id1 = ci1_url_str + '&extra.psegs_flow_sids=' + str(fr.clouds[0].sample_id)
+  id2 = ci2_url_str + '&extra.psegs_flow_sids=' + str(fr.clouds[1].sample_id)
+
   fp = OpticalFlowPair(
-          dataset=fr.segment_uri.dataset + '-' + fr.segment_uri.split,
-          id1=ci1_url_str + '&extra.psegs_flow_sids=' + fr.clouds[0].sample_id,
-          id2=ci2_url_str + '&extra.psegs_flow_sids=' + fr.clouds[1].sample_id,
+          dataset=fr.uri.dataset + '/' + fr.uri.split,
+          id1=id1,
+          id2=id2,
           img1=CloudpickeledCallable(lambda: ci1.image),
           img2=CloudpickeledCallable(lambda: ci2.image),
           flow=CloudpickeledCallable(lambda: fr.to_optical_flow()),
@@ -819,7 +843,10 @@ def psegs_synthflow_iter_fp_rdds(
 
   from oarphpy import util as oputil
   for ruri_chunk in oputil.ichunked(ruris, fps_per_rdd):
-    frec_sample_rdd = T.get_records_with_samples_rdd(record_uris=rids)
+    frec_sample_rdd = T.get_records_with_samples_rdd(
+                          record_uris=rids,
+                          include_cuboids=include_cuboids,
+                          include_point_clouds=include_point_clouds)
     fp_rdd = frec_sample_rdd.map(flow_rec_to_fp)
     yield fp_rdd
 
@@ -855,19 +882,46 @@ if __name__ == '__main__':
 
   # pickles_to_flow_records(
   #   '/opt/psegs/dataroot/oflow_pickles',
-  #   '/opt/psegs/dataroot/psegs_flow_records/records.parquet',
+  #   '/outer_root/media/Costco8000/psegs_synthflow.parquet/',
   #   max_n=-1)
+  # print('yay!')
+  # assert False
 
   from psegs.spark import Spark
   spark = Spark.getOrCreate()
 
-  T = FlowRecTable(spark, '/outer_root/media/rocket4q/psegs_flow_records_short')
-  rids = T.get_record_uris()
+
+
+  fps = psegs_synthflow_create_fps(
+            spark,
+            '/outer_root/media/rocket4q/psegs_flow_records_short',
+            PSEGS_SYNTHFLOW_DEMO_RECORD_URIS)
+  import ipdb; ipdb.set_trace()
+
+
+
+
+
+
+
+
+
+
+  # T = FlowRecTable(spark, '/outer_root/media/rocket4q/psegs_flow_records_short')
+  # rids = T.get_record_uris()
+  # import pprint
+  # pprint.pprint([str(r) for r in rids])
+  # assert False
   rids = [r for r in rids if 'nusc' in r.dataset]
-  rids = rids[:10]
+  # rids = rids[:100]
 
   
-  rdd = T.get_records_with_samples_rdd(record_uris=rids)
+  rdd = T.get_records_with_samples_rdd(record_uris=rids[:20])
+
+  print('second now')
+  big_rdd = T.get_records_with_samples_rdd(record_uris=rids[10:12])
+  print(big_rdd.count())
+  print('done')
 
   flow_rec, sample = rdd.take(1)[0]
 

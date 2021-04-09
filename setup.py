@@ -20,9 +20,9 @@ import sys
 import re
 
 try:
-  from setuptools import setup
+  from setuptools import setup, find_packages
 except ImportError:
-  from distutils.core import setup
+  from distutils.core import setup, find_packages
 
 # Function to parse __version__ in `psegs/__init__.py`
 def find_version():
@@ -91,7 +91,7 @@ dist = setup(
   author_email='u@oarph.me',
   url='https://github.com/pwais/psegs',
   license='Apache License 2.0',
-  packages=['psegs'],
+  packages=find_packages(exclude=['test*']),
   long_description=open('README.md').read(),
   long_description_content_type="text/markdown",
   classifiers=[
