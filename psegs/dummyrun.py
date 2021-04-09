@@ -1074,6 +1074,134 @@ even rgb-normal?  .. surfel...)
 """
 
 
+DEFAULT_SD_TABLES = (
+  # SemanticKITTISDTable,
+  KITTI360_OurFused,
+  KITTI360_KITTIFused,
+  NuscFlowSDTable,
+)
+
+import attr
+@attr.s(slots=True, eq=True, weakref_slot=False)
+class FlowRecordWithSamples(object):
+  flow_record = attr.ib()
+
+  
+
+class FlowRecTable(object):
+
+  def __init__(self, spark, pq_root, sd_tables=DEFAULT_SD_TABLES):
+    self._spark = spark
+    self._pq_root = pq_root
+    self._df = None
+    self._sd_tables = sd_tables
+    self._sd_ut = None
+  
+  def _get_sd_ut(self):
+    if self._sd_ut is None:
+      from psegs.table.sd_db import StampedDatumDB
+      self._sd_ut = StampedDatumDB(tables=self._sd_tables, spark=self._spark)
+    return self._sd_ut
+
+  def _get_raw_df(self):
+    if not self._df:
+      psegs_frt_df = self._spark.read.parquet(self._pq_root)
+
+      self._spark.catalog.dropTempView('psegs_frt_df')
+      psegs_frt_df.registerTempTable('psegs_frt_df')
+
+      self._df = self._spark.sql("""
+                    SELECT
+                      CONCAT(
+                        'psegs://dataset=',
+                        segment_uri.dataset,
+                        '&split=',
+                        segment_uri.split,
+                        '&segment_id=',
+                        segment_uri.segment_id,
+                        '&extra.psegs_flow_sids=',
+                        ARRAY_JOIN(
+                          clouds.sample_id,
+                          ',')) AS rec_uri_str,
+                      *
+                    FROM psegs_frt_df
+        """)
+      self._df = self._df.persist()
+
+    return self._df
+
+  def get_record_uris(self):
+    from psegs import datum
+    df = self._get_raw_df()
+    ruri_strs = sorted(
+      r.rec_uri_str for r in df.select('rec_uri_str').collect())
+    return [datum.URI.from_str(s) for s in ruri_strs]
+  
+  def get_records_with_samples_rdd(
+            self,
+            record_uris=[],
+            include_cameras=True,
+            include_cuboids=False,
+            include_point_clouds=False):
+
+    df = self._get_raw_df()
+
+    if record_uris:
+      # Use the segment uri components to leverage parquet partitioning
+      from psegs import datum
+      record_suris = [
+        datum.URI.from_str(r).to_segment_uri() for r in record_uris
+      ]
+      datasets = set(u.dataset for u in record_suris)
+      splits = set(u.split for u in record_suris)
+      segment_ids = set(u.segment_id for u in record_suris)
+
+      df = df.filter(
+              df.dataset.isin(list(datasets)) &
+              df.split.isin(list(splits)) &
+              df.segment_id.isin(list(segment_ids)))
+    
+    key_cloud_df = df.selectExpr('rec_uri_str AS key', 'EXPLODE(clouds) AS c')
+    if record_uris:
+      key_cloud_df = key_cloud_df.filter(
+        key_cloud_df.key.isin([str(r) for r in record_uris]))
+
+    key_uri_dfs = []
+    if include_cameras:
+      key_uri_dfs.append(
+        key_cloud_df.selectExpr('key', 'EXPLODE(c.ci_uris) AS uri'))
+    if include_cuboids:
+      key_uri_dfs.append(
+        key_cloud_df.selectExpr('key', 'EXPLODE(c.cuboids_uris) AS uri'))
+    if include_point_clouds:
+      key_uri_dfs.append(
+        key_cloud_df.selectExpr('key', 'EXPLODE(c.pc_uris) AS uri'))
+
+    if key_uri_dfs:
+      from oarphpy import spark as S
+      key_uri_df = S.union_dfs(*key_uri_dfs)
+      sd_ut = self._get_sd_ut()
+      key_sample_df = sd_ut.get_keyed_sample_df(key_uri_df)
+
+      joined = df.join(key_sample_df, key_sample_df.key == df.rec_uri_str)
+
+      def to_record_samples(row):
+        from oarphpy.spark import RowAdapter
+        from psegs.table.sd_db import StampedDatumDB
+        flow_rec = RowAdapter.from_row(row)
+        sample = StampedDatumDB.datum_rows_to_sample(row.datums)
+        return (flow_rec, sample)
+
+      return joined.rdd.map(to_record_samples)
+    
+    else:
+
+      def to_record_samples(row):
+        from oarphpy.spark import RowAdapter
+        flow_rec = RowAdapter.from_row(row)
+        return (flow_rec, None)
+      return df.rdd.map(to_record_samples)
+
 
 if __name__ == '__main__':
   # from psegs.spark import Spark
@@ -1093,10 +1221,43 @@ if __name__ == '__main__':
   # rec = task_row_to_flow_record(task_row)
   # import ipdb; ipdb.set_trace()
 
-  pickles_to_flow_records(
-    '/opt/psegs/dataroot/oflow_pickles',
-    '/opt/psegs/dataroot/psegs_flow_records/records.parquet',
-    max_n=200)
+
+
+
+  # pickles_to_flow_records(
+  #   '/opt/psegs/dataroot/oflow_pickles',
+  #   '/opt/psegs/dataroot/psegs_flow_records/records.parquet',
+  #   max_n=-1)
+
+  from psegs.spark import Spark
+  spark = Spark.getOrCreate()
+
+  T = FlowRecTable(spark, '/outer_root/media/rocket4q/psegs_flow_records_short')
+  rids = T.get_record_uris()
+  rids = [r for r in rids if 'nusc' in r.dataset]
+  rids = rids[:10]
+
+  
+  rdd = T.get_records_with_samples_rdd(record_uris=rids)
+
+  flow_rec, sample = rdd.take(1)[0]
+
+  # print(flow_rec.to_html(camera_images=sample.camera_images))
+
+  import ipdb; ipdb.set_trace()
+  print()
+
+  flow_df = spark.read.parquet('/opt/psegs/dataroot/psegs_flow_records/records.parquet')
+
+  rec = flow_df.take(1)[0]
+  from oarphpy.spark import RowAdapter
+  rec = RowAdapter.from_row(rec)
+
+  rec.to_html()
+
+  import ipdb; ipdb.set_trace()
+  print()
+
 
 
   # R = NuscKeyframesOFlowRenderer

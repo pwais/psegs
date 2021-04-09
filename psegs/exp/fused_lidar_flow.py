@@ -265,7 +265,7 @@ class FlowRecord(object):
     assert self.u_min == 0, self.u_min
     assert self.v_min == 0, self.v_min
 
-    h, w = self.v_max, self.u_max
+    h, w = int(self.v_max), int(self.u_max)
     uvdvis1 = self.clouds[0].uvdvis
     uvdvis2 = self.clouds[1].uvdvis
     visible_both = ((uvdvis1[:, -1] == 1) & (uvdvis2[:, -1] == 1))
@@ -308,14 +308,14 @@ class FlowRecord(object):
     debug_img = self.get_debug_image(camera_images=camera_images)
     if debug_img is not None:
       from oarphpy.plotting import img_to_img_tag
-      debug_img_html = oputil.img_to_img_tag(debug_img, format='png')
+      debug_img_html = img_to_img_tag(debug_img, format='png')
     else:
       debug_img_html = ''
 
     HTML = """
       FlowRecord<br/>
       {core}<br/>
-      {debug_img}<br/><br/>
+      {debug_img_html}<br/><br/>
 
       Clouds<br/>
       {clouds}
