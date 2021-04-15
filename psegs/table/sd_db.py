@@ -151,20 +151,20 @@ class StampedDatumDB(object):
         else:
           raise e
 
-    if len(suris) > 3:
-      from oarphpy import util as oputil
-      thru = oputil.ThruputObserver(
-                      name='get_or_build_datum_dfs',
-                      n_total=len(suris),
-                      log_freq=1,
-                      log_on_del=True)
-      dfs = []
-      for suri in suris:
-        with thru.observe(n=1):
-          dfs.append(get_df(suri))
-        thru.maybe_log_progress()
-    else:
-      dfs = [get_df(suri) for suri in suris]
+    util.log.info("Building union DF for %s segments ..." % len(suris))
+    from oarphpy import util as oputil
+    thru = oputil.ThruputObserver(
+                    name='get_or_build_datum_dfs',
+                    n_total=len(suris),
+                    log_freq=1,
+                    log_on_del=True)
+    dfs = []
+    for suri in suris:
+      with thru.observe(n=1):
+        dfs.append(get_df(suri))
+      thru.maybe_log_progress()
+    util.log.info("... done building union DF for %s segments" % len(suris))
+
     dfs = [d for d in dfs if d is not None]
     if not dfs:
       if ignore_unknown_tables:

@@ -521,6 +521,7 @@ class KITTI360SDTable(StampedDatumTableBase):
 
       # Are we trying to resume? Filter URIs if necessary.
       if existing_uri_df is not None:
+        util.log.info("... checking existing URIs ...")
         def to_datum_id(obj):
           return (
             obj.dataset,
@@ -533,6 +534,9 @@ class KITTI360SDTable(StampedDatumTableBase):
                                     lambda t: (t, None))
         uri_rdd = key_uri_rdd.subtractByKey(existing_keys_nulls).map(
                                         lambda kv: kv[1])
+        uris = uri_rdd.collect()
+        if not uris:
+          continue
 
       datum_rdd = uri_rdd.map(cls.create_stamped_datum)
       

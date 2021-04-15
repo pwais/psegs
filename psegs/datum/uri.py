@@ -226,7 +226,10 @@ class URI(object):
     (Ignores invalid values)."""
     for k in self.__slots__:
       if k in kwargs:
-        setattr(self, k, kwargs[k])
+        v = kwargs[k]
+        if k == 'sel_datums':
+          v = DatumSelection.selections_from_value(v)
+        setattr(self, k, v)
   
   def replaced(self, **kwargs):
     """Create and return a copy with all values updated to those specified in

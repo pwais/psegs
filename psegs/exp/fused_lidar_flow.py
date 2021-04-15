@@ -3786,10 +3786,13 @@ class FlowRecTable(object):
     if self._sd_ut is None:
       from psegs.table.sd_db import StampedDatumDB
       self._sd_ut = StampedDatumDB(tables=self._sd_tables, spark=self._spark)
+      util.log.info(
+        "FlowRecTable: Have %s StampedDatumTables" % len(self._sd_tables))
     return self._sd_ut
 
   def _get_raw_df(self):
     if not self._df:
+      util.log.info("FlowRecTable: Reading parquet from %s " % self._pq_root)
       self._df = self._spark.read.parquet(self._pq_root)
 
       # self._spark.catalog.dropTempView('psegs_frt_df')
@@ -3850,7 +3853,6 @@ class FlowRecTable(object):
       key_cloud_df = key_cloud_df.filter(
         key_cloud_df.key.isin([str(r) for r in record_uris]))
 
-    # TODO the key should include the uri as well because itll make the join way more efficient for like kitti where many cameras per sample pair !!!
     key_uri_dfs = []
     if include_cameras:
       key_uri_dfs.append(

@@ -855,6 +855,56 @@ def psegs_synthflow_iter_fp_rdds(
 
 
 
+def convert_again(in_pq, out_pq):
+
+  from psegs.spark import Spark
+  spark = Spark.getOrCreate()
+
+  df = spark.read.parquet(in_pq)
+
+  def convert(fr):
+    from pyspark import Row
+    from oarphpy.spark import RowAdapter
+    fr = RowAdapter.from_row(fr)
+
+    uri = fr.uri
+
+    key_uris = [c.ego_pose_uri for c in fr.clouds]
+    uri = uri.replaced(sel_datums=key_uris)
+    key = str(uri)
+
+    fr.uri = uri
+    fr.uri_key = key
+
+    row = RowAdapter.to_row(fr)
+    return row
+    # row = row.asDict()
+    # row['dataset'] = uri.dataset
+    # row['split'] = uri.split
+    # row['segment_id'] = uri.segment_id
+    # return Row(
+    #           dataset=uri.dataset,
+    #           split=uri.split,
+    #           segment_id=uri.segment_id,
+    #           **row.asDict())
+  
+  
+
+  from oarphpy.spark import RowAdapter
+  from psegs.exp.fused_lidar_flow import FLOW_RECORD_PROTO  
+  schema = RowAdapter.to_schema(FLOW_RECORD_PROTO)
+  frec_df = spark.createDataFrame(df.rdd.map(convert), schema=schema)
+
+  # frec_df = frec_df.persist()
+  frec_df = frec_df.withColumn('dataset', frec_df['uri.dataset'])
+  frec_df = frec_df.withColumn('split', frec_df['uri.split'])
+  frec_df = frec_df.withColumn('segment_id', frec_df['uri.segment_id'])
+
+  frec_df.write.save(
+          path=out_pq,
+          format='parquet',
+          partitionBy=['dataset', 'split', 'segment_id'],
+          compression='lz4')
 
 
 
@@ -902,21 +952,26 @@ if __name__ == '__main__':
 
 
 
+  # convert_again(
+  #   '/outer_root/media/rocket4q/psegs_flow_records_short',
+  #   '/outer_root/media/rocket4q/psegs_flow_records_short_fixed'
+  # )
+  # import ipdb; ipdb.set_trace()
 
 
 
-
-  T = FlowRecTable(spark, '/outer_root/media/rocket4q/psegs_synthflow.parquet')
+  T = FlowRecTable(spark, '/outer_root/media/rocket4q/psegs_flow_records_short_fixed')
   rids = T.get_record_uris()
-  import ipdb; ipdb.set_trace()
+  print('rids', len(rids))
+  
   # import pprint
   # pprint.pprint([str(r) for r in rids])
   # assert False
-  rids = [r for r in rids if 'kitti' in r.dataset]
+  # rids = [r for r in rids if 'kitti' in r.dataset]
   # rids = rids[:100]
 
   
-  rdd = T.get_records_with_samples_rdd(record_uris=rids[:2])
+  rdd = T.get_records_with_samples_rdd(record_uris=rids)
 
   #print('second now')
   #big_rdd = T.get_records_with_samples_rdd(record_uris=rids[10:12])
