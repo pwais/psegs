@@ -45,6 +45,16 @@ class StampedDatumTableBase(object):
       existing_uri_df = None
       if not util.missing_or_empty(cls.table_root()):
         existing_uri_df = cls.as_uri_df(spark)
+        if only_segments:
+          seg_uris = [URI.from_str(s).to_segment_uri() for s in only_segments]
+          existing_uri_df = existing_uri_df.filter(
+                              existing_uri_df.dataset.isin(
+                                [u.dataset for u in seg_uris]) &
+                              existing_uri_df.split.isin(
+                                [u.split for u in seg_uris]) &
+                              existing_uri_df.segment_id.isin(
+                                [u.segment_id for u in seg_uris]))
+
       sd_rdds = cls._create_datum_rdds(
                         spark, 
                         existing_uri_df=existing_uri_df,
@@ -108,35 +118,43 @@ class StampedDatumTableBase(object):
   def _get_segment_datum_rdd_or_df(cls, spark, segment_uri):
     segment_uri = URI.from_str(segment_uri)
     if util.missing_or_empty(cls.table_root()):
-      datum_rdds = cls._create_datum_rdds(spark, only_segments=[segment_uri])
-      if not datum_rdds:
-        return spark.sparkContext.parallelize([])
-      datum_rdd = spark.sparkContext.union(datum_rdds)
-      if segment_uri.sel_datums:
-        selected = set(
-          (sd.topic, sd.timestamp) for sd in segment_uri.sel_datums)
-        datum_rdd = datum_rdd.filter(
-          lambda sd: (sd.uri.topic, sd.uri.timestamp) in selected)
-      return datum_rdd
+      return cls._create_segment_datum_rdd(spark, segment_uri)
     else:
-      df = cls.as_df(spark)
-      assert segment_uri.segment_id, "Bad URI %s" % segment_uri
-      seg_df = df.filter(df.segment_id == segment_uri.segment_id)
-      if segment_uri.dataset:
-        seg_df = seg_df.filter(df.dataset == segment_uri.dataset)
-      if segment_uri.split:
-        seg_df = seg_df.filter(df.split == segment_uri.split)
-      if segment_uri.sel_datums:
-        import pyspark.sql.functions as F
-        from functools import reduce
-        seg_df = seg_df.where(
-          reduce(
-            lambda a, b: a | b,
-            ((F.col('uri.topic') == sd.topic) & 
-              (F.col('uri.timestamp') == sd.timestamp)
-            for sd in segment_uri.sel_datums)))
-      return seg_df
-    
+      return cls._get_segment_df(spark, segment_uri)
+  
+  @classmethod
+  def _create_segment_datum_rdd(cls, spark, segment_uri):
+    datum_rdds = cls._create_datum_rdds(spark, only_segments=[segment_uri])
+    if not datum_rdds:
+      return spark.sparkContext.parallelize([])
+    datum_rdd = spark.sparkContext.union(datum_rdds)
+    if segment_uri.sel_datums:
+      selected = set(
+        (sd.topic, sd.timestamp) for sd in segment_uri.sel_datums)
+      datum_rdd = datum_rdd.filter(
+        lambda sd: (sd.uri.topic, sd.uri.timestamp) in selected)
+    return datum_rdd
+
+  @classmethod
+  def _get_segment_datum_df_from_disk(cls, spark, segment_uri):
+    df = cls.as_df(spark)
+    assert segment_uri.segment_id, "Bad URI %s" % segment_uri
+    seg_df = df.filter(df.segment_id == segment_uri.segment_id)
+    if segment_uri.dataset:
+      seg_df = seg_df.filter(df.dataset == segment_uri.dataset)
+    if segment_uri.split:
+      seg_df = seg_df.filter(df.split == segment_uri.split)
+    if segment_uri.sel_datums:
+      import pyspark.sql.functions as F
+      from functools import reduce
+      seg_df = seg_df.where(
+        reduce(
+          lambda a, b: a | b,
+          ((F.col('uri.topic') == sd.topic) & 
+            (F.col('uri.timestamp') == sd.timestamp)
+          for sd in segment_uri.sel_datums)))
+    return seg_df
+
   @classmethod
   def get_segment_datum_rdd(cls, spark, segment_uri):
     rdd_or_df = cls._get_segment_datum_rdd_or_df(spark, segment_uri)
@@ -206,12 +224,20 @@ class StampedDatumTableBase(object):
     """This method is FINAL! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
     return RowAdapter.from_row(row)
 
-  # @classmethod
-  # def as_uri_df(cls, spark):
-  #   df = cls.as_df(spark)
-  #   COLS = list(URI.__slots__)
-  #   uri_df = df.select(*COLS)
-  #   return uri_df
+  @classmethod
+  def as_uri_df(cls, spark):
+    if util.missing_or_empty(cls.table_root()):
+      return spark.sparkContext.parallelize([])
+    df = cls.as_df(spark)
+
+    import attr
+    uri_colnames = ['uri.' + f.name for f in attr.fields(URI)]
+
+    uri_df = df.select(uri_colnames)
+    return uri_df
+    # COLS = list(URI.__slots__)
+    # uri_df = df.select(*COLS)
+    # return uri_df
 
   # @classmethod
   # def as_stamped_datum_rdd(cls, spark):

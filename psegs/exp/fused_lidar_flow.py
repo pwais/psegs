@@ -3844,12 +3844,13 @@ class FlowRecTable(object):
               df.dataset.isin(list(datasets)) &
               df.split.isin(list(splits)) &
               df.segment_id.isin(list(segment_ids)))
-    
+
     key_cloud_df = df.selectExpr('uri_key AS key', 'EXPLODE(clouds) AS c')
     if record_uris:
       key_cloud_df = key_cloud_df.filter(
         key_cloud_df.key.isin([str(r) for r in record_uris]))
 
+    # TODO the key should include the uri as well because itll make the join way more efficient for like kitti where many cameras per sample pair !!!
     key_uri_dfs = []
     if include_cameras:
       key_uri_dfs.append(
@@ -3864,6 +3865,7 @@ class FlowRecTable(object):
     if key_uri_dfs:
       from oarphpy import spark as S
       key_uri_df = S.union_dfs(*key_uri_dfs)
+      key_uri_df = key_uri_df.repartition(100, 'uri')
       sd_ut = self._get_sd_ut()
       key_sample_df = sd_ut.get_keyed_sample_df(key_uri_df)
 
@@ -3875,6 +3877,10 @@ class FlowRecTable(object):
         flow_rec = RowAdapter.from_row(row)
         sample = StampedDatumDB.datum_rows_to_sample(row.datums)
         return (flow_rec, sample)
+      #df = df.persist()
+      #joined = joined.persist()
+      #joined.show()
+      #import ipdb; ipdb.set_trace()
 
       return joined.rdd.map(to_record_samples)
     

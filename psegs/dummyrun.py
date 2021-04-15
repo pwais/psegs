@@ -891,37 +891,37 @@ if __name__ == '__main__':
   spark = Spark.getOrCreate()
 
 
+  # fps = psegs_synthflow_create_fps(
+  #           spark,
+  #           '/outer_root/media/rocket4q/psegs_flow_records_short',
+  #           PSEGS_SYNTHFLOW_DEMO_RECORD_URIS)
+  # import ipdb; ipdb.set_trace()
 
-  fps = psegs_synthflow_create_fps(
-            spark,
-            '/outer_root/media/rocket4q/psegs_flow_records_short',
-            PSEGS_SYNTHFLOW_DEMO_RECORD_URIS)
+
+
+
+
+
+
+
+
+
+  T = FlowRecTable(spark, '/outer_root/media/rocket4q/psegs_synthflow.parquet')
+  rids = T.get_record_uris()
   import ipdb; ipdb.set_trace()
-
-
-
-
-
-
-
-
-
-
-  # T = FlowRecTable(spark, '/outer_root/media/rocket4q/psegs_flow_records_short')
-  # rids = T.get_record_uris()
   # import pprint
   # pprint.pprint([str(r) for r in rids])
   # assert False
-  rids = [r for r in rids if 'nusc' in r.dataset]
+  rids = [r for r in rids if 'kitti' in r.dataset]
   # rids = rids[:100]
 
   
-  rdd = T.get_records_with_samples_rdd(record_uris=rids[:20])
+  rdd = T.get_records_with_samples_rdd(record_uris=rids[:2])
 
-  print('second now')
-  big_rdd = T.get_records_with_samples_rdd(record_uris=rids[10:12])
-  print(big_rdd.count())
-  print('done')
+  #print('second now')
+  #big_rdd = T.get_records_with_samples_rdd(record_uris=rids[10:12])
+  #print(big_rdd.count())
+  #print('done')
 
   flow_rec, sample = rdd.take(1)[0]
 
@@ -930,7 +930,7 @@ if __name__ == '__main__':
   import ipdb; ipdb.set_trace()
   print()
 
-  flow_df = spark.read.parquet('/opt/psegs/dataroot/psegs_flow_records/records.parquet')
+  flow_df = spark.read.parquet('/outer_root/media/rocket4q/psegs_flow_records_short')
 
   rec = flow_df.take(1)[0]
   from oarphpy.spark import RowAdapter

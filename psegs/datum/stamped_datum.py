@@ -43,6 +43,7 @@ class StampedDatum(object):
 
   def __lt__(self, other):
     """Ordering is by URI (and not by data content)"""
+    # TODO Fixme it turns out when there's a tie, attrs will look at content anyways, we need to fix or dump this ............
     assert type(other) is type(self)
     return self.uri < other.uri
 
@@ -118,7 +119,7 @@ class Sample(object):
         # Note this is not safe ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # because the first URI might have a different segment .. ?
         # also because extra might get blown away
-        base_uri = sorted(self.datums)[0].uri
+        base_uri = sorted(d.uri for d in self.datums)[0]
         self.uri = copy.deepcopy(base_uri)
     
     if self.uri:

@@ -124,6 +124,38 @@ def test_segment_uri_from_datum_uris():
       'psegs://dataset=d&timestamp=1&topic=t2',
     ]))
 
+  assert (
+    URI(
+      dataset='d',
+      sel_datums=[URI(topic='t1', timestamp=1), URI(topic='t2', timestamp=1)]),
+    URI.segment_uri_from_datum_uris([
+      'psegs://dataset=d&timestamp=1&topic=t1',
+      'psegs://dataset=d&timestamp=1&topic=t2',
+    ]))
+  
+  from pyspark import Row
+  assert (
+    URI(
+      dataset='d',
+      sel_datums=[
+        Row(topic='t1', timestamp=1, alt='yay'),
+        Row(topic='t2', timestamp=1, moof='foo')]),
+    URI.segment_uri_from_datum_uris([
+      'psegs://dataset=d&timestamp=1&topic=t1',
+      'psegs://dataset=d&timestamp=1&topic=t2',
+    ]))
+  
+  assert (
+    URI(
+      dataset='d',
+      sel_datums=[
+        Row(uri=URI(topic='t1', timestamp=1), alt='yay'),
+        Row(uri=URI(topic='t2', timestamp=1), moof='foo')]),
+    URI.segment_uri_from_datum_uris([
+      'psegs://dataset=d&timestamp=1&topic=t1',
+      'psegs://dataset=d&timestamp=1&topic=t2',
+    ]))
+
 
 def test_uri_sorting():
   # A less-complete URI is always less than a more-complete one

@@ -84,10 +84,11 @@ class StampedDatumDB(object):
   #         spark, segment_uri, time_ordered=time_ordered)
   #   return spark.sparkContext.parallelize([])
 
-  def __init__(self, tables=[], spark=None):
+  def __init__(self, tables=[], spark=None, cache_dfs=True):
     self._tables = tables
     self._segment_to_df = {}
     self._spark = spark
+    self._cache_dfs = cache_dfs
   
   def _build_datum_df(self, uri, spark=None):
     spark = self._spark or spark
@@ -104,7 +105,11 @@ class StampedDatumDB(object):
       raise NoKnownTable("No known table for %s in %s" % (uri, self._tables))
     
     util.log.info("Building DF for %s" % uri)
-    datum_df = T.get_segment_datum_df(spark, suri)
+    if self._cache_dfs:
+      T.build(spark=self._spark, only_segments=[suri])
+      datum_df = T._get_segment_datum_df_from_disk(spark, suri)
+    else:
+      datum_df = T.get_segment_datum_df(spark, suri)
     return datum_df
 
   def _get_df_for_segment(self, suri, spark=None):
@@ -341,3 +346,5 @@ class StampedDatumDB(object):
 
     datums = [RowAdapter.from_row(d) for d in datum_rows]
     return datum.Sample(datums=datums)
+
+

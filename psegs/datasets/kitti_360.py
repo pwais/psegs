@@ -529,9 +529,10 @@ class KITTI360SDTable(StampedDatumTableBase):
             obj.topic,
             obj.timestamp)
         key_uri_rdd = uri_rdd.map(lambda u: (to_datum_id(u), u))
-        existing_keys = existing_uri_df.rdd.map(to_datum_id)
-        uri_rdd = key_uri_rdd.subtractByKey(existing_keys).map(
-                                        lambda kv: kv[0])
+        existing_keys_nulls = existing_uri_df.rdd.map(to_datum_id).map(
+                                    lambda t: (t, None))
+        uri_rdd = key_uri_rdd.subtractByKey(existing_keys_nulls).map(
+                                        lambda kv: kv[1])
 
       datum_rdd = uri_rdd.map(cls.create_stamped_datum)
       
