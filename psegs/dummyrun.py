@@ -952,11 +952,11 @@ if __name__ == '__main__':
 
 
 
-  # convert_again(
-  #   '/outer_root/media/rocket4q/psegs_flow_records_short',
-  #   '/outer_root/media/rocket4q/psegs_flow_records_short_fixed'
-  # )
-  # import ipdb; ipdb.set_trace()
+  convert_again(
+     '/outer_root/media/rocket4q/psegs_synthflow.parquet',
+     '/outer_root/media/Costco8000/psegs_flow_records_FULL_fixed'
+  )
+  import ipdb; ipdb.set_trace()
 
 
 
