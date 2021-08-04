@@ -47,6 +47,7 @@ class StampedDatumTableBase(object):
         existing_uri_df = cls.as_uri_df(spark)
         if only_segments:
           seg_uris = [URI.from_str(s).to_segment_uri() for s in only_segments]
+
           existing_uri_df = existing_uri_df.filter(
                               existing_uri_df.dataset.isin(
                                 [u.dataset for u in seg_uris]) &
@@ -77,7 +78,8 @@ class StampedDatumTableBase(object):
     # TODO REPLACE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     """ comments ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
     util.log.info("Loading %s ..." % cls.table_root())
-    df = spark.read.option("mergeSchema", "true").parquet(str(cls.table_root()))
+    # df = spark.read.option("mergeSchema", "true").parquet(str(cls.table_root()))
+    df = spark.read.parquet(str(cls.table_root()))
     # df = spark.read.schema(cls.table_schema()).option("mergeSchema", "true").load(path=cls.table_root())
     # read = read.schema(
     # df = spark.read.parquet(cls.table_root(), schema=cls.table_schema())
@@ -231,9 +233,14 @@ class StampedDatumTableBase(object):
     df = cls.as_df(spark)
 
     import attr
-    uri_colnames = ['uri.' + f.name for f in attr.fields(URI)]
-
-    uri_df = df.select(uri_colnames)
+    colnames = [
+      'uri.' + f.name
+      for f in attr.fields(URI)
+      if f.name not in cls.PARTITION_KEYS
+    ]
+    colnames += [c for c in cls.PARTITION_KEYS]
+      # Use the partition columns for faster filters
+    uri_df = df.select(colnames)
     return uri_df
     # COLS = list(URI.__slots__)
     # uri_df = df.select(*COLS)

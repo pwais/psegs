@@ -107,6 +107,8 @@ class StampedDatumDB(object):
     util.log.info("Building DF for %s" % uri)
     if self._cache_dfs:
       T.build(spark=self._spark, only_segments=[suri])
+      # TODO the below call is expensive for each table if disk table has lots of files !!!!!!! 5 minutes per table!!
+      # at least when merge schema was used !!!!
       datum_df = T._get_segment_datum_df_from_disk(spark, suri)
     else:
       datum_df = T.get_segment_datum_df(spark, suri)
@@ -311,7 +313,7 @@ class StampedDatumDB(object):
                 uri_col='uri',
                 datum_col='datums',
                 spark=None):
-    
+    # fixme it took 23 mins just to get union df of 42 segments
     suri_df = df.select(
                     df[uri_col + '.dataset'],
                     df[uri_col + '.split'],

@@ -709,10 +709,6 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       
       uri_rdd = task_rdd.flatMap(iter_uris_for_task)
 
-      # Some datums are more expensive to materialize than others.  Force
-      # a repartition to avoid stragglers.
-      uri_rdd = uri_rdd.repartition(TASKS_PER_RDD)
-
       # Are we trying to resume? Filter URIs if necessary.
       if existing_uri_df is not None:
         util.log.info("... checking existing URIs ...")
@@ -728,11 +724,14 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
                                     lambda t: (t, None))
         uri_rdd = key_uri_rdd.subtractByKey(existing_keys_nulls).map(
                                         lambda kv: kv[1])
-        uris = uri_rdd.collect()
-        if not uris:
+        uri_rdd = uri_rdd.cache()
+        if uri_rdd.count() == 0:
           util.log.info("... all datums already exist, skipping this chunk ...")
           continue
       
+      # Some datums are more expensive to materialize than others.  Force
+      # a repartition to avoid stragglers.
+      uri_rdd = uri_rdd.repartition(TASKS_PER_RDD)
 
       datum_rdd = uri_rdd.map(cls.create_stamped_datum)
       datum_rdds.append(datum_rdd)
