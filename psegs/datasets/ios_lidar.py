@@ -52,19 +52,24 @@ def threeDScannerApp_get_camera_pose(json_data):
     [ 0, -1,  0,  0],
     [ 0,  0,  1,  0],
     [-1,  0,  0,  0],
+    [ 0,  0,  0,  1],
   ])
 
   WORLD_T_OPENGL = np.array([
     [ 0,  0, -1,  0],
     [-1,  0,  0,  0],
     [ 0,  1,  0,  0],
+    [ 0,  0,  0,  1],
   ])
 
-  pose = WORLD_T_OPENGL * T_arr_raw[:3, :4] * OPENGTL_T_WORLD
+  # pose = WORLD_T_OPENGL @ T_arr_raw @ OPENGTL_T_WORLD
+  # pose = WORLD_T_OPENGL * T_arr_raw[:3, :4]
+  pose = T_arr_raw[:3, :4]
+  # assert False, (T_arr_raw, pose)
   return datum.Transform.from_transformation_matrix(
             pose,
-            src_frame='world',
-            dest_frame='ego')
+            src_frame='ego',
+            dest_frame='world')
   
 def threeDScannerApp_get_K(json_data):
   import numpy as np
@@ -122,14 +127,25 @@ def threeDScannerApp_create_camera_image(frame_json_path):
             if k not in SKIP_KEYS)
 
   # https://docs.ros.org/en/api/rtabmap/html/classrtabmap_1_1CameraModel.html#a0853af9d0117565311da4ffc3965f8d2
+  # https://developer.apple.com/documentation/arkit/arcamera/2866108-transform
+  #   Apple camera frame is:
+  #     +x is right when device is in lanscape; along the device long edge
+  #     +y is up when device is in landscape
+  #     +z is out of the device screen
   ego_to_sensor = datum.Transform(
             rotation=np.array([
-              [ 0,  0,  1],
-              [-1,  0,  0],
-              [ 0, -1,  0],
+              # [ 0,  0,  1],
+              # [-1,  0,  0],
+              # [ 0, -1,  0],
+              # [ 0,   0,  -1],
+              # [-1,   0,   0],
+              # [ 0,  -1,   0],
+              [-1,   0,   0],
+              [ 0,  -1,   0],
+              [ 0,   0,  -1],
             ]),
-            src_frame='ego',
-            dest_frame='camera_front')
+            src_frame='camera_front',
+            dest_frame='ego')
   
   from oarphpy import util as oputil
   with open(frame_img_path, 'rb') as f:

@@ -958,3 +958,107 @@ class CameraImage(object):
       html += tabulate.tabulate(table, tablefmt='html')
 
     return html
+
+  def to_plotly_world_frame_3d(self, frustum_size_meters=0.1):
+    
+    corners = np.array([
+      [0, 0],
+      [self.width, 0],
+      [self.width, self.height],
+      [0, self.height],
+    ])
+
+    f_x = self.K[0, 0]
+    f_y = self.K[1, 1]
+    c_x = self.K[0, 2]
+    c_y = self.K[1, 2]
+
+    rays_xy_cam = (corners - np.array([c_x, c_y])) / np.array([f_x, f_y])
+    rays_xyz_cam = np.hstack([rays_xy_cam, np.ones((4, 1))])
+    rays_xyz_cam *= frustum_size_meters
+
+    cam_pts_cam = np.vstack([rays_xyz_cam, np.array([0, 0, 0])])
+
+
+    T_ego_from_sensor = self.ego_to_sensor[self.sensor_name, 'ego']
+    cam_pts_ego = T_ego_from_sensor.apply(cam_pts_cam).T
+
+    T_world_from_ego = self.ego_pose['ego', 'world']
+    cam_pts_world = T_world_from_ego.apply(cam_pts_ego).T
+
+
+    frustum_corners = [
+      cam_pts_world[0, :],
+      cam_pts_world[1, :],
+      cam_pts_world[2, :],
+      cam_pts_world[3, :],
+    ]
+    cam_center = cam_pts_world[-1, :]
+
+    lines = []
+    colors = []
+
+    def make_line(pts):
+      return [None] + [list(p) for p in (pts + [pts[0]])] + [None]
+    def to_css_color(rgb):
+      r, g, b = np.clip(rgb, 0, 255).astype(int).tolist()
+      return 'rgb(%s,%s,%s)' % (r, g, b)
+    def add_color(c, n):
+      colors.extend(['rgb(0,0,0)'] + (n-2) * [to_css_color(c)] + ['rgb(0,0,0)'])
+
+    # lines from cam center to frustum corners
+    for corner in frustum_corners:
+      l = make_line([cam_center, corner])
+      lines.append(l)
+      add_color((255, 255, 0), len(l))
+    
+    # lines around square of frustum
+    for i in range(4):
+      start = frustum_corners[i]
+      end = frustum_corners[(i + 1) % 4]
+
+      l = make_line([start, end])
+      lines.append(l)
+      add_color((125, 125, 0), len(l))
+    
+    import plotly
+    import plotly.graph_objects as go
+    def to_line_vals(idx, lines):
+      import itertools
+      ipts = itertools.chain.from_iterable(lines)
+      return [(pt[idx] if pt is not None else pt) for pt in ipts]
+    lines_plot = go.Scatter3d(
+                    name=str(self.timestamp),
+                    x=to_line_vals(0, lines),
+                    y=to_line_vals(1, lines),
+                    z=to_line_vals(2, lines),
+                    mode='lines',
+                    line=dict(width=3, color=colors))
+
+    return lines_plot
+
+
+
+# import numpy as np
+# import plotly.graph_objects as go
+# import skimage.io as sio
+
+# x = np.linspace(-2,2, 128)
+# x, z = np.meshgrid(x,x)
+# y = np.sin(x**2*z)
+
+# fig = go.Figure(go.Surface(x=x, y=y, z=z,
+#                            colorscale='RdBu', 
+#                            showscale=False))
+# image = sio.imread ("https://raw.githubusercontent.com/empet/Discrete-Arnold-map/master/Images/cat-128.jpg") 
+# print(image.shape)
+# img = imag[:,:, 1] 
+# Y = 0.5 * np.ones(y.shape)
+# fig.add_surface(x=x, y=Y, z=z, 
+#                 surfacecolor=np.flipud(img), 
+#                 colorscale='matter_r', 
+#                 showscale=False)
+# fig.update_layout(width=600, height=600, 
+#                   scene_camera_eye_z=0.6, 
+#                   scene_aspectratio=dict(x=0.9, y=1, z=1));
+# fig.show()
