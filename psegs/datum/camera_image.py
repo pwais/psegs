@@ -107,6 +107,9 @@ class CameraImage(object):
   def __eq__(self, other):
     return misc.attrs_eq(self, other)
 
+  def get_world_to_cam(self):
+    return self.ego_pose['world', self.sensor_name]
+
   @property
   def image(self):
     """Decode and return the image.
@@ -143,7 +146,7 @@ class CameraImage(object):
     fov_v = 2. * math.atan(.5 * self.height / f_y)
     return fov_h, fov_v
 
-  def get_debug_image(self, clouds=None, cuboids=None):
+  def get_debug_image(self, clouds=None, cuboids=None, period_meters=10.):
     """Create and return a debug image showing the given content projected
     onto this `CameraImage`.
 
@@ -152,18 +155,21 @@ class CameraImage(object):
         PointClouds in the given debug image.
       cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Draw these 
         cuboids in the given debug image.
+      period_meters (float): Choose a distinct hue every `period_meters` and
+        interpolate between hues.
 
     Returns:
       np.array: A HWC RGB debug image.
     """
 
     debug_img = np.copy(self.image)
-    for pc in clouds:
+    for pc in clouds or []:
       xyz = pc.ego_to_sensor.get_inverse().apply(pc.cloud[:, :3]).T # err why inv~~~~
       uvd = self.project_ego_to_image(xyz, omit_offscreen=True)
-      pspl.draw_xy_depth_in_image(debug_img, uvd, alpha=0.7)
+      pspl.draw_xy_depth_in_image(
+        debug_img, uvd, marker_radius=4, alpha=0.9, period_meters=period_meters)
     
-    for c in cuboids:
+    for c in cuboids or []:
       box_xyz = self.ego_to_sensor.apply(c.get_box3d()).T
       box_uvd = self.project_ego_to_image(c.get_box3d(), omit_offscreen=False)
       if (box_uvd[:, 2] <= 1e-6).all():

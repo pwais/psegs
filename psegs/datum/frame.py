@@ -21,7 +21,7 @@ from psegs.datum.uri import DatumSelection
 from psegs.datum.uri import URI
 from psegs.datum.stamped_datum import StampedDatum
 
-# TODO USE SAMPLE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# TODO NOPE!!!   USE SAMPLE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @attr.s(slots=True, eq=True, weakref_slot=False)
 class Frame(object):
   """A `Frame` is a group of :class:`~psegs.datum.stamped_datum.StampedDatum`
