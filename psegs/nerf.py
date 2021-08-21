@@ -1,12 +1,12 @@
 import os
-from psegs.dummyrun import T
 
 from psegs import util
 
 def save_sample_blender_format(
       cis,
       outdir='/tmp/test_nerf_blender_out',
-      split='train'):
+      split='train',
+      parallel=-1):
   """
   Given a list of `:class:`~psegs.datum.camera_image.CameraImage` instances,
   export the images in the "Blender format" that is compatible with most
@@ -17,6 +17,8 @@ def save_sample_blender_format(
     outdir (str): Dump all data to this directory.
     split (str): Export this split of the dataset; the Blender format
       accommodates 'train', 'test', and 'val.
+    parallel (int): Use this many export workers (default to one per vcpu
+      if negative)
 
   References:
    * Original NeRF Blender files: https://github.com/bmild/nerf/issues/59
@@ -36,6 +38,10 @@ def save_sample_blender_format(
   import json
   import imageio
   from oarphpy import util as oputil
+  from oarphpy import spark as S
+
+  from psegs.spark import Spark
+
 
   assert split in ('train', 'test', 'val')
 
@@ -44,16 +50,37 @@ def save_sample_blender_format(
   img_dir_out = os.path.join(outdir, split)
   oputil.mkdir(str(img_dir_out))
 
+  
+  class SaveAndGetFrame:
+    def __call__(self):
+      i = self.i
+      ci = self.ci
+      img_dir_out = self.img_dir_out
+
+      import imageio
+
+      dest = os.path.join(img_dir_out, 'r_%s.png' % i)
+      img = ci.image
+      imageio.imwrite(dest, img)
+      
+      c2w = ci.ego_pose['ego', 'world']
+      # TODO FIXME !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      transform_matrix = c2w.get_transformation_matrix(homogeneous=True)
+      transform_matrix[0, 0] *= -1
+      transform_matrix[1, 1] *= -1
+      transform_matrix[2, 2] *= -1
+      frame = {
+        'transform_matrix': transform_matrix.tolist(),
+        'file_path': dest.replace('.png', ''),
+          # NB: Dataset readers are supposed to append the .png suffix :S
+        # 'rotation': ??? don't know what this is but it's not read?
+      }
+      return frame
+
   camera_angle_x = None
-  frames = []
   cis = sorted(cis, key=lambda ci: ci.timestamp)
-  t = oputil.ThruputObserver(
-                    name='save_sample_blender_format',
-                    n_total=len(cis),
-                    log_freq=10,
-                    log_on_del=True)
+  callables = []
   for i, ci in enumerate(cis):
-    t.start_block()
 
     if camera_angle_x is None:
       fov_h, fov_v = ci.get_fov()
@@ -61,21 +88,15 @@ def save_sample_blender_format(
         # NB: Readers will compute somthing like:
         # focal = .5 * image_width / np.tan(.5 * camera_angle_x)
     
-    dest = os.path.join(img_dir_out, 'r_%s.png' % i)
-    img = ci.image
-    imageio.imwrite(dest, img)
-    
-    c2w = ci.ego_pose[ci.sensor_name, 'world']
-    transform_matrix = c2w.get_transformation_matrix(homogeneous=True)
-    frames.append({
-      'transform_matrix': transform_matrix.tolist(),
-      'file_path': dest.replace('.png', ''),
-        # NB: Dataset readers are supposed to append the .png suffix :S
-      # 'rotation': ??? don't know what this is but it's not read?
-    })
-    
-    t.update_tallies(n=1, num_bytes=oputil.get_size_of_deep(img))
-    t.maybe_log_progress()
+    c = SaveAndGetFrame()
+    c.i = i
+    c.ci = ci
+    c.img_dir_out = img_dir_out
+    callables.append(c)
+  
+  with Spark.sess() as spark:
+    results = S.run_callables(spark, callables, parallel=parallel)
+    frames = [f for obj, f in results]
 
   transforms_data = {
     'camera_angle_x': camera_angle_x,
@@ -87,3 +108,27 @@ def save_sample_blender_format(
     json.dump(transforms_data, f, indent=2)
 
   util.log.info("... done writing to %s ." % outdir)
+
+
+
+if __name__ == '__main__':
+
+
+  from psegs.datasets import ios_lidar
+
+  base_dir = '/outer_root/home/au/lidarphone_scans/2021_06_27_12_37_38'
+  # base_dir = '/outer_root/home/au/lidarphone_scans/landscape_home_button_right_07_09_49'
+
+  from oarphpy import util as oputil
+  json_paths = oputil.all_files_recursive(base_dir, pattern='frame*.json')
+  json_paths = sorted(json_paths)
+  cis = [ios_lidar.threeDScannerApp_create_camera_image(p) for p in json_paths]
+
+  print(len(cis))
+  cis[0]
+
+  save_sample_blender_format(
+    cis,
+    '/outer_root/home/au/lidarphone_scans/nerf_blender_trial_1_2021_06_27_12_37_38')
+
+
