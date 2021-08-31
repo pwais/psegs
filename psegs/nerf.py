@@ -61,14 +61,12 @@ def save_sample_blender_format(
 
       dest = os.path.join(img_dir_out, 'r_%s.png' % i)
       img = ci.image
-      imageio.imwrite(dest, img)
+      imageio.imwrite(dest, img) 
+        # NOTE: some nerfs think this image is in [0, 1] ???
       
       c2w = ci.ego_pose['ego', 'world']
-      # TODO FIXME !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      # TODO FIXME  should be camera frame !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       transform_matrix = c2w.get_transformation_matrix(homogeneous=True)
-      transform_matrix[0, 0] *= -1
-      transform_matrix[1, 1] *= -1
-      transform_matrix[2, 2] *= -1
       frame = {
         'transform_matrix': transform_matrix.tolist(),
         'file_path': dest.replace('.png', ''),

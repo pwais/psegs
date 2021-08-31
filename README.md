@@ -15,6 +15,10 @@ Things to finalize:
   * for nusc and mebbe others: should cloud labels be separate URIs?
 
 
+frames:
+ * http://www.mech.sharif.ir/c/document_library/get_file?uuid=5a4bb247-1430-4e46-942c-d692dead831f&groupId=14040
+ * http://wiki.ros.org/tf/Overview/Transformations
+
 
  * trailer: 
      * show a histogram with examples of distance / orientation with samples over ALL datasets

@@ -39,9 +39,21 @@
 from psegs import datum
 from psegs.table.sd_table import StampedDatumTableBase
 
-def threeDScannerApp_get_camera_pose(json_data):
+
+"""
+Apple camera frame:
+ +x is right
+"""
+
+
+def threeDScannerApp_get_ego_pose(json_data):
   import numpy as np
 
+  # The device ego pose is in a GPS-based coordinate frame where:
+  #  +y is "up" based upon *gravity*
+  #  +x is GPS East
+  #  +z is GPS South
+  # https://developer.apple.com/documentation/arkit/arconfiguration/worldalignment/gravityandheading
   T_raw = json_data['cameraPoseARFrame'] # A row-major 4x4 matrix
   T_arr_raw = np.array(T_raw).reshape([4, 4])
 
@@ -62,7 +74,14 @@ def threeDScannerApp_get_camera_pose(json_data):
     [ 0,  0,  0,  1],
   ])
 
-  # pose = WORLD_T_OPENGL @ T_arr_raw @ OPENGTL_T_WORLD
+  WORLD_T_PSEGS = np.array([
+    [ 0,  0, -1,  0],
+    [-1,  0,  0,  0],
+    [ 0,  1,  0,  0],
+    [ 0,  0,  0,  1],
+  ])
+
+  # pose = T_arr_raw @ WORLD_T_PSEGS
   # pose = WORLD_T_OPENGL * T_arr_raw[:3, :4]
   pose = T_arr_raw[:3, :4]
   # assert False, (T_arr_raw, pose)
@@ -101,11 +120,11 @@ def threeDScannerApp_create_camera_image(frame_json_path):
   with open(frame_json_path, 'r') as f:
     json_data = json.load(f)
   
-  ego_pose = threeDScannerApp_get_camera_pose(json_data)
+  ego_pose = threeDScannerApp_get_ego_pose(json_data)
   K = threeDScannerApp_get_K(json_data)
 
   timestamp = int(json_data['time'] * 1e9)
-    # CACurrentMediaTime, which is mach_absolute_time, which is system uptime
+    # CACurrentMediaTime, which is mach_absolute_time, which is *system uptime*
 
   REQUIRED_KEYS = (
     'averageAngularVelocity',
@@ -126,6 +145,21 @@ def threeDScannerApp_create_camera_image(frame_json_path):
             for k, v in json_data.items()
             if k not in SKIP_KEYS)
 
+  WORLD_T_PSEGS = np.array([
+    [ 0,  0, -1,  0],
+    [-1,  0,  0,  0],
+    [ 0,  1,  0,  0],
+    [ 0,  0,  0,  1],
+  ])
+
+  PSEGS_T_IOS_CAM = np.array([
+    [ 0, -1,  0,  0],
+    [ 0,  0,  1,  0],
+    [-1,  0,  0,  0],
+    [ 0,  0,  0,  1],
+  ])
+
+
   # https://docs.ros.org/en/api/rtabmap/html/classrtabmap_1_1CameraModel.html#a0853af9d0117565311da4ffc3965f8d2
   # https://developer.apple.com/documentation/arkit/arcamera/2866108-transform
   #   Apple camera frame is:
@@ -140,7 +174,11 @@ def threeDScannerApp_create_camera_image(frame_json_path):
               # [ 0,   0,  -1],
               # [-1,   0,   0],
               # [ 0,  -1,   0],
-              [-1,   0,   0],
+              
+              # [ 0,  -1,   0],
+              # [ 0,   0,   1],
+              # [-1,   0,   0],
+              [ 1,   0,   0],
               [ 0,  -1,   0],
               [ 0,   0,  -1],
             ]),

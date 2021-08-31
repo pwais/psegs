@@ -984,14 +984,20 @@ class CameraImage(object):
     rays_xyz_cam *= frustum_size_meters
 
     cam_pts_cam = np.vstack([rays_xyz_cam, np.array([0, 0, 0])])
-
+    cam_frame_pts_cam = np.array([
+      [1., 0., 0.], # x hat
+      [0., 1., 0.], # y hat
+      [0., 0., 1.], # z hat
+    ])
+    cam_frame_pts_cam *= frustum_size_meters
 
     T_ego_from_sensor = self.ego_to_sensor[self.sensor_name, 'ego']
     cam_pts_ego = T_ego_from_sensor.apply(cam_pts_cam).T
+    cam_frame_pts_ego = T_ego_from_sensor.apply(cam_frame_pts_cam).T
 
     T_world_from_ego = self.ego_pose['ego', 'world']
     cam_pts_world = T_world_from_ego.apply(cam_pts_ego).T
-
+    cam_frame_pts_world = T_world_from_ego.apply(cam_frame_pts_ego).T
 
     frustum_corners = [
       cam_pts_world[0, :],
@@ -999,6 +1005,9 @@ class CameraImage(object):
       cam_pts_world[2, :],
       cam_pts_world[3, :],
     ]
+    cam_frame_x_hat = cam_frame_pts_world[0, :]
+    cam_frame_y_hat = cam_frame_pts_world[1, :]
+    cam_frame_z_hat = cam_frame_pts_world[2, :]
     cam_center = cam_pts_world[-1, :]
 
     lines = []
@@ -1027,6 +1036,17 @@ class CameraImage(object):
       lines.append(l)
       add_color((125, 125, 0), len(l))
     
+    # R, G, B lines to show cam x-hat, y-hat, z-hat
+    l = make_line([cam_center, cam_frame_x_hat])
+    lines.append(l)
+    add_color((255, 0, 0), len(l))
+    l = make_line([cam_center, cam_frame_y_hat])
+    lines.append(l)
+    add_color((0, 255, 0), len(l))
+    l = make_line([cam_center, cam_frame_z_hat])
+    lines.append(l)
+    add_color((0, 0, 255), len(l))
+
     import plotly
     import plotly.graph_objects as go
     def to_line_vals(idx, lines):
