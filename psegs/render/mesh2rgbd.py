@@ -131,7 +131,9 @@ def pytorch3d_iter_mesh2uvd_for_camera_images(
                 fov=fov_y,
                 degrees=False,
                 R=R_pytorch3d,
-                T=T_pytorch3d)
+                T=T_pytorch3d,
+                znear=0.01,
+                zfar=100.)
 
     raster_settings = RasterizationSettings(
         image_size=rasterizer_image_size, 
