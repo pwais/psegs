@@ -171,9 +171,10 @@ def pytorch3d_iter_mesh2uvd_for_camera_images(
     fragments = rasterizer(meshes_world=mesh)
 
     zbuf = fragments.zbuf
+    depth_batch = zbuf[:, :, :, 0].cpu().numpy()
     print('batch done', time.time() - start)
     for i in range(batch_size):
-      depth = zbuf[i, :, :, 0].cpu().numpy()
+      depth = depth_batch[i, :, :]
       
       h, w = rasterizer_image_size
       px_y = np.tile(np.arange(h)[:, np.newaxis], [1, w])
