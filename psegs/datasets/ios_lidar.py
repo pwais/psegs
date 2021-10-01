@@ -113,9 +113,9 @@ def threeDScannerApp_create_camera_image(frame_json_path):
   
   import numpy as np
 
-  assert os.path.exists(frame_json_path)
+  assert os.path.exists(frame_json_path), frame_json_path
   frame_img_path = frame_json_path.replace('.json', '.jpg')
-  assert os.path.exists(frame_img_path)
+  assert os.path.exists(frame_img_path), frame_img_path
 
   with open(frame_json_path, 'r') as f:
     json_data = json.load(f)
@@ -125,6 +125,7 @@ def threeDScannerApp_create_camera_image(frame_json_path):
 
   timestamp = int(json_data['time'] * 1e9)
     # CACurrentMediaTime, which is mach_absolute_time, which is *system uptime*
+    # TODO: re-write time using exif / file timestamps
 
   REQUIRED_KEYS = (
     'averageAngularVelocity',

@@ -51,7 +51,7 @@ def save_sample_blender_format(
   oputil.mkdir(str(img_dir_out))
 
   
-  class SaveAndGetFrame:
+  class SaveAndGetFrame(object):
     def __call__(self):
       i = self.i
       ci = self.ci
@@ -114,7 +114,8 @@ if __name__ == '__main__':
 
   from psegs.datasets import ios_lidar
 
-  base_dir = '/outer_root/home/au/lidarphone_scans/2021_06_27_12_37_38'
+  # base_dir = '/outer_root/home/au/lidarphone_scans/2021_06_27_12_37_38'
+  base_dir = '/outer_root/media/970-evo-plus-raid0/lidarphone_lidar_scans/2021_08_05_13_58_23/'
   # base_dir = '/outer_root/home/au/lidarphone_scans/landscape_home_button_right_07_09_49'
 
   from oarphpy import util as oputil
@@ -127,6 +128,6 @@ if __name__ == '__main__':
 
   save_sample_blender_format(
     cis,
-    '/outer_root/home/au/lidarphone_scans/nerf_blender_trial_1_2021_06_27_12_37_38')
+    '/outer_root/home/pwais/bundle-adjusting-NeRF/data/blender/iphone_911r')
 
 
