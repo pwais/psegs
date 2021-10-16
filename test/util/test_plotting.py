@@ -66,6 +66,24 @@ def test_draw_xy_depth_in_image():
   check_img(actual_3, 'test_draw_xy_depth_in_image_user_colors.png')
 
 
+def test_draw_depth_in_image():
+  # Create a depth channel for a test image:
+  #  * Top half depth is just a linear function of xy coord
+  #  * Bottom half is all invalid depth
+  h, w = 1000, 100
+  depth = np.zeros((h, w))
+  for y in range(h):
+    for x in range(w):
+      if y < .5 * h:
+        depth[y, x] = x + y
+      else:
+        depth[y, x] = -1 if (x < .5 * w) else float('nan')
+
+  actual = np.zeros((h, w, 3))
+  pspl.draw_depth_in_image(actual, depth)
+  check_img(actual, 'test_draw_depth_in_image.png')
+
+
 def test_draw_cuboid_xy_in_image():
   cube = np.array([
     # Front

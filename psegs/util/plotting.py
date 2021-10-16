@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from colorsys import hsv_to_rgb
 import numpy as np
 
 
@@ -187,15 +188,28 @@ def rgb_for_distance(d_meters, period_meters=10.):
   of colors if the input is an array)).  We choose a distinct hue every
   `period_meters` and interpolate between hues for `d_meters`.
   """
+  import colorsys
   from oarphpy.plotting import hash_to_rbg
 
   if not isinstance(d_meters, np.ndarray):
     d_meters = np.array([d_meters])
   
   SEED = 1337 # Colors for the first 10 buckets verified to be very distinct
+  base_rgb = hash_to_rbg(SEED)
+  base_h, base_s, base_v = colorsys.rgb_to_hsv(*base_rgb)
+  
+  # colorsys takes Hues in [0, 1] and the colors spaced ~0.5 apart are
+  # complimentary.  We pick a value != 0.5 to create a coloring that is
+  # out-of-phase with the HSV color wheel (ensures distinct colors across
+  # depths)
+  COLOR_STEP = 0.5 + 1. / 12
   max_bucket = int(np.ceil(d_meters.max() / period_meters))
-  bucket_to_color = np.array(
-    [hash_to_rbg(bucket + SEED) for bucket in range(max_bucket + 2)])
+  bucket_to_hsv = [
+    (base_h + (bucket * COLOR_STEP % 1.0), base_s, base_v)
+    for bucket in range(max_bucket + 2)
+  ]
+  bucket_to_rgb = [colorsys.hsv_to_rgb(*hsv) for hsv in bucket_to_hsv]
+  bucket_to_color = np.array(bucket_to_rgb)
 
   # Use numpy's indexing for fast "table lookup" of bucket ids (bids) in
   # the "table" bucket_to_color
@@ -230,7 +244,7 @@ def draw_xy_depth_in_image(
       user_colors=None):
   """Draw a point cloud `pts` in `img`; *modifies* `img` in-place (so you can 
   compose this draw call with others). Point color interpolates between
-  standard colors for each 10-meter tick.  Optionally override this
+  standard colors for each `period_meters` tick.  Optionally override this
   behavior using `user_colors`.
 
   Args:
@@ -295,6 +309,54 @@ def draw_xy_depth_in_image(
       overlay[(yy + r) % h, xx] = colors
       overlay[yy, (xx + r) % w] = colors
         # NB: toroidal boundary conditions plot hack for speed ...
+
+  # Now blend!
+  import cv2
+  img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+
+
+def draw_depth_in_image(
+      img,
+      depth_channel,
+      alpha=.4,
+      period_meters=10.):
+  """Draw a `depth_channel` in `img`; *modifies* `img` in-place (so you can 
+  compose this draw call with others). Point color interpolates between
+  standard colors for each `period_meters` tick.  Optionally override this
+  behavior using `user_colors`.
+
+  Args:
+    img (np.array): Draw in this image.
+    depth_channel (np.array): A depth channel of shape (h, w, 1) [or
+      just (h, w)] that matches the size of `img`.  Each value is a depth value
+      in meters.  Invalid values are ignored (drawn with 0 alpha) in the output.
+    alpha (float): Blend point color using weight [0, 1].
+    period_meters (float): Choose a distinct hue every `period_meters` and
+      interpolate between hues.
+  """
+
+  # OpenCV can't draw transparent colors, so we use the 'overlay image' trick:
+  # First draw dots an an overlay...
+  overlay = img.copy()
+  h, w = overlay.shape[:2]
+
+  depth_channel = depth_channel.squeeze().copy()
+  assert depth_channel.shape[:2] == (h, w)
+
+  valid = np.where(
+            (depth_channel >= 0) & np.isfinite(depth_channel))
+  if not valid[0].any():
+    return
+  
+  color_d = np.zeros_like(depth_channel)
+  color_d[valid] = depth_channel[valid]
+  color_d = np.reshape(color_d, [-1])
+  colors = rgb_for_distance(color_d, period_meters=period_meters)
+  colors = np.clip(colors, 0, 255).astype(int)
+  colors = np.reshape(colors, [h, w, 3])
+
+  # Retain original color for invalid points
+  overlay[valid] = colors[valid]
 
   # Now blend!
   import cv2

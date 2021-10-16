@@ -28,6 +28,11 @@
 #      info.json - has GPS data and other context
 #      export.obj - raw fused mesh (unclear if this is from 
 #         Apple's fusion or not)
+# 
+#    If the capture was recorded in "low res" mode, the directory additionally
+#    has files like:
+#      depth_XXXXX.png - raw depth info as a 16-bit png (depth in millimeters?)
+#      conf_XXXXX.png - sensor confidence for depth?
 #
 # Parsing code references:
 #  * ARBodyPoseRecorder from the developer of 3DScannerApp:
@@ -36,7 +41,10 @@
 #     parse 3DScannerApp output:
 #     https://docs.ros.org/en/api/rtabmap/html/CameraImages_8cpp_source.html
 
+import os
+
 from psegs import datum
+from psegs import util
 from psegs.table.sd_table import StampedDatumTableBase
 
 
@@ -206,4 +214,76 @@ def threeDScannerApp_create_camera_image(frame_json_path):
 
   return ci
 
+def threeDScannerApp_convert_raw_to_opend3d_rgbd(input_dir, output_dataset_dir):
+  pass
 
+def threeDScannerApp_convert_raw_to_sync_rgbd(
+      input_dir,
+      output_dir,
+      scale_depth_to_match_visible=True,
+      out_id_zfill=8,
+      rgb_prefix='image_',
+      depth_prefix='depth_',
+      include_debug=True):
+  
+  from oarphpy import util as oputil
+  input_rgb_paths = oputil.all_files_recursive(
+                          input_dir, pattern='frame*.jpg')
+  input_depth_paths = oputil.all_files_recursive(
+                          input_dir, pattern='depth*.png')
+  assert input_rgb_paths
+  assert input_depth_paths
+
+  def get_frame_idx(path):
+    fname = os.path.basename(path)
+    return int(fname.split('.')[0].split('_')[1])
+
+  frame_to_img = dict((get_frame_idx(p), p) for p in input_rgb_paths)
+  frame_to_d = dict((get_frame_idx(p), p) for p in input_depth_paths)
+
+  matched_frames = sorted(set(frame_to_img.keys()) & set(frame_to_d.keys()))
+
+  import imageio
+  sample_img = imageio.imread(input_rgb_paths[0])
+  rgb_hw = sample_img.shape[:2]
+  util.log("Having RGB of resolution %s" % (rgb_hw,))
+
+  sample_depth = imageio.imread(input_depth_paths[0])
+  depth_hw = sample_depth.shape[:2]
+  util.log("Having depth of resolution %s" % (depth_hw,))
+
+  if scale_depth_to_match_visible and (rgb_hw == depth_hw):
+    scale_depth_to_match_visible = False
+    util.log("Skipping depth re-scaleing, not needed")
+
+
+  def convert(in_rgb, in_depth, out_id):
+    import shutil
+
+    out_id_str = str(out_id).zfill(out_id_zfill)
+
+    rgb_suffix = in_rgb.split('.')[-1]
+    rgb_dest = os.path.join(output_dir, rgb_prefix + out_id_str + rgb_suffix)
+    shutil.copyfile(in_rgb, rgb_dest)
+    util.log("%s -> %s" % (in_rgb, rgb_dest))
+
+    depth = None
+    depth_dest = os.path.join(output_dir, depth_prefix + out_id_str + '.png')
+    if scale_depth_to_match_visible:
+      import cv2
+      depth = cv2.imread(in_depth)
+      assert depth is not None, "Failed to read %s" % in_depth
+      w, h = rgb_hw[1], rgb_hw[0]
+      depth = cv2.resize(depth, (w, h))
+      cv2.imwrite(depth_dest, depth)
+      util.log("%s -> rescaled depth -> %s" % (in_depth, depth_dest))
+    else:
+      shutil.copyfile(in_depth, depth_dest)
+      util.log("%s -> %s" % (in_depth, depth_dest))
+    
+    if include_debug:
+      if depth is None:
+        import cv2
+        depth = cv2.imread(depth_dest)
+      
+      
