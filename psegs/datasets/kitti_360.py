@@ -536,6 +536,7 @@ class KITTI360SDTable(StampedDatumTableBase):
                                         lambda kv: kv[1])
         uris = uri_rdd.collect()
         if not uris:
+          util.log.info("... all datums already exist, skipping this chunk ...")
           continue
 
       datum_rdd = uri_rdd.map(cls.create_stamped_datum)
