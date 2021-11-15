@@ -79,8 +79,11 @@ def test_draw_depth_in_image():
       else:
         depth[y, x] = -1 if (x < .5 * w) else float('nan')
 
+  
   actual = np.zeros((h, w, 3))
   pspl.draw_depth_in_image(actual, depth)
+  import imageio
+  imageio.imwrite('/opt/psegs/yay.png', actual)
   check_img(actual, 'test_draw_depth_in_image.png')
 
 

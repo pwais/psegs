@@ -12,13 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 
-def pytorch3d_iter_mesh2uvd_for_camera_images(
+"""
+
+docker build -t psegs-pt3d -f docker/Dockerfile.pt3d .
+nvidia-docker run -d -it --name=psegs-pt3d -v `pwd`:/opt/psegs:z -w /opt/psegs -v/:/outer_root --net=host psegs-pt3d sleep infinity
+
+
+
+
+
+pytorch/pytorch:1.8.1-cuda10.2-cudnn7-devel
+
+!pip3 install pytorch3d==0.6.0 -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py38_cu102_pyt190/download.html
+"""
+
+def pytorch3d_iter_mesh2depth_for_camera_images(
         cis,
         mesh_path='',
         batch_size=-1):
-  
-  import numpy as np
 
   from oarphpy import util as oputil
 
@@ -45,6 +58,7 @@ def pytorch3d_iter_mesh2uvd_for_camera_images(
     return
   
   if batch_size < 0:
+    # TODO estimate based upon image size
     batch_size = 10
   
   
@@ -53,6 +67,8 @@ def pytorch3d_iter_mesh2uvd_for_camera_images(
       torch.cuda.set_device(device)
   else:
       device = torch.device("cpu")
+
+  torch.set_grad_enabled(False) # does this make faster?
 
   verts, faces_idx, _ = load_obj(mesh_path)
   faces = faces_idx.verts_idx
@@ -81,8 +97,74 @@ def pytorch3d_iter_mesh2uvd_for_camera_images(
   T = torch.zeros(batch_size, 3, dtype=torch.float32, device=device)
   image_size = torch.zeros(batch_size, 2, dtype=torch.float32, device=device)
 
+
   fov_y = None
   rasterizer_image_size = None
+
+  # # https://github.com/facebookresearch/pytorch3d/issues/522
+  # from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
+  # cameras = cameras_from_opencv_projection(R, T, tK, image_size, device=device).cuda()
+
+
+  # # hack up cameras_from_opencv_projection
+  tvec = T
+  R_pytorch3d = R.clone().permute(0, 2, 1)
+  T_pytorch3d = tvec.clone()
+  R_pytorch3d[:, :, :2] *= -1
+  T_pytorch3d[:, :2] *= -1
+
+  cameras = None
+  # cameras = FoVPerspectiveCameras(
+  #             device=device,
+  #             fov=fov_y,
+  #             degrees=False,
+  #             R=R_pytorch3d,
+  #             T=T_pytorch3d,
+  #             znear=0.01,
+  #             zfar=100.)
+
+  # raster_settings = RasterizationSettings(
+  #     image_size=rasterizer_image_size, 
+  #     faces_per_pixel=1)
+  # lights = PointLights(
+  #     device=device, 
+  #     location=cameras.get_world_to_view_transform().transform_points(
+  #       torch.tensor([[0., 0., -1.]]).cuda()))
+
+  blend_params = BlendParams(
+                    sigma=1e-4,
+                    gamma=1e-4,
+                    background_color=(0.1, 0.1, 0.1))
+  rasterizer = None
+  # rasterizer = MeshRasterizer(
+  #       cameras=cameras, 
+  #       raster_settings=RasterizationSettings(
+  #         image_size=rasterizer_image_size, 
+  #         faces_per_pixel=1))
+  # phong_renderer = MeshRenderer(
+  #     rasterizer=rasterizer,
+  #     shader=HardPhongShader(
+  #               device=device,
+  #               cameras=cameras,
+  #               lights=lights,
+  #               blend_params=blend_params))
+
+
+  # image_ref = phong_renderer(meshes_world=mesh)
+  # import torchvision.transforms.functional as F
+  # import numpy as np
+  # pil_img = F.to_pil_image((255.0*image_ref.cpu().numpy()[0]).astype(np.uint8))
+
+  # from IPython.display import display
+  # display(pil_img)
+
+
+  fragments = None
+  # fragments = rasterizer(meshes_world=mesh)
+    
+
+
+  
   import time
   for ci_chunk in oputil.ichunked(cis, batch_size):
     start = time.time()
@@ -90,10 +172,10 @@ def pytorch3d_iter_mesh2uvd_for_camera_images(
     for i, ci in enumerate(ci_chunk):
       if fov_y is None:
         fov_x, fov_y = ci.get_fov()
-      
+        
       if rasterizer_image_size is None:
         rasterizer_image_size = (ci.height, ci.width)
-      
+
       pose = ci.ego_pose['world', 'ego'].get_transformation_matrix(homogeneous=True)
 
       # For iOS !!!
@@ -112,84 +194,180 @@ def pytorch3d_iter_mesh2uvd_for_camera_images(
       T[i, :3] = torch.from_numpy(pose[:3, 3])
       image_size[i, 0] = ci.height
       image_size[i, 1] = ci.width
-      
+    
 
-    # # https://github.com/facebookresearch/pytorch3d/issues/522
-    # from pytorch3d.utils.camera_conversions import cameras_from_opencv_projection
-    # cameras = cameras_from_opencv_projection(R, T, tK, image_size, device=device).cuda()
-
-
-    # # hack up cameras_from_opencv_projection
     tvec = T
     R_pytorch3d = R.clone().permute(0, 2, 1)
     T_pytorch3d = tvec.clone()
     R_pytorch3d[:, :, :2] *= -1
     T_pytorch3d[:, :2] *= -1
 
+
+    # if True:#cameras is None:
     cameras = FoVPerspectiveCameras(
-                device=device,
-                fov=fov_y,
-                degrees=False,
-                R=R_pytorch3d,
-                T=T_pytorch3d,
-                znear=0.01,
-                zfar=100.)
+                    device=device,
+                    fov=fov_y,
+                    degrees=False,
+                    R=R_pytorch3d,
+                    T=T_pytorch3d,
+                    znear=0.01,
+                    zfar=100.)
 
-    raster_settings = RasterizationSettings(
-        image_size=rasterizer_image_size, 
-        faces_per_pixel=1)
-    lights = PointLights(
-        device=device, 
-        location=cameras.get_world_to_view_transform().transform_points(
-          torch.tensor([[0., 0., -1.]]).cuda()))
+    if rasterizer is None:
+      rasterizer = MeshRasterizer(
+                    cameras=cameras, 
+                    raster_settings=RasterizationSettings(
+                      image_size=rasterizer_image_size, 
+                      faces_per_pixel=1))
 
-    blend_params = BlendParams(
-                      sigma=1e-4,
-                      gamma=1e-4,
-                      background_color=(0.1, 0.1, 0.1))
-    rasterizer = MeshRasterizer(
-          cameras=cameras, 
-          raster_settings=raster_settings)
-    # phong_renderer = MeshRenderer(
-    #     rasterizer=rasterizer,
-    #     shader=HardPhongShader(
-    #               device=device,
-    #               cameras=cameras,
-    #               lights=lights,
-    #               blend_params=blend_params))
-
-
-    # image_ref = phong_renderer(meshes_world=mesh)
-    # import torchvision.transforms.functional as F
-    # import numpy as np
-    # pil_img = F.to_pil_image((255.0*image_ref.cpu().numpy()[0]).astype(np.uint8))
-
-    # from IPython.display import display
-    # display(pil_img)
-
-
-    fragments = rasterizer(meshes_world=mesh)
-
+    
+    fragments = rasterizer(meshes_world=mesh, cameras=cameras)
     zbuf = fragments.zbuf
     depth_batch = zbuf[:, :, :, 0].cpu().numpy()
     print('batch done', time.time() - start)
     for i in range(batch_size):
       depth = depth_batch[i, :, :]
       
-      h, w = rasterizer_image_size
-      px_y = np.tile(np.arange(h)[:, np.newaxis], [1, w])
-      px_x = np.tile(np.arange(w)[np.newaxis, :], [h, 1])
-      pyx = np.concatenate([px_y[:,:,np.newaxis], px_x[:, :, np.newaxis]], axis=-1)
-      pyx = pyx.astype(np.float32)
+      yield depth
 
-      vud1 = np.dstack([pyx, depth]).reshape([-1, 3])
+      # h, w = rasterizer_image_size
+      # px_y = np.tile(np.arange(h)[:, np.newaxis], [1, w])
+      # px_x = np.tile(np.arange(w)[np.newaxis, :], [h, 1])
+      # pyx = np.concatenate([px_y[:,:,np.newaxis], px_x[:, :, np.newaxis]], axis=-1)
+      # pyx = pyx.astype(np.float32)
 
-      vud1 = vud1[vud1[:, 2] > 0]
-      uvd = vud1[:, (1, 0, 2)]
+      # vud1 = np.dstack([pyx, depth]).reshape([-1, 3])
+
+      # vud1 = vud1[vud1[:, 2] > 0]
+      # uvd = vud1[:, (1, 0, 2)]
 
       
-      print('yielding', batch_size)
-      yield uvd
+      # print('yielding', batch_size)
+      # yield uvd
+
+
+def depth_to_uvd(depth, h, w):
+  px_y = np.tile(np.arange(h)[:, np.newaxis], [1, w])
+  px_x = np.tile(np.arange(w)[np.newaxis, :], [h, 1])
+  pyx = np.concatenate([px_y[:,:,np.newaxis], px_x[:, :, np.newaxis]], axis=-1)
+  pyx = pyx.astype(np.float32)
+
+  vud1 = np.dstack([pyx, depth]).reshape([-1, 3])
+
+  vud1 = vud1[vud1[:, 2] > 0]
+  uvd = vud1[:, (1, 0, 2)]
+
+  return uvd
+
+
+if __name__ == '__main__':
+  import sys
+  sys.path.append('/opt/psegs')
+
+  import os
+
+  ROOT = '/outer_root/media/970-evo-plus-raid0/lidarphone_lidar_scans/'
+
+  for d in sorted(os.listdir(ROOT)):
+    if '.DS_Store' in d:
+        continue
+
+    if '2021_08_05_13_51_23' not in d:
+      print('hacks skip', d)
+      continue
+
+    base_dir = os.path.join(ROOT, d)
+    if not os.path.isdir(base_dir):
+        print('skipping non-dir', base_dir)
+        continue
+    print()
+    print()
+    print()
+    print(base_dir)
+    
+
+    outpath = os.path.join(ROOT, d + 'pytorch_rgbd_debug.mp4')
+    depth_outpath = os.path.join(ROOT, d + '/pytorch_depth2')
+    debug_outpath = os.path.join(ROOT, d + '/pytorch_debug')
+    
+    # if os.path.exists(outpath):
+    #     print('aleady done', outpath)
+    #     continue
+    
+    from psegs.datasets import ios_lidar
+
+
+    from oarphpy import util as oputil
+    json_paths = oputil.all_files_recursive(base_dir, pattern='frame*.json')
+    json_paths = sorted(json_paths)
+    
+    try:
+      cis = [ios_lidar.threeDScannerApp_create_camera_image(p) for p in json_paths]
+    except AssertionError as e:
+      print('err', e)
+      continue
+
+    print('len(cis)', len(cis))
+
+    oputil.mkdir(depth_outpath)
+    oputil.mkdir(debug_outpath)
+    
+    mesh_path = os.path.join(base_dir, 'export_refined.obj')
+    if not os.path.exists(mesh_path):
+      mesh_path = os.path.join(base_dir, 'export.obj')
+    
+    
+    import imageio
+    writer = imageio.get_writer(outpath, fps=5)
+    
+    # from psegs.render.mesh2rgbd import pytorch3d_iter_mesh2depth_for_camera_images
+    
+    iter_depth = pytorch3d_iter_mesh2depth_for_camera_images(cis, mesh_path)
+    for i, (ci, depth) in enumerate(zip(cis, iter_depth)):
+      
+      frame_name = ci.extra['threeDScannerApp.frame_json_name']
+      depth_dest = os.path.join(depth_outpath, frame_name + '.npy')
+      np.save(depth_dest, depth)
+      
+      debug = ci.image
+      from psegs.util.plotting import draw_xy_depth_in_image
+      uvd = depth_to_uvd(depth, ci.height, ci.width)
+      draw_xy_depth_in_image(debug, uvd, period_meters=0.1)
+      writer.append_data(debug)
+      imageio.imwrite(
+        os.path.join(debug_outpath, frame_name + '.debug.jpg'),
+        debug)
+      print(i)
+    
+    writer.close()
+    
+    import torch
+    torch.cuda.empty_cache()
+    
+    import gc
+    gc.collect()
+    
+    print('done', outpath)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
   

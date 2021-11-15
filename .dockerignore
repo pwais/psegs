@@ -17,3 +17,5 @@ test_*
 dataroot_costco
 dataroot
 test_run_output
+colmap*
+cv_charuco

@@ -43,6 +43,8 @@
 
 import os
 
+import numpy as np
+
 from psegs import datum
 from psegs import util
 from psegs.table.sd_table import StampedDatumTableBase
@@ -55,8 +57,6 @@ Apple camera frame:
 
 
 def threeDScannerApp_get_ego_pose(json_data):
-  import numpy as np
-
   # The device ego pose is in a GPS-based coordinate frame where:
   #  +y is "up" based upon *gravity*
   #  +x is GPS East
@@ -98,9 +98,8 @@ def threeDScannerApp_get_ego_pose(json_data):
             src_frame='ego',
             dest_frame='world')
   
-def threeDScannerApp_get_K(json_data):
-  import numpy as np
 
+def threeDScannerApp_get_K(json_data):
   K_raw = json_data['intrinsics']
   f_x = K_raw[0]
   f_y = K_raw[4]
@@ -115,11 +114,10 @@ def threeDScannerApp_get_K(json_data):
 
   return K
 
+
 def threeDScannerApp_create_camera_image(frame_json_path):
   import os
   import json
-  
-  import numpy as np
 
   assert os.path.exists(frame_json_path), frame_json_path
   frame_img_path = frame_json_path.replace('.json', '.jpg')
@@ -147,12 +145,14 @@ def threeDScannerApp_create_camera_image(frame_json_path):
     'time',
   )
   
-  assert set(REQUIRED_KEYS) - set(json_data.keys()) == set(), \
-    "Have %s wanted %s" % (extra.keys(), REQUIRED_KEYS)
   extra = dict(
             ('threeDScannerApp.' + k, json.dumps(v))
             for k, v in json_data.items()
             if k not in SKIP_KEYS)
+  assert set(REQUIRED_KEYS) - set(json_data.keys()) == set(), \
+    "Have %s wanted %s" % (extra.keys(), REQUIRED_KEYS)
+
+  extra['threeDScannerApp.frame_json_name'] = os.path.basename(frame_json_path)
 
   WORLD_T_PSEGS = np.array([
     [ 0,  0, -1,  0],
@@ -214,8 +214,61 @@ def threeDScannerApp_create_camera_image(frame_json_path):
 
   return ci
 
+
 def threeDScannerApp_convert_raw_to_opend3d_rgbd(input_dir, output_dataset_dir):
-  pass
+  import json
+
+  from oarphpy import util as oputil
+  import imageio
+
+  output_dir_image = os.path.join(output_dataset_dir, 'image')
+  output_dir_depth = os.path.join(output_dataset_dir, 'depth')
+  output_dir_debug = os.path.join(output_dataset_dir, 'debug')
+
+  threeDScannerApp_convert_raw_to_sync_rgbd(
+    input_dir,
+    output_dir_image,
+    output_dir_depth=output_dir_depth,
+    output_dir_debug=output_dir_debug)
+  
+  # Pick a frame and get the intrinstics
+  input_rgb_paths = oputil.all_files_recursive(input_dir, pattern='frame*.jpg')
+  
+  sample_image = imageio.imread(input_rgb_paths[0])
+  h, w = sample_image.shape[:2]
+
+  K = None
+  frame_jsons = oputil.all_files_recursive(input_dir, pattern='frame*.json')
+  for path in frame_jsons:
+    with open(path, 'r') as f:
+      json_data = json.load(f)
+    if 'intrinsics' not in json_data:
+      continue
+    else:
+      K = threeDScannerApp_get_K(json_data)
+      break
+  
+  assert K is not None
+  f_x = K[0][0]
+  f_y = K[1][1]
+  c_x = K[0][2]
+  c_y = K[1][2]
+
+  # See example https://github.com/isl-org/Open3D/blob/a27456cc9f4cd43744e87c3e65a9bf196c0e5526/examples/python/reconstruction_system/sensors/realsense_recorder.py#L69
+  opend3d_calib_data = {
+    'width': w,
+    'height': h,
+    'intrinsic_matrix': [
+        # Column-major !
+        f_x, 0, 0, 0, f_y, 0, c_x, c_y, 1
+    ],
+  }
+
+  output_intrinsics_path = os.path.join(output_dataset_dir, 'intrinsic.json')
+  with open(output_intrinsics_path, 'w') as f:
+    json.dump(opend3d_calib_data, f, indent=2)
+  util.log.info("Saved intrinsics to %s" % output_intrinsics_path)
+
 
 def threeDScannerApp_convert_raw_to_sync_rgbd(
       input_dir,
@@ -224,8 +277,13 @@ def threeDScannerApp_convert_raw_to_sync_rgbd(
       out_id_zfill=8,
       rgb_prefix='image_',
       depth_prefix='depth_',
-      include_debug=True):
+      ignore_depth_below_ARConfidenceLevel=1, # ARConfidenceLevel.medium
+      include_debug=True,
+      output_dir_depth=None,
+      output_dir_debug=None,
+      parallel=-1):
   
+  ## Get Input
   from oarphpy import util as oputil
   input_rgb_paths = oputil.all_files_recursive(
                           input_dir, pattern='frame*.jpg')
@@ -234,56 +292,123 @@ def threeDScannerApp_convert_raw_to_sync_rgbd(
   assert input_rgb_paths
   assert input_depth_paths
 
+  if output_dir_depth is None:
+    output_dir_depth = output_dir
+  if output_dir_debug is None:
+    output_dir_debug = output_dir
+  oputil.mkdir(str(output_dir))
+  oputil.mkdir(str(output_dir_depth))
+  oputil.mkdir(str(output_dir_debug))
+
+  ## Get Input Dimensions
+  import imageio
+  sample_img = imageio.imread(input_rgb_paths[0])
+  rgb_hw = sample_img.shape[:2]
+  util.log.info("Have RGB of resolution %s" % (rgb_hw,))
+
+  sample_depth = imageio.imread(input_depth_paths[0])
+  depth_hw = sample_depth.shape[:2]
+  util.log.info("Have depth of resolution %s" % (depth_hw,))
+
+  ## Define what we need to do
+  def convert(in_rgb, in_depth, out_id):
+    import shutil
+    import cv2
+    import imageio
+
+    out_id_str = str(out_id).zfill(out_id_zfill)
+
+    rgb_suffix = in_rgb.split('.')[-1]
+    rgb_suffix = '.' + rgb_suffix
+    rgb_dest = os.path.join(output_dir, rgb_prefix + out_id_str + rgb_suffix)
+    shutil.copyfile(in_rgb, rgb_dest)
+    util.log.info("%s -> %s" % (in_rgb, rgb_dest))
+
+    depth = imageio.imread(in_depth)
+    confidence = imageio.imread(in_depth.replace('depth_', 'conf_'))
+
+    if scale_depth_to_match_visible:
+      w, h = rgb_hw[1], rgb_hw[0]
+      depth = cv2.resize(depth, (w, h))
+      confidence = cv2.resize(confidence, (w, h))
+
+    # Zero out depth with low confidence
+    depth[ confidence < ignore_depth_below_ARConfidenceLevel ] = 0
+
+    depth_dest = os.path.join(
+                    output_dir_depth, depth_prefix + out_id_str + '.png')
+    imageio.imwrite(depth_dest, depth)
+    util.log.info("%s -> %s" % (in_depth, depth_dest))
+
+    if include_debug:
+      from psegs.util import plotting as pspl
+
+      if depth is None:
+        depth = imageio.imread(depth_dest)
+      
+      # millimeters -> meters
+      depth = depth.astype(np.float32) * .001
+      
+      debug = imageio.imread(in_rgb)
+      pspl.draw_depth_in_image(debug, depth, period_meters=.1)
+
+      debug_dest = os.path.join(
+                    output_dir_debug, 'debug_' + out_id_str + '.jpg')  
+      imageio.imwrite(debug_dest, debug)
+      util.log.info("Saved debug %s" % debug_dest)
+    
+    if True:
+      import json
+      print('hacks!')
+      frame_json_path = in_rgb.replace('.jpg', '.json')
+      if os.path.exists(frame_json_path):
+        with open(frame_json_path, 'r') as f:
+          json_data = json.load(f)
+        
+        ego_pose = threeDScannerApp_get_ego_pose(json_data)
+        xform = ego_pose.get_transformation_matrix(homogeneous=True)
+        xform_dest = rgb_dest + '.xform.npz'
+        with open(xform_dest, 'wb') as f:
+          np.save(f, xform)
+        print('wrote', xform_dest)
+
+    return rgb_dest, depth_dest
+
+  ## Set up conversion jobs
   def get_frame_idx(path):
     fname = os.path.basename(path)
     return int(fname.split('.')[0].split('_')[1])
 
   frame_to_img = dict((get_frame_idx(p), p) for p in input_rgb_paths)
   frame_to_d = dict((get_frame_idx(p), p) for p in input_depth_paths)
+  
+  matched_frames = set(frame_to_img.keys()) & set(frame_to_d.keys())
+  util.log.info("Have %s frames to convert ..." % len(matched_frames))
 
-  matched_frames = sorted(set(frame_to_img.keys()) & set(frame_to_d.keys()))
+  frame_out_id = [
+    (frame_id, out_id)
+    for out_id, frame_id in enumerate(sorted(matched_frames))
+  ]
+  jobs = [
+    (frame_to_img[f], frame_to_d[f], out_id)
+    for f, out_id in frame_out_id
+  ]
 
-  import imageio
-  sample_img = imageio.imread(input_rgb_paths[0])
-  rgb_hw = sample_img.shape[:2]
-  util.log("Having RGB of resolution %s" % (rgb_hw,))
-
-  sample_depth = imageio.imread(input_depth_paths[0])
-  depth_hw = sample_depth.shape[:2]
-  util.log("Having depth of resolution %s" % (depth_hw,))
-
-  if scale_depth_to_match_visible and (rgb_hw == depth_hw):
-    scale_depth_to_match_visible = False
-    util.log("Skipping depth re-scaleing, not needed")
-
-
-  def convert(in_rgb, in_depth, out_id):
-    import shutil
-
-    out_id_str = str(out_id).zfill(out_id_zfill)
-
-    rgb_suffix = in_rgb.split('.')[-1]
-    rgb_dest = os.path.join(output_dir, rgb_prefix + out_id_str + rgb_suffix)
-    shutil.copyfile(in_rgb, rgb_dest)
-    util.log("%s -> %s" % (in_rgb, rgb_dest))
-
-    depth = None
-    depth_dest = os.path.join(output_dir, depth_prefix + out_id_str + '.png')
-    if scale_depth_to_match_visible:
-      import cv2
-      depth = cv2.imread(in_depth)
-      assert depth is not None, "Failed to read %s" % in_depth
-      w, h = rgb_hw[1], rgb_hw[0]
-      depth = cv2.resize(depth, (w, h))
-      cv2.imwrite(depth_dest, depth)
-      util.log("%s -> rescaled depth -> %s" % (in_depth, depth_dest))
-    else:
-      shutil.copyfile(in_depth, depth_dest)
-      util.log("%s -> %s" % (in_depth, depth_dest))
+  ## Run conversion!
+  out_path_pairs = []
+  if parallel is None:
+    for j in jobs:
+      result = convert(*j)
+      out_path_pairs.append(result)
+  else:
+    from psegs.spark import Spark  
     
-    if include_debug:
-      if depth is None:
-        import cv2
-        depth = cv2.imread(depth_dest)
-      
-      
+    with Spark.sess() as spark:
+      if parallel < 0:
+        import multiprocessing
+        parallel = multiprocessing.cpu_count()
+      job_rdd = spark.sparkContext.parallelize(jobs, numSlices=parallel)
+      out_path_pairs = job_rdd.map(lambda j: convert(*j)).collect()
+  
+  util.log.info("... converted %s." % len(jobs))
+  return out_path_pairs

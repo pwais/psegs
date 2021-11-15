@@ -1,0 +1,112 @@
+FROM nvidia/cuda:11.4.0-devel-ubuntu20.04
+
+# Oarphpy
+
+ENV PYTHONDONTWRITEBYTECODE 1
+
+
+### Core
+### Required for installing and testing things
+RUN \
+  apt-get update && \
+  apt-get install -y \
+    curl \
+    git \
+    python-dev \
+    python3-pip \
+    python3-dev \
+    wget
+
+
+### Spark (& Hadoop)
+### Use a binary distro for:
+###  * Spark LZ4 support through Hadoop
+###  * Spark env file hacking (e.g. debug / profiling)
+ENV HADOOP_VERSION 3.2.1
+ENV HADOOP_HOME /opt/hadoop
+ENV HADOOP_CONF_DIR $HADOOP_HOME/etc/hadoop
+ENV PATH $PATH:$HADOOP_HOME/bin
+ENV LD_LIBRARY_PATH "$HADOOP_HOME/lib/native/:$LD_LIBRARY_PATH"
+RUN curl -L --retry 3 \
+  "https://www.apache.org/dyn/mirrors/mirrors.cgi?action=download&filename=hadoop/common/hadoop-$HADOOP_VERSION/hadoop-$HADOOP_VERSION.tar.gz" \
+  | gunzip \
+  | tar -x -C /opt/ \
+ && mv /opt/hadoop-$HADOOP_VERSION $HADOOP_HOME \
+ && rm -rf $HADOOP_HOME/share/doc
+
+ENV SPARK_VERSION 3.0.1
+ENV SPARK_PACKAGE spark-${SPARK_VERSION}-bin-without-hadoop
+ENV SPARK_HOME /opt/spark
+ENV PYSPARK_PYTHON=python3
+ENV SPARK_DIST_CLASSPATH "$HADOOP_HOME/etc/hadoop/*:$HADOOP_HOME/share/hadoop/common/lib/*:$HADOOP_HOME/share/hadoop/common/*:$HADOOP_HOME/share/hadoop/hdfs/*:$HADOOP_HOME/share/hadoop/hdfs/lib/*:$HADOOP_HOME/share/hadoop/hdfs/*:$HADOOP_HOME/share/hadoop/yarn/lib/*:$HADOOP_HOME/share/hadoop/yarn/*:$HADOOP_HOME/share/hadoop/mapreduce/lib/*:$HADOOP_HOME/share/hadoop/mapreduce/*:$HADOOP_HOME/share/hadoop/tools/lib/*"
+ENV PATH $PATH:${SPARK_HOME}/bin
+RUN curl -L --retry 3 \
+  "https://www.apache.org/dyn/mirrors/mirrors.cgi?action=download&filename=spark/spark-${SPARK_VERSION}/${SPARK_PACKAGE}.tgz" \
+  | gunzip \
+  | tar x -C /opt/ \
+ && mv /opt/$SPARK_PACKAGE $SPARK_HOME
+RUN cd /opt/spark/python && python3 setup.py install
+
+## Java
+RUN \
+  apt-get update && \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-11-jdk && \
+  ls -lhat /usr/lib/jvm/java-11-openjdk-amd64 && \
+  echo JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64 >> /etc/environment
+ENV JAVA_HOME /usr/lib/jvm/java-11-openjdk-amd64
+
+RUN \
+  pip3 install imageio==2.4.1 && \
+  python3 -c 'import imageio; imageio.plugins.ffmpeg.download()'
+
+
+
+
+
+
+## Include banner
+COPY docker/bashrc /etc/bash.bashrc
+RUN chmod a+rwx /etc/bash.bashrc
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install -r /tmp/requirements.txt
+
+# Pytorch3d
+RUN pip3 install -vvv torch==1.9.0 torchvision==0.9.1 torchaudio==0.8.1 -f https://download.pytorch.org/whl/cu111/torch_stable.html
+RUN pip3 install pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py38_cu111_pyt190/download.html
+
+RUN \
+  apt-get update && \
+  apt-get install -y \
+    git \
+    wget
+
+# # open3d
+# RUN apt-get install ffmpeg libsm6 libxext6 libc++-dev sudo git -y
+# RUN apt-get install -y build-essential cmake ccache
+# RUN cd /opt && \
+#   git clone https://github.com/isl-org/Open3D.git && \
+#   cd Open3D && \
+#   ./util/install_deps_ubuntu.sh assume-yes && \
+#   mkdir -p build && cd build && \
+#   cmake \
+#     -DBUILD_CUDA_MODULE=1 \
+#     -DBUILD_COMMON_CUDA_ARCHS=1 \
+#     -DENABLE_HEADLESS_RENDERING=1 \
+#     -DBUILD_WEBRTC=1 \
+#     -DCMAKE_BUILD_TYPE=Release \
+#     .. && \
+#   make -j $(nproc)
+
+# # RUN pip3 install open3d==0.13.0
+# # RUN \
+# #   ln -s \
+# #     /usr/local/cuda-11.1/targets/x86_64-linux/lib/libcusolver.so.11 \
+# #     $(python3 -c "import open3d as x; print(x.__path__[0])")/cuda/libcusolver.so.10
+
+# # ENV LD_LIBRARY_PATH ${LD_LIBRARY_PATH}:/usr/local/cuda-11.1/targets/x86_64-linux/lib/
+# RUN python3 -c ''
+
+RUN mkdir -p /opt/psegs
+COPY . /opt/psegs
+WORKDIR /opt/psegs

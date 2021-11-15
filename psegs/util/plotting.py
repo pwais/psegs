@@ -344,7 +344,7 @@ def draw_depth_in_image(
   assert depth_channel.shape[:2] == (h, w)
 
   valid = np.where(
-            (depth_channel >= 0) & np.isfinite(depth_channel))
+            (depth_channel > 0) & np.isfinite(depth_channel))
   if not valid[0].any():
     return
   

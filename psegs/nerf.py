@@ -76,6 +76,7 @@ def save_sample_blender_format(
       return frame
 
   camera_angle_x = None
+  K = None
   cis = sorted(cis, key=lambda ci: ci.timestamp)
   callables = []
   for i, ci in enumerate(cis):
@@ -85,13 +86,15 @@ def save_sample_blender_format(
       camera_angle_x = fov_h
         # NB: Readers will compute somthing like:
         # focal = .5 * image_width / np.tan(.5 * camera_angle_x)
+      
+      K = ci.K
     
     c = SaveAndGetFrame()
     c.i = i
     c.ci = ci
     c.img_dir_out = img_dir_out
     callables.append(c)
-  
+
   with Spark.sess() as spark:
     results = S.run_callables(spark, callables, parallel=parallel)
     frames = [f for obj, f in results]
@@ -105,6 +108,10 @@ def save_sample_blender_format(
   with open(transforms_dest, 'w') as f:
     json.dump(transforms_data, f, indent=2)
 
+  full_intrinsic = os.path.join(outdir, 'full_intrinsic.json')
+  with open(transforms_dest, 'w') as f:
+    json.dump(K.tolist(), f, indent=2)
+
   util.log.info("... done writing to %s ." % outdir)
 
 
@@ -115,7 +122,7 @@ if __name__ == '__main__':
   from psegs.datasets import ios_lidar
 
   # base_dir = '/outer_root/home/au/lidarphone_scans/2021_06_27_12_37_38'
-  base_dir = '/outer_root/media/970-evo-plus-raid0/lidarphone_lidar_scans/2021_09_26_15_35_55/'
+  base_dir = '/outer_root/media/970-evo-plus-raid0/lidarphone_lidar_scans/2021_06_27_12_54_20/'
   # base_dir = '/outer_root/home/au/lidarphone_scans/landscape_home_button_right_07_09_49'
 
   from oarphpy import util as oputil
@@ -128,6 +135,6 @@ if __name__ == '__main__':
 
   save_sample_blender_format(
     cis,
-    '/outer_root/home/pwais/NerfingMVS/data/amiot-hot-dog/psegs_export')
+    '/outer_root/home/pwais/NerfingMVS/data/petersen-bug-dakar-renegade/psegs_export')
 
 
