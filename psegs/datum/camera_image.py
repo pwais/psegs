@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import math
+from os import confstr_names
 import typing
 
 import attr
@@ -37,9 +39,42 @@ def theta_signed(axis, v):
   return np.arctan2(np.cross(axis, v), np.dot(axis, v.T))
 
 
+def depth_to_uvcs(hwc_arr):
+  h, w, c = hwc_arr.shape[:3]
+  px_y = np.tile(np.arange(h)[:, np.newaxis], [1, w])
+  px_x = np.tile(np.arange(w)[np.newaxis, :], [h, 1])
+  pyx = np.concatenate([px_y[:,:,np.newaxis], px_x[:, :, np.newaxis]], axis=-1)
+  pyx = pyx.astype(np.float32)
+  
+  chans = [hwc_arr[:, :, i] for i in range(c)]
+  vuc = np.dstack([pyx] + chans).reshape([-1, 2 + c])
+  axes = list(range(2 + c))
+  axes[0] = 1
+  axes[1] = 0
+  uvc = vuc[:, axes]  
+  return uvc
+
+
+def uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy):
+    
+    rays = np.zeros((uvdcs.shape[0], 3))
+    rays[:, 0] = (uvdcs[:, 0] - cx) / fx
+    rays[:, 1] = (uvdcs[:, 1] - cy) / fy
+    rays[:, 2] = 1.
+    rays /= np.linalg.norm(rays, axis=-1)[:, np.newaxis]
+    xyz = uvdcs[:, 2][:, np.newaxis] * rays
+
+    if uvdcs.shape[1] > 3:
+      cs = uvdcs[:, 3:]
+      return np.concatenate([xyz, cs], axis=0)
+    else:
+      return xyz
+
+
 @attr.s(slots=True, eq=False, weakref_slot=False)
 class CameraImage(object):
-  """An image from a camera; typically the camera is calibrated."""
+  """An image from a camera; typically the camera is calibrated.  The image
+  could also be a depth image."""
 
   sensor_name = attr.ib(type=str, default='')
   """str: Name of the camera, e.g. camera_front"""
@@ -76,6 +111,13 @@ class CameraImage(object):
 
   K = attr.ib(type=np.ndarray, default=np.eye(3, 3))
   """numpy.ndarray: The 3x3 intrinsic calibration camera matrix"""
+
+  channel_names = attr.ib(default=['r', 'g', 'b'])
+  """List[str]: Semantic names for the channels (or dimensions / attributes)
+  of the image. By default, the `image` member uses `imageio` to read an
+  3-channel RGB image as a HWC array.  (Some PNGs could use an alpha channel
+  to produce an RGBA image).  In the case of depth images, one of the channels
+  (usually the first) decodes as depth in meters."""
 
   extra = attr.ib(default={}, type=typing.Dict[str, str])
   """Dict[str, str]: A map for adhoc extra context"""
@@ -146,6 +188,70 @@ class CameraImage(object):
     fov_v = 2. * math.atan(.5 * self.height / f_y)
     return fov_h, fov_v
 
+  def get_depth(self):
+    for i, c in enumerate(self.channel_names):
+      if c == 'depth':
+        full_img = self.image
+        depth = full_img[:, :, i]
+        return depth
+    return None
+
+  def depth_image_to_point_cloud(self):
+    """Create and return a datum.PointCloud instance if this image is
+    a depth image (and None otherwise)"""
+    
+    if not any(c == 'depth' for c in self.channel_names):
+      return None
+
+    # Re-order so that depth is always the first channel / column
+    cs_names = list(self.channel_names)
+    axes = list(range(len(self.channel_names)))
+    for i, c in enumerate(self.channel_names):
+      if c == 'depth' and i != 0:
+        axes[0] = i
+        axes[i] = 0
+        cs_names[0] = 'depth'
+        cs_names[i] = self.channel_names[0]
+        break
+    cloud_colnames = ['x', 'y', 'z'] + cs_names[1:]
+
+    fx = self.K[0, 0]
+    cx = self.K[0, 2]
+    fy = self.K[1, 1]
+    cy = self.K[1, 2]
+    if self.image_factory != CloudpickeledCallable.empty():
+
+      def _to_cloud(image_factory, axes, intrinsics):
+        fx, cx, fy, cy = intrinsics
+        depth_image = image_factory()
+        depth_image = depth_image[:, :, axes]
+        uvdcs = depth_to_uvcs(depth_image)
+        xyzcs = uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy)
+        return xyzcs
+      
+      depth_factory = self.image_factory
+      cloud_factory = lambda: _to_cloud(depth_factory, axes, (fx, cx, fy, cy))
+      cloud = None
+    else:
+      depth_image = np.copy(self.image)
+      depth_image = depth_image[:, :, axes]
+      uvdcs = depth_to_uvcs(depth_image)
+      cloud = uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy)
+      cloud_factory = None
+
+    from psegs.datum.transform import PointCloud
+    pc = PointCloud(
+          sensor_name=self.sensor_name + '|point_cloud',
+          timestamp=self.timestamp,
+          cloud_colnames=cloud_colnames,
+          cloud_factory=cloud_factory,
+          cloud=cloud,
+          ego_pose=copy.deepcopy(self.ego_pose),
+          ego_to_sensor=copy.deepcopy(self.ego_to_sensor),
+          extra=copy.deepcopy(self.extra))
+    return pc
+
+
   def get_debug_image(self, clouds=None, cuboids=None, period_meters=10.):
     """Create and return a debug image showing the given content projected
     onto this `CameraImage`.
@@ -162,7 +268,18 @@ class CameraImage(object):
       np.array: A HWC RGB debug image.
     """
 
-    debug_img = np.copy(self.image)
+    if any(c == 'depth' for c in self.channel_names):
+      depth = self.get_depth()
+      assert depth is not None, (self.channel_names, self.image.shape)
+      debug_img = np.zeros((self.height, self.width, 3))
+      uvd = depth_to_uvcs(depth.reshape([self.height, self.width, 1]))
+
+      from psegs.util.plotting import draw_xy_depth_in_image
+      draw_xy_depth_in_image(
+        debug_img, uvd, alpha=0.25, period_meters=period_meters)
+    else:
+      debug_img = np.copy(self.image)
+    
     for pc in clouds or []:
       xyz = pc.ego_to_sensor.get_inverse().apply(pc.cloud[:, :3]).T # err why inv~~~~
       uvd = self.project_ego_to_image(xyz, omit_offscreen=True)
@@ -170,7 +287,7 @@ class CameraImage(object):
         debug_img, uvd, marker_radius=4, alpha=0.9, period_meters=period_meters)
     
     for c in cuboids or []:
-      box_xyz = self.ego_to_sensor.apply(c.get_box3d()).T
+      # box_xyz = self.ego_to_sensor.apply(c.get_box3d()).T
       box_uvd = self.project_ego_to_image(c.get_box3d(), omit_offscreen=False)
       if (box_uvd[:, 2] <= 1e-6).all():
         continue

@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import tempfile
 from pathlib import Path
 
 import numpy as np
-from oarphpy import util
+from oarphpy import util as oputil
 
 from psegs.util import plotting as pspl
 
@@ -27,11 +25,11 @@ from test import testutil
 def check_img(actual, fixture_name):
   FIXTURES_DIR = Path(__file__).parent / '../fixtures'
   OUTPUT_DIR = testutil.test_tempdir('test_plotting')
-  util.mkdir(OUTPUT_DIR)
+  oputil.mkdir(OUTPUT_DIR)
   
   # First dump actual, in case the fixture doesn't exist yet and we're
   # writing a new test
-  actual_bytes = util.to_png_bytes(actual)
+  actual_bytes = oputil.to_png_bytes(actual)
   actual_path = OUTPUT_DIR / ('actual_' + fixture_name)
   open(actual_path, 'wb').write(actual_bytes)
 

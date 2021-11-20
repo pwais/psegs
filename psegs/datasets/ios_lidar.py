@@ -195,11 +195,15 @@ def threeDScannerApp_create_frame_to_timestamp(scene_dir):
   return frame_id_to_nanostamp
 
 
-def threeDScannerApp_create_camera_image(frame_json_path, timestamp=None):
+def threeDScannerApp_create_camera_image(
+        frame_json_path,
+        sensor_name='camera|front',
+        timestamp=None):
 
   assert os.path.exists(frame_json_path), frame_json_path
-  frame_img_path = frame_json_path.replace('.json', '.jpg')
-  assert os.path.exists(frame_img_path), frame_img_path
+
+  scan_dir = Path(os.path.dirname(frame_json_path))
+  frame_id = threeDScannerApp_frame_id_from_fname(frame_json_path)
 
   with open(frame_json_path, 'r') as f:
     json_data = json.load(f)
@@ -233,6 +237,8 @@ def threeDScannerApp_create_camera_image(frame_json_path, timestamp=None):
     "Have %s wanted %s" % (extra.keys(), REQUIRED_KEYS)
 
   extra['threeDScannerApp.frame_json_name'] = os.path.basename(frame_json_path)
+  extra['threeDScannerApp.frame_id'] = str(frame_id)
+  extra['threeDScannerApp.scan_dir'] = str(os.path.basename(scan_dir))
 
   WORLD_T_PSEGS = np.array([
     [ 0,  0, -1,  0],
@@ -274,228 +280,53 @@ def threeDScannerApp_create_camera_image(frame_json_path, timestamp=None):
             src_frame='camera_front',
             dest_frame='ego')
   
-  from oarphpy import util as oputil
-  with open(frame_img_path, 'rb') as f:
-    w, h = oputil.get_jpeg_size(f.read(1024))
-
-  import imageio
-  image_factory = lambda: imageio.imread(frame_img_path)
-
-  ci = datum.CameraImage(
-                sensor_name='camera_front',
-                image_factory=image_factory,
-                height=h,
-                width=w,
-                timestamp=timestamp,
-                ego_pose=ego_pose,
-                ego_to_sensor=ego_to_sensor,
-                K=K,
-                extra=extra)
-
-  return ci
-
-
-def threeDScannerApp_create_point_cloud(frame_json_path, timestamp=None):
-
-  assert os.path.exists(frame_json_path), frame_json_path
-
-  frame_id = threeDScannerApp_frame_id_from_fname(frame_json_path)
-  scand_dir = Path(os.path.dirname(frame_json_path))
+  if 'depth' in sensor_name:
   
-  depth_path = scand_dir / f'depth_{frame_id}.png'
-  assert os.path.exists(depth_path), depth_path
+    depth_path = scan_dir / f'depth_{frame_id}.png'
+    assert os.path.exists(depth_path), depth_path
   
-  conf_path = scand_dir / f'conf_{frame_id}.png'
-  assert os.path.exists(conf_path), conf_path
+    conf_path = scan_dir / f'conf_{frame_id}.png'
+    assert os.path.exists(conf_path), conf_path
 
-  # Get dimensions from the conf image, which is a smaller file
-  from psegs.util import misc
-  with open(conf_path, 'rb') as f:
-    w, h = misc.get_png_wh(f.read(1024))
+    # Get dimensions from the conf image, which is a smaller file
+    from psegs.util import misc
+    with open(conf_path, 'rb') as f:
+      w, h = misc.get_png_wh(f.read(1024))
   
-  # we'll want DepthImage from CameraImage and a way to go to PointCloud
-
-  ## Get Input Dimensions
-  import imageio
-  sample_img = imageio.imread(input_rgb_paths[0])
-  rgb_hw = sample_img.shape[:2]
-  util.log.info("Have RGB of resolution %s" % (rgb_hw,))
-
-  sample_depth = imageio.imread(input_depth_paths[0])
-  depth_hw = sample_depth.shape[:2]
-  util.log.info("Have depth of resolution %s" % (depth_hw,))
-
-  ## Define what we need to do
-  def convert(in_rgb, in_depth, out_id):
-    import shutil
-    import cv2
-    import imageio
-
-    out_id_str = str(out_id).zfill(out_id_zfill)
-
-    rgb_suffix = in_rgb.split('.')[-1]
-    rgb_suffix = '.' + rgb_suffix
-    rgb_dest = os.path.join(output_dir, rgb_prefix + out_id_str + rgb_suffix)
-    shutil.copyfile(in_rgb, rgb_dest)
-    util.log.info("%s -> %s" % (in_rgb, rgb_dest))
-
-    depth = imageio.imread(in_depth)
-    confidence = imageio.imread(in_depth.replace('depth_', 'conf_'))
-
-    if scale_depth_to_match_visible:
-      w, h = rgb_hw[1], rgb_hw[0]
-      depth = cv2.resize(depth, (w, h))
-      confidence = cv2.resize(confidence, (w, h))
-
-    # Zero out depth with low confidence
-    depth[ confidence < ignore_depth_below_ARConfidenceLevel ] = 0
-
-    depth_dest = os.path.join(
-                    output_dir_depth, depth_prefix + out_id_str + '.png')
-    imageio.imwrite(depth_dest, depth)
-    util.log.info("%s -> %s" % (in_depth, depth_dest))
-
-    if include_debug:
-      from psegs.util import plotting as pspl
-
-      if depth is None:
-        depth = imageio.imread(depth_dest)
+    def _get_depth_conf_image(depth_path, conf_path):
+      import imageio
+      import numpy as np
+      depth = imageio.imread(depth_path)
       
       # millimeters -> meters
       depth = depth.astype(np.float32) * .001
-      
-      debug = imageio.imread(in_rgb)
-      pspl.draw_depth_in_image(debug, depth, period_meters=.1)
 
-      debug_dest = os.path.join(
-                    output_dir_debug, 'debug_' + out_id_str + '.jpg')  
-      imageio.imwrite(debug_dest, debug)
-      util.log.info("Saved debug %s" % debug_dest)
+      conf = imageio.imread(conf_path)
+      depth_image = np.concatenate([depth, conf.astype(np.float32)], axis=-1)
+      return depth_image
     
-    if True:
-      print('hacks!')
-      frame_json_path = in_rgb.replace('.jpg', '.json')
-      if os.path.exists(frame_json_path):
-        with open(frame_json_path, 'r') as f:
-          json_data = json.load(f)
-        
-        ego_pose = threeDScannerApp_get_ego_pose(json_data)
-        xform = ego_pose.get_transformation_matrix(homogeneous=True)
-        xform_dest = rgb_dest + '.xform.npz'
-        with open(xform_dest, 'wb') as f:
-          np.save(f, xform)
-        print('wrote', xform_dest)
+    image_factory = lambda: _get_depth_conf_image(depth_path, conf_path)
 
-    return rgb_dest, depth_dest
+    extra['threeDScannerApp.depth_path'] = os.path.basename(depth_path)
+    extra['threeDScannerApp.conf_path'] = os.path.basename(conf_path)
 
+  else:
+    frame_img_path = frame_json_path.replace('.json', '.jpg')
+    assert os.path.exists(frame_img_path), frame_img_path
 
+    from oarphpy import util as oputil
+    with open(frame_img_path, 'rb') as f:
+      w, h = oputil.get_jpeg_size(f.read(1024))
 
+    def _load_image(path):
+      import imageio
+      return imageio.imread(path)
+    image_factory = lambda: _load_image(frame_img_path)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
-
-  with open(frame_json_path, 'r') as f:
-    json_data = json.load(f)
-  
-  ego_pose = threeDScannerApp_get_ego_pose(json_data)
-  K = threeDScannerApp_get_K(json_data)
-
-  if timestamp is None:
-    timestamp = int(json_data['time'] * 1e9)
-      # CACurrentMediaTime, which is mach_absolute_time, which is
-      # *system uptime*.  We use this as a fallback unless the caller
-      # has resolved timestamps for the whole scene.
-
-  REQUIRED_KEYS = (
-    'averageAngularVelocity',
-    'averageVelocity',
-    'exposureDuration',
-    'frame_index',
-  )
-  SKIP_KEYS = (
-    'cameraPoseARFrame',
-    'intrinsics'
-    'time',
-  )
-  
-  extra = dict(
-            ('threeDScannerApp.' + k, json.dumps(v))
-            for k, v in json_data.items()
-            if k not in SKIP_KEYS)
-  assert set(REQUIRED_KEYS) - set(json_data.keys()) == set(), \
-    "Have %s wanted %s" % (extra.keys(), REQUIRED_KEYS)
-
-  extra['threeDScannerApp.frame_json_name'] = os.path.basename(frame_json_path)
-
-  WORLD_T_PSEGS = np.array([
-    [ 0,  0, -1,  0],
-    [-1,  0,  0,  0],
-    [ 0,  1,  0,  0],
-    [ 0,  0,  0,  1],
-  ])
-
-  PSEGS_T_IOS_CAM = np.array([
-    [ 0, -1,  0,  0],
-    [ 0,  0,  1,  0],
-    [-1,  0,  0,  0],
-    [ 0,  0,  0,  1],
-  ])
-
-
-  # https://docs.ros.org/en/api/rtabmap/html/classrtabmap_1_1CameraModel.html#a0853af9d0117565311da4ffc3965f8d2
-  # https://developer.apple.com/documentation/arkit/arcamera/2866108-transform
-  #   Apple camera frame is:
-  #     +x is right when device is in lanscape; along the device long edge
-  #     +y is up when device is in landscape
-  #     +z is out of the device screen
-  ego_to_sensor = datum.Transform(
-            rotation=np.array([
-              # [ 0,  0,  1],
-              # [-1,  0,  0],
-              # [ 0, -1,  0],
-              # [ 0,   0,  -1],
-              # [-1,   0,   0],
-              # [ 0,  -1,   0],
-              
-              # [ 0,  -1,   0],
-              # [ 0,   0,   1],
-              # [-1,   0,   0],
-              [ 1,   0,   0],
-              [ 0,  -1,   0],
-              [ 0,   0,  -1],
-            ]),
-            src_frame='camera_front',
-            dest_frame='ego')
-  
-  from oarphpy import util as oputil
-  with open(frame_img_path, 'rb') as f:
-    w, h = oputil.get_jpeg_size(f.read(1024))
-
-  import imageio
-  image_factory = lambda: imageio.imread(frame_img_path)
+    extra['threeDScannerApp.img_path'] = os.path.basename(frame_img_path)
 
   ci = datum.CameraImage(
-                sensor_name='camera_front',
+                sensor_name=sensor_name,
                 image_factory=image_factory,
                 height=h,
                 width=w,
@@ -582,11 +413,11 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
     
     depth_path = scan_dir / f'depth_{frame_id}.png'
     conf_path = scan_dir / f'conf_{frame_id}.png'
-    if os.path.exist(depth_path):
+    if os.path.exist(depth_path) and os.path.exists(conf_path):
       # NB: raw depth only available when app is in 'low-res' mode
       pc_uri = datum.URI(
                   segment_id=segment_id,
-                  topic='lidar|front',
+                  topic='camera|front|depth',
                   timestamp=t,
                   extra={
                     'threeDScannerApp.scan_dir': scan_dir,
@@ -607,9 +438,9 @@ def threeDScannerApp_create_stamped_datum(uri):
   frame_json_path = scan_dir / uri.extra['threeDScannerApp.json_path']
   if uri.topic.startswith('camera'):
     ci = threeDScannerApp_create_camera_image(
-            frame_json_path, timestamp=uri.timestamp)
-    return datum.StampedDatum(uri=uri, camera_image=ci)
-  elif uri.topic == 'lidar|front':
+            frame_json_path,
+            sensor_name=uri.topic,
+            timestamp=uri.timestamp)
     return datum.StampedDatum(uri=uri, camera_image=ci)
   elif uri.topic == 'lidar|mesh':
     return datum.StampedDatum(uri=uri, camera_image=ci)

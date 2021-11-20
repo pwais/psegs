@@ -719,8 +719,11 @@ class KITTI360SDTable(StampedDatumTableBase):
                   uri.extra['kitti-360.camera'],
                   cls._get_frame_id(uri))
     # image_png = open(img_path, 'rb').read()
-    import imageio
-    image_factory = lambda: imageio.imread(img_path)
+    
+    def _load_image(path):
+      import imageio
+      return imageio.imread(path)
+    image_factory = lambda: _load_image(img_path)
     
     from psegs.util import misc
     width, height = misc.get_png_wh(open(img_path, 'rb').read(100))

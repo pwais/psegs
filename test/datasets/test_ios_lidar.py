@@ -13,7 +13,8 @@
 # limitations under the License.
 
 
-
+# TODO test camera image to point cloud as well as depth confidence filtering
+# and add a util for upsampling ios depth with confidence ...
 
 
 
