@@ -339,6 +339,40 @@ def threeDScannerApp_create_camera_image(
   return ci
 
 
+def threeDScannerApp_create_point_cloud_from_mesh(
+        mesh_path,
+        sensor_name='lidar|mesh'):
+  
+  assert os.path.exists(mesh_path), mesh_path
+
+  scan_dir = Path(os.path.dirname(mesh_path))
+
+  extra = {
+    'threeDScannerApp.mesh_path': os.path.basename(mesh_path),
+    'threeDScannerApp.scan_dir': os.path.basename(scan_dir),
+  }
+
+  # The meshes are in the world frame
+  ego_to_sensor = datum.Transform(
+            src_frame='world',
+            dest_frame=sensor_name)
+  
+  def _get_cloud(mesh_path):
+    import open3d as o3d
+    import numpy as np
+    mesh = o3d.io.read_triangle_mesh(mesh_path)
+    xyz = np.asarray(mesh.vertices)
+    return xyz
+  cloud_factory = lambda: _get_cloud(mesh_path)
+
+  pc = datum.PointCloud(
+          sensor_name=sensor_name,
+          cloud_factory=cloud_factory,
+          ego_to_sensor=ego_to_sensor,
+          extra=extra)
+  return pc
+
+
 def threeDScannerApp_get_segment_id(scan_dir='', info_path=''):
   if not info_path:
     info_path = str(Path(scan_dir) / 'info.json')
@@ -443,7 +477,12 @@ def threeDScannerApp_create_stamped_datum(uri):
             timestamp=uri.timestamp)
     return datum.StampedDatum(uri=uri, camera_image=ci)
   elif uri.topic == 'lidar|mesh':
-    return datum.StampedDatum(uri=uri, camera_image=ci)
+    scan_dir = Path(uri.extra['threeDScannerApp.scan_dir'])
+    mesh_path = scan_dir / uri.extra['threeDScannerApp.mesh_path']
+    pc = threeDScannerApp_create_point_cloud_from_mesh(
+      mesh_path, sensor_name=uri.topic)
+    pc.timestamp = uri.timestamp
+    return datum.StampedDatum(uri=uri, point_cloud=pc)
   elif uri.topic == 'ego_pose':
     with open(frame_json_path, 'r') as f:
       json_data = json.load(f))
