@@ -1078,7 +1078,6 @@ class KITTISDTable(StampedDatumTableBase):
 
   @classmethod
   def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
-    """TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
 
     ## First build indices (saves several minutes per worker per chunk) ...
     class SDBenchmarkToRawMapper(BenchmarkToRawMapper):

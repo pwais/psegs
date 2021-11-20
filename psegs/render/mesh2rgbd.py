@@ -272,7 +272,7 @@ if __name__ == '__main__':
     if '.DS_Store' in d:
         continue
 
-    if '2021_08_05_13_51_23' not in d:
+    if '2021_08_05' not in d:
       print('hacks skip', d)
       continue
 

@@ -12,14 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import unittest
-from pathlib import Path
 
 import imageio
 import numpy as np
-
-from oarphpy import util as oputil
 
 from psegs import datum
 from psegs import util
@@ -30,9 +25,6 @@ from test import testutil
 
 ###############################################################################
 ## Utils
-
-
-
 
 def save_projected_lidar(base_dir, outdir, frame, camera, K, lidar_to_cam):
   with open(base_dir / ('training/velodyne/%s.bin' % frame), 'rb') as f:
