@@ -1091,7 +1091,7 @@ class KITTISDTable(StampedDatumTableBase):
     util.log.info("Discovered %s tasks ..." % task_rdd.count())
     
     ## ... convert to URIs and filter those tasks if necessary ...
-    if existing_uri_df:
+    if existing_uri_df is not None:
       # Since we keep track of the original archives and file names, we can
       # just filter on those.  We'll collect them in this process b/c the
       # maximal set of URIs is smaller than RAM.

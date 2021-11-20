@@ -42,6 +42,7 @@
 #     https://docs.ros.org/en/api/rtabmap/html/CameraImages_8cpp_source.html
 
 import json
+from multiprocessing import Value
 import os
 from pathlib import Path
 
@@ -50,6 +51,7 @@ import numpy as np
 from psegs import datum
 from psegs import util
 from psegs.conf import C
+from psegs.datum import transform
 from psegs.table.sd_table import StampedDatumTableBase
 
 
@@ -157,12 +159,12 @@ def threeDScannerApp_create_frame_to_timestamp(scene_dir):
   from oarphpy import util as oputil
 
   frame_0_img_path = Path(scene_dir) / 'frame_00000.jpg'
-  assert os.path.exists(frame_0_path), \
-    f"Can't estimate time, no image {frame_0_img_path}"
+  if not frame_0_img_path.exists():
+    return {}
 
   frame_0_info_path = Path(scene_dir) / 'frame_00000.json'
-  assert os.path.exists(frame_0_info_path), \
-    f"Can't estimate time, no info {frame_0_info_path}"
+  if not frame_0_info_path.exists():
+    return {}
 
   base_stamp = os.path.getmtime(frame_0_img_path)
   base_nanostamp = int(1e9 * base_stamp)
@@ -293,13 +295,229 @@ def threeDScannerApp_create_camera_image(frame_json_path, timestamp=None):
   return ci
 
 
+def threeDScannerApp_create_point_cloud(frame_json_path, timestamp=None):
+
+  assert os.path.exists(frame_json_path), frame_json_path
+
+  frame_id = threeDScannerApp_frame_id_from_fname(frame_json_path)
+  scand_dir = Path(os.path.dirname(frame_json_path))
+  
+  depth_path = scand_dir / f'depth_{frame_id}.png'
+  assert os.path.exists(depth_path), depth_path
+  
+  conf_path = scand_dir / f'conf_{frame_id}.png'
+  assert os.path.exists(conf_path), conf_path
+
+  # Get dimensions from the conf image, which is a smaller file
+  from psegs.util import misc
+  with open(conf_path, 'rb') as f:
+    w, h = misc.get_png_wh(f.read(1024))
+  
+  # we'll want DepthImage from CameraImage and a way to go to PointCloud
+
+  ## Get Input Dimensions
+  import imageio
+  sample_img = imageio.imread(input_rgb_paths[0])
+  rgb_hw = sample_img.shape[:2]
+  util.log.info("Have RGB of resolution %s" % (rgb_hw,))
+
+  sample_depth = imageio.imread(input_depth_paths[0])
+  depth_hw = sample_depth.shape[:2]
+  util.log.info("Have depth of resolution %s" % (depth_hw,))
+
+  ## Define what we need to do
+  def convert(in_rgb, in_depth, out_id):
+    import shutil
+    import cv2
+    import imageio
+
+    out_id_str = str(out_id).zfill(out_id_zfill)
+
+    rgb_suffix = in_rgb.split('.')[-1]
+    rgb_suffix = '.' + rgb_suffix
+    rgb_dest = os.path.join(output_dir, rgb_prefix + out_id_str + rgb_suffix)
+    shutil.copyfile(in_rgb, rgb_dest)
+    util.log.info("%s -> %s" % (in_rgb, rgb_dest))
+
+    depth = imageio.imread(in_depth)
+    confidence = imageio.imread(in_depth.replace('depth_', 'conf_'))
+
+    if scale_depth_to_match_visible:
+      w, h = rgb_hw[1], rgb_hw[0]
+      depth = cv2.resize(depth, (w, h))
+      confidence = cv2.resize(confidence, (w, h))
+
+    # Zero out depth with low confidence
+    depth[ confidence < ignore_depth_below_ARConfidenceLevel ] = 0
+
+    depth_dest = os.path.join(
+                    output_dir_depth, depth_prefix + out_id_str + '.png')
+    imageio.imwrite(depth_dest, depth)
+    util.log.info("%s -> %s" % (in_depth, depth_dest))
+
+    if include_debug:
+      from psegs.util import plotting as pspl
+
+      if depth is None:
+        depth = imageio.imread(depth_dest)
+      
+      # millimeters -> meters
+      depth = depth.astype(np.float32) * .001
+      
+      debug = imageio.imread(in_rgb)
+      pspl.draw_depth_in_image(debug, depth, period_meters=.1)
+
+      debug_dest = os.path.join(
+                    output_dir_debug, 'debug_' + out_id_str + '.jpg')  
+      imageio.imwrite(debug_dest, debug)
+      util.log.info("Saved debug %s" % debug_dest)
+    
+    if True:
+      print('hacks!')
+      frame_json_path = in_rgb.replace('.jpg', '.json')
+      if os.path.exists(frame_json_path):
+        with open(frame_json_path, 'r') as f:
+          json_data = json.load(f)
+        
+        ego_pose = threeDScannerApp_get_ego_pose(json_data)
+        xform = ego_pose.get_transformation_matrix(homogeneous=True)
+        xform_dest = rgb_dest + '.xform.npz'
+        with open(xform_dest, 'wb') as f:
+          np.save(f, xform)
+        print('wrote', xform_dest)
+
+    return rgb_dest, depth_dest
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  with open(frame_json_path, 'r') as f:
+    json_data = json.load(f)
+  
+  ego_pose = threeDScannerApp_get_ego_pose(json_data)
+  K = threeDScannerApp_get_K(json_data)
+
+  if timestamp is None:
+    timestamp = int(json_data['time'] * 1e9)
+      # CACurrentMediaTime, which is mach_absolute_time, which is
+      # *system uptime*.  We use this as a fallback unless the caller
+      # has resolved timestamps for the whole scene.
+
+  REQUIRED_KEYS = (
+    'averageAngularVelocity',
+    'averageVelocity',
+    'exposureDuration',
+    'frame_index',
+  )
+  SKIP_KEYS = (
+    'cameraPoseARFrame',
+    'intrinsics'
+    'time',
+  )
+  
+  extra = dict(
+            ('threeDScannerApp.' + k, json.dumps(v))
+            for k, v in json_data.items()
+            if k not in SKIP_KEYS)
+  assert set(REQUIRED_KEYS) - set(json_data.keys()) == set(), \
+    "Have %s wanted %s" % (extra.keys(), REQUIRED_KEYS)
+
+  extra['threeDScannerApp.frame_json_name'] = os.path.basename(frame_json_path)
+
+  WORLD_T_PSEGS = np.array([
+    [ 0,  0, -1,  0],
+    [-1,  0,  0,  0],
+    [ 0,  1,  0,  0],
+    [ 0,  0,  0,  1],
+  ])
+
+  PSEGS_T_IOS_CAM = np.array([
+    [ 0, -1,  0,  0],
+    [ 0,  0,  1,  0],
+    [-1,  0,  0,  0],
+    [ 0,  0,  0,  1],
+  ])
+
+
+  # https://docs.ros.org/en/api/rtabmap/html/classrtabmap_1_1CameraModel.html#a0853af9d0117565311da4ffc3965f8d2
+  # https://developer.apple.com/documentation/arkit/arcamera/2866108-transform
+  #   Apple camera frame is:
+  #     +x is right when device is in lanscape; along the device long edge
+  #     +y is up when device is in landscape
+  #     +z is out of the device screen
+  ego_to_sensor = datum.Transform(
+            rotation=np.array([
+              # [ 0,  0,  1],
+              # [-1,  0,  0],
+              # [ 0, -1,  0],
+              # [ 0,   0,  -1],
+              # [-1,   0,   0],
+              # [ 0,  -1,   0],
+              
+              # [ 0,  -1,   0],
+              # [ 0,   0,   1],
+              # [-1,   0,   0],
+              [ 1,   0,   0],
+              [ 0,  -1,   0],
+              [ 0,   0,  -1],
+            ]),
+            src_frame='camera_front',
+            dest_frame='ego')
+  
+  from oarphpy import util as oputil
+  with open(frame_img_path, 'rb') as f:
+    w, h = oputil.get_jpeg_size(f.read(1024))
+
+  import imageio
+  image_factory = lambda: imageio.imread(frame_img_path)
+
+  ci = datum.CameraImage(
+                sensor_name='camera_front',
+                image_factory=image_factory,
+                height=h,
+                width=w,
+                timestamp=timestamp,
+                ego_pose=ego_pose,
+                ego_to_sensor=ego_to_sensor,
+                K=K,
+                extra=extra)
+
+  return ci
+
+
 def threeDScannerApp_get_segment_id(scan_dir='', info_path=''):
   if not info_path:
     info_path = str(Path(scan_dir) / 'info.json')
   seg_dir = os.path.dirname(info_path)
-  with open(info_path, 'r') as f:
-    info = json.load(f)
-  segment_id = info.get('title', os.path.split(seg_dir)[-1])
+  if info_path:
+    with open(info_path, 'r') as f:
+      info = json.load(f)
+    segment_id = info.get('title', os.path.split(seg_dir)[-1])
+  else:
+    segment_id = seg_dir
   return segment_id
 
 
@@ -320,6 +538,7 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
                   topic='lidar|mesh',
                   timestamp=start_t,
                   extra={
+                    'threeDScannerApp.scan_dir': scan_dir,
                     'threeDScannerApp.frame_id': frame_id,
                     'threeDScannerApp.mesh_path': os.path.basename(mesh_path),
                   })
@@ -338,6 +557,7 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
                   topic='ego_pose',
                   timestamp=t,
                   extra={
+                    'threeDScannerApp.scan_dir': scan_dir,
                     'threeDScannerApp.frame_id': frame_id,
                     'threeDScannerApp.json_path': os.path.basename(info_path),
                   })
@@ -353,8 +573,10 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
                   topic='camera|front',
                   timestamp=t,
                   extra={
+                    'threeDScannerApp.scan_dir': scan_dir,
                     'threeDScannerApp.frame_id': frame_id,
                     'threeDScannerApp.img_path': os.path.basename(img_path),
+                    'threeDScannerApp.json_path': os.path.basename(info_path),
                   })
       uris.append(ci_uri)
     
@@ -367,17 +589,41 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
                   topic='lidar|front',
                   timestamp=t,
                   extra={
+                    'threeDScannerApp.scan_dir': scan_dir,
                     'threeDScannerApp.frame_id': frame_id,
                     'threeDScannerApp.depth_path': os.path.basename(depth_path),
                     'threeDScannerApp.conf_path': os.path.basename(conf_path),
+                    'threeDScannerApp.json_path': os.path.basename(info_path),
                   })
       uris.append(pc_uri)
     
   return uris
 
-  
-  
 
+def threeDScannerApp_create_stamped_datum(uri):
+  if 'threeDScannerApp.scan_dir' not in uri.extra:
+    raise ValueError(uri)
+  scan_dir = Path(uri.extra['threeDScannerApp.scan_dir'])
+  frame_json_path = scan_dir / uri.extra['threeDScannerApp.json_path']
+  if uri.topic.startswith('camera'):
+    ci = threeDScannerApp_create_camera_image(
+            frame_json_path, timestamp=uri.timestamp)
+    return datum.StampedDatum(uri=uri, camera_image=ci)
+  elif uri.topic == 'lidar|front':
+    return datum.StampedDatum(uri=uri, camera_image=ci)
+  elif uri.topic == 'lidar|mesh':
+    return datum.StampedDatum(uri=uri, camera_image=ci)
+  elif uri.topic == 'ego_pose':
+    with open(frame_json_path, 'r') as f:
+      json_data = json.load(f))
+    xform = threeDScannerApp_get_ego_pose(json_data)
+    return datum.StampedDatum(uri=uri, transform=xform)
+  else:
+    raise ValueError(uri)
+
+
+###############################################################################
+### Single-Scene Research Utils
 
 def threeDScannerApp_convert_raw_to_opend3d_rgbd(input_dir, output_dataset_dir):
   from oarphpy import util as oputil
@@ -441,6 +687,7 @@ def threeDScannerApp_convert_raw_to_sync_rgbd(
       depth_prefix='depth_',
       ignore_depth_below_ARConfidenceLevel=1, # ARConfidenceLevel.medium
       include_debug=True,
+      include_raw_xform=True,
       output_dir_depth=None,
       output_dir_debug=None,
       parallel=-1):
@@ -519,8 +766,7 @@ def threeDScannerApp_convert_raw_to_sync_rgbd(
       imageio.imwrite(debug_dest, debug)
       util.log.info("Saved debug %s" % debug_dest)
     
-    if True:
-      print('hacks!')
+    if include_raw_xform:
       frame_json_path = in_rgb.replace('.jpg', '.json')
       if os.path.exists(frame_json_path):
         with open(frame_json_path, 'r') as f:
@@ -531,7 +777,6 @@ def threeDScannerApp_convert_raw_to_sync_rgbd(
         xform_dest = rgb_dest + '.xform.npz'
         with open(xform_dest, 'wb') as f:
           np.save(f, xform)
-        print('wrote', xform_dest)
 
     return rgb_dest, depth_dest
 
@@ -626,7 +871,8 @@ class Fixtures(object):
                         pattern='info.json')
     uri_to_segment_dir = {}
     for info_path in all_info_paths:
-      uri_to_segment_dir threeDScannerApp_get_segment_id(info_path=info_path)
+      seg_dir = os.path.basename(info_path)
+      segment_id = threeDScannerApp_get_segment_id(info_path=info_path)
       uri = datum.URI(
               dataset='psegs-ios-lidar-ext',
               split='threeDScannerApp_data',
@@ -635,14 +881,18 @@ class Fixtures(object):
     return uri_to_segment_dir
 
   # @classmethod
-  # def bench_to_raw_path(cls):
-  #   return cls.EXT_DATA_ROOT / 'bench_to_raw_df'
+  # def index_root(cls):
+  #   """A r/w place to cache any temp / index data"""
+  #   return C.PS_TEMP / 'psegs_ios_lidar'
 
   @classmethod
-  def index_root(cls):
-    """A r/w place to cache any temp / index data"""
-    return C.PS_TEMP / 'psegs_ios_lidar'
-
+  def get_uri_to_seg_dir(cls):
+    """Build and return a map of segment uri -> segment data dir
+    for all known segments"""
+    uri_to_seg_dir = dict()
+    uri_to_seg_dir.update(
+      cls.get_threeDScannerApp_uri_to_segment_dir())
+    return uri_to_seg_dir
 
   ### Testing #################################################################
 
@@ -688,388 +938,96 @@ class Fixtures(object):
     #   util.log.info("(You can remove %s if needed)" % ext_root)
 
 
-class KITTISDTable(StampedDatumTableBase):
+class IOSLidarSDTable(StampedDatumTableBase):
   
   FIXTURES = Fixtures
 
   ## Subclass API
 
   @classmethod
-  def _get_all_segment_uris(cls):
-    uris = set()
-    
-    uri_to_seg_dir = cls.FIXTURES.get_threeDScannerApp_uri_to_segment_dir()
-    uris |= set(uri_to_seg_dir.keys())
-
-    return sorted(datum.URI.from_str(uri) for uri in uris)
+  def _get_all_segment_uris(cls):   
+    uri_to_seg_dir = cls.FIXTURES.get_uri_to_seg_dir()
+    return sorted(datum.URI.from_str(uri) for uri in uri_to_seg_dir.keys())
 
   @classmethod
   def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
+    from oarphpy import util as oputil
 
-
-
-    ## First build indices (saves several minutes per worker per chunk) ...
-    class SDBenchmarkToRawMapper(BenchmarkToRawMapper):
-      FIXTURES = cls.FIXTURES
-    SDBenchmarkToRawMapper.setup(spark=spark)
-
-    ## ... now build a set of tasks to do ...
-    archive_paths = cls._get_all_archive_paths()
-    task_rdd = _rdd_of_all_archive_datafiles(spark, archive_paths)
-    task_rdd = task_rdd.cache()
-    util.log.info("Discovered %s tasks ..." % task_rdd.count())
-    
-    ## ... convert to URIs and filter those tasks if necessary ...
-    if existing_uri_df:
-      # Since we keep track of the original archives and file names, we can
-      # just filter on those.  We'll collect them in this process b/c the
-      # maximal set of URIs is smaller than RAM.
-      def to_task(row):
-        return (row.extra.get('kitti.archive'),
-                row.extra.get('kitti.archive.file'))
-      skip_tasks = set(
-        existing_uri_df.select('extra').rdd.map(to_task).collect())
-      
-      task_rdd = task_rdd.filter(lambda t: t not in skip_tasks)
-      util.log.info(
-        "Resume mode: have datums for %s datums; dropped %s tasks" % (
-          existing_uri_df.count(), len(skip_tasks)))
-    
-    uri_rdd = task_rdd.map(lambda task: kitti_archive_file_to_uri(*task))
+    ## First get the data dirs for the segments we need ...
+    uri_to_seg_dir = cls.FIXTURES.get_uri_to_seg_dir()
     if only_segments:
       util.log.info(
         "Filtering to only %s segments" % len(only_segments))
-      uri_rdd = uri_rdd.filter(
-        lambda uri: any(
-          suri.soft_matches_segment(uri) for suri in only_segments))
+      uri_to_seg_dir = dict(
+                        (uri, seg_dir)
+                        for uri, seg_dir in uri_to_seg_dir.items()
+                        if any(
+                            suri.soft_matches_segment(uri)
+                            for suri in only_segments))
+    
+    ## ... generate URIs for those segments ...
+    seg_dirs = sorted(uri_to_seg_dir.values())
+    seg_dir_rdd = spark.sparkContext.parallelize(
+                    seg_dirs, numSlices=len(seg_dirs))
+    uri_rdd = seg_dir_rdd.flatMap(cls.get_uris_for_seg_dir)
 
-    ## ... run tasks and create stamped datums.
-    # from oarphpy.spark import cluster_cpu_count
-    URIS_PER_CHUNK = os.cpu_count() * 64 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ make class member so can configure to RAM
+    ## ... filter if necessary ...
+    if existing_uri_df is not None:
+      def to_datum_id(obj):
+          return (
+            obj.dataset,
+            obj.split,
+            obj.segment_id,
+            obj.topic,
+            obj.timestamp)
+
+      key_uri_rdd = uri_rdd.map(lambda u: (to_datum_id(u), u))
+      existing_keys_nulls = existing_uri_df.rdd.map(to_datum_id).map(
+                                  lambda t: (t, None))
+      uri_rdd = key_uri_rdd.subtractByKey(existing_keys_nulls).map(
+                                      lambda kv: kv[1])
+
+    ## ... now build Datum RDDs ...
+    URIS_PER_CHUNK = os.cpu_count() * 128
     uris = uri_rdd.collect()
     util.log.info("... creating datums for %s URIs." % len(uris))
 
     datum_rdds = []
     for chunk in oputil.ichunked(uris, URIS_PER_CHUNK):
       chunk_uri_rdd = spark.sparkContext.parallelize(chunk)
-      datum_rdd = chunk_uri_rdd.flatMap(cls._iter_datums_from_uri)
+      datum_rdd = chunk_uri_rdd.map(cls.create_stamped_datum)
       datum_rdds.append(datum_rdd)
-      # if len(datum_rdds) >= 10:
-      #   break # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
     return datum_rdds
   
-  @classmethod
-  def _get_all_archive_paths(cls):
-    archives = []
-    if cls.INCLUDE_OBJECT_BENCHMARK:
-      archives += list(cls.FIXTURES.OBJECT_BENCHMARK_FNAMES)
-      if not cls.INCLUDE_OBJ_PREV_FRAMES:
-        archives = [arch for arch in archives if 'prev' not in arch]
-    if cls.INCLUDE_TRACKING_BENCHMARK:
-      archives += list(cls.FIXTURES.TRACKING_BENCHMARK_FNAMES)
-    archives = [arch for arch in archives if 'calib' not in arch]
-    paths = [cls.FIXTURES.zip_path(arch) for arch in archives]
-    return paths
-
 
   ## Datum Construction Support
 
-
-
-
-
-
+  @classmethod
+  def get_bad_seg_dirs(cls):
+    """Some captures are bad / cannot be parsed / are incomplete.
+    Return a list of those segments."""
+    uri_to_seg_dir = cls.FIXTURES.get_uri_to_seg_dir()
+    bad_seg_dirs = [
+      seg_dir for seg_dir in uri_to_seg_dir.values()
+      if not cls.get_uris_for_seg_dir(seg_dir)
+    ]
+    return bad_seg_dirs
 
   @classmethod
-  def _get_file_bytes(cls, uri=None, archive=None, entryname=None):
-    """Read bytes for the file referred to by `uri`"""
-
-    if uri is not None:
-      archive = uri.extra['kitti.archive']
-      entryname = uri.extra['kitti.archive.file']
-    assert archive and entryname
-
-    # Cache the Zipfiles for faster loading
-    if not hasattr(cls, '_get_file_bytes_archives'):
-      cls._get_file_bytes_archives = {}
-    if archive not in cls._get_file_bytes_archives:
-      import zipfile
-      path = cls.FIXTURES.zip_path(archive)
-      cls._get_file_bytes_archives[archive] = zipfile.ZipFile(path)
-      
-    
-    try:
-      return cls._get_file_bytes_archives[archive].read(entryname)
-    except Exception as e:
-        raise Exception((e, archive, uri))
+  def get_uris_for_seg_dir(cls, seg_dir):
+    # For now, we don't need to sniff the seg_dir type, we only
+    # support threeDScannerApp format.  In the future, we'll need
+    # to condition on seg_dir type.
+    uris = threeDScannerApp_get_uris_from_scan_dir(seg_dir)
+    return uris
 
   @classmethod
-  def _get_segment_frame_to_pose(cls, segment_id):
-    """Get the frame -> pose map for the given `segment_id`.  Cache these since
-    multiple datum constructors will need to look up poses."""
-    if not hasattr(cls, '_seg_to_poses'):
-      cls._seg_to_poses = {}
-    if segment_id not in cls._seg_to_poses:
-      split, segnum = segment_id.split('-')[-2:]
-      entryname = split + 'ing/oxts/' + segnum + '.txt'
-      oxts_str = cls._get_file_bytes(
-        archive='data_tracking_oxts.zip', entryname=entryname)
-      oxts_str = oxts_str.decode()
-      frame_to_xform = load_transforms_from_oxts(oxts_str)
-      cls._seg_to_poses[segment_id] = frame_to_xform
-    return cls._seg_to_poses[segment_id]
+  def create_stamped_datum(cls, uri):
+    # For now, we don't need to sniff the uri, we only
+    # support threeDScannerApp format.  In the future, we'll need
+    # to condition on uri type.
+    return threeDScannerApp_create_stamped_datum(uri)
 
-  @classmethod
-  def _get_ego_pose(cls, uri):
-    # Pose information for Object Benchmark not available
-    if 'kitti-object-benchmark' in uri.segment_id:
-      return datum.Transform(src_frame='world', dest_frame='ego')
-    else:
-      frame_to_xform = cls._get_segment_frame_to_pose(uri.segment_id)
-      return frame_to_xform[int(uri.extra['kitti.frame'])]
-
-  @classmethod
-  def _get_calibration(cls, uri):
-    """Get the `Calibration` instance for the given `uri`.  Cache these since
-    multiple datum constructors will need to look up calibration."""
-
-    if not hasattr(cls, '_obj_frame_to_calib'):
-      cls._obj_frame_to_calib = {}
-    if not hasattr(cls, '_tracking_seg_to_calib'):
-      cls._tracking_seg_to_calib = {}
-    
-    if 'kitti-object-benchmark' in uri.segment_id:
-      frame = uri.extra['kitti.frame']
-      if frame not in cls._obj_frame_to_calib:
-        entryname = uri.split + 'ing/calib/' + frame + '.txt'
-        calib_str = cls._get_file_bytes(
-          archive='data_object_calib.zip', entryname=entryname)
-        calib_str = calib_str.decode()
-        calib = Calibration.from_kitti_str(calib_str)
-        cls._obj_frame_to_calib[frame] = calib
-      return cls._obj_frame_to_calib[frame]
-    
-    else: # Tracking
-      if uri.segment_id not in cls._tracking_seg_to_calib:
-        split, segnum = uri.segment_id.split('-')[-2:]
-        entryname = split + 'ing/calib/' + segnum + '.txt'
-        calib_str = cls._get_file_bytes(
-          archive='data_tracking_calib.zip', entryname=entryname)
-        calib_str = calib_str.decode()
-        calib = Calibration.from_kitti_str(calib_str)
-        cls._tracking_seg_to_calib[uri.segment_id] = calib
-      return cls._tracking_seg_to_calib[uri.segment_id]
-
-  @classmethod
-  def _project_cuboids_to_lidar_frame(cls, uri, cuboids):
-    """Project the given `cuboids` from the camera frame to the lidar frame
-    (using calibration for `uri`) and return a transformed copy.
-
-    See also the tests:
-     * `test_kitti_object_label_lidar_projection()`
-     * `test_kitti_tracking_label_lidar_projection()`
-    """
-    import copy
-
-    ## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    ## Note: KITTI Cuboids are in the *camera* frame and must be projected
-    ## into the lidar frame for plotting. This test helps document and 
-    ## ensure this assumption holds.
-    ## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    calib = cls._get_calibration(uri)
-    lidar_to_cam = calib.R0_rect @ calib.velo_to_cam_unrectified
-    cam_to_lidar = lidar_to_cam.get_inverse()
-
-    cuboids = copy.deepcopy(cuboids)
-    for c in cuboids:
-      from psegs.datum.transform import Transform
-      obj_from_ego_lidar = cam_to_lidar @ c.obj_from_ego
-      c.obj_from_ego = obj_from_ego_lidar
-      c.obj_from_ego.src_frame = 'ego' # In KITTI, lidar is the ego frame ~~~~~~~~~~
-      c.obj_from_ego.dest_frame = 'obj'
-
-    return cuboids
-
-  @classmethod
-  def _get_bench2raw_mapper(cls):
-    if not hasattr(cls, '_bench2raw_mapper'):
-      class SDBenchmarkToRawMapper(BenchmarkToRawMapper):
-        FIXTURES = cls.FIXTURES
-      cls._bench2raw_mapper = SDBenchmarkToRawMapper()
-    return cls._bench2raw_mapper
-
-
-  ## Datum Construction
-
-  @classmethod
-  def _iter_datums_from_uri(cls, uri):
-    if uri.topic.startswith('camera'):
-      yield cls._create_camera_image(uri)
-    elif uri.topic.startswith('lidar'):
-      yield cls._create_point_cloud(uri)
-    elif uri.topic.startswith('labels'):
-      for sd in cls._iter_labels(uri):
-        yield sd
-    elif uri.topic == 'ego_pose':
-      for sd in cls._iter_ego_poses(uri):
-        yield sd
-    else:
-      raise ValueError(uri)
-  
-  @classmethod
-  def _create_camera_image(cls, uri):
-    from psegs.util import misc
-
-    image_png = cls._get_file_bytes(uri=uri)
-    width, height = misc.get_png_wh(image_png)
-
-    mapper = cls._get_bench2raw_mapper()
-    mapper.fill_timestamp(uri)
-
-    # timestamp = int(int(uri.extra['kitti.frame']) * 1e8)
-    # # TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
-    # uri.timestamp = timestamp
-
-    ego_pose = cls._get_ego_pose(uri)
-
-    calib = cls._get_calibration(uri)
-    K = calib.K2
-    ego_to_sensor = calib.velo_to_cam_2_rect
-    if 'right' in uri.topic:
-      K = calib.K3
-      ego_to_sensor = calib.velo_to_cam_3_rect
-
-    extra = mapper.get_extra(uri)
-
-    ci = datum.CameraImage(
-          sensor_name=uri.topic,
-          image_png=bytearray(image_png),
-          width=width,
-          height=height,
-          timestamp=uri.timestamp,
-          ego_pose=ego_pose,
-          K=K,
-          ego_to_sensor=ego_to_sensor,
-          extra=extra)
-    return datum.StampedDatum(uri=uri, camera_image=ci)
-
-  @classmethod
-  def _create_point_cloud(cls, uri):
-    lidar_bytes = cls._get_file_bytes(uri=uri)
-    raw_lidar = np.frombuffer(lidar_bytes, dtype=np.float32).reshape((-1, 4))
-    cloud = raw_lidar[:, :3]
-    # unused: reflectance = raw_lidar[:, 3:]
-
-    # timestamp = int(int(uri.extra['kitti.frame']) * 1e8)
-    # # TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
-    # uri.timestamp = timestamp
-    mapper = cls._get_bench2raw_mapper()
-    mapper.fill_timestamp(uri)
-
-    # In KITTI, lidar is the ego frame
-    ego_to_sensor = Transform(src_frame='ego', dest_frame='lidar')
-
-    ego_pose = cls._get_ego_pose(uri)
-
-    extra = mapper.get_extra(uri)
-
-    pc = datum.PointCloud(
-          sensor_name=uri.topic,
-          timestamp=uri.timestamp,
-          cloud=cloud,
-          ego_to_sensor=ego_to_sensor,
-          ego_pose=ego_pose,
-          extra=extra)
-    return datum.StampedDatum(uri=uri, point_cloud=pc)
-
-  @classmethod
-  def _iter_labels(cls, uri):
-    # KITTI has no labels for test.
-    # FMI see https://github.com/pwais/psegs-kitti-ext
-    if uri.split == 'test':
-      return
-    
-    if 'kitti-object-benchmark' in uri.segment_id:
-      yield cls._get_object_labels(uri)
-    else: # Tracking
-      for sd in cls._iter_tracking_labels(uri):
-        yield sd
-  
-  @classmethod
-  def _get_object_labels(cls, uri):
-    frame = uri.extra['kitti.frame']
-    entryname = uri.split + 'ing/label_2/' + frame + '.txt'
-    label_str = cls._get_file_bytes(
-        archive='data_object_label_2.zip', entryname=entryname)
-    label_str = label_str.decode()
-    cuboids, bboxes = parse_object_label_cuboids(label_str)
-
-    # FIXME bboxes ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-    cuboids = cls._project_cuboids_to_lidar_frame(uri, cuboids)
-
-    # timestamp = int(int(frame) * 1e8)
-    # # TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
-    # uri.timestamp = timestamp
-    mapper = cls._get_bench2raw_mapper()
-    mapper.fill_timestamp(uri)
-
-    for c in cuboids:
-      c.timestamp = uri.timestamp
-      c.ego_pose = cls._get_ego_pose(uri)
-      c.extra = mapper.get_extra(uri)
-    
-    return datum.StampedDatum(uri=uri, cuboids=cuboids)
-  
-  @classmethod
-  def _iter_tracking_labels(cls, uri):
-    import copy
-    
-    split, segnum = uri.segment_id.split('-')[-2:]
-    entryname = split + 'ing/label_02/' + segnum + '.txt'
-    labels_str = cls._get_file_bytes(
-      archive='data_tracking_label_2.zip', entryname=entryname)
-    labels_str = labels_str.decode()
-
-    f_to_cuboids, _ = parse_tracking_label_cuboids(labels_str)
-      # NB: We ignore bboxes for the Tracking Benchmark
-    
-    mapper = cls._get_bench2raw_mapper()
-    for frame, cuboids in f_to_cuboids.items():
-      datum_uri = copy.deepcopy(uri)
-      datum_uri.extra['kitti.frame'] = str(frame).zfill(6)
-
-      cuboids = cls._project_cuboids_to_lidar_frame(uri, cuboids)
-
-      # timestamp = int(int(frame) * 1e8)
-      # # TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
-      # datum_uri.timestamp = timestamp
-      mapper.fill_timestamp(datum_uri)
-
-      for c in cuboids:
-        c.timestamp = datum_uri.timestamp
-        c.ego_pose = cls._get_ego_pose(datum_uri)
-        c.extra = mapper.get_extra(datum_uri)
-
-      yield datum.StampedDatum(uri=datum_uri, cuboids=cuboids)
-
-  @classmethod
-  def _iter_ego_poses(cls, uri):
-    import copy
-
-    # Pose information for Object Benchmark not available
-    if 'kitti-object-benchmark' in uri.segment_id:
-      return
-    
-    mapper = cls._get_bench2raw_mapper()
-    frame_to_xform = cls._get_segment_frame_to_pose(uri.segment_id)
-    for frame, xform in frame_to_xform.items():
-      datum_uri = copy.deepcopy(uri)
-      # datum_uri.timestamp = int(int(frame) * 1e8) # FIXME ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-      datum_uri.extra['kitti.frame'] = str(frame).zfill(6)
-      mapper.fill_timestamp(datum_uri)
-      yield datum.StampedDatum(uri=datum_uri, transform=xform)
 
 
 ###############################################################################
