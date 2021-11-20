@@ -51,7 +51,7 @@ import numpy as np
 from psegs import datum
 from psegs import util
 from psegs.conf import C
-from psegs.datum import transform
+from psegs.datasets.idsutil import IDatasetUtil
 from psegs.table.sd_table import StampedDatumTableBase
 
 
@@ -485,7 +485,7 @@ def threeDScannerApp_create_stamped_datum(uri):
     return datum.StampedDatum(uri=uri, point_cloud=pc)
   elif uri.topic == 'ego_pose':
     with open(frame_json_path, 'r') as f:
-      json_data = json.load(f))
+      json_data = json.load(f)
     xform = threeDScannerApp_get_ego_pose(json_data)
     return datum.StampedDatum(uri=uri, transform=xform)
   else:
@@ -698,32 +698,6 @@ def threeDScannerApp_convert_raw_to_sync_rgbd(
 
 class Fixtures(object):
 
-  # ROOT = C.EXT_DATA_ROOT / 'kitti_archives'
-
-  # OBJECT_BENCHMARK_FNAMES = (
-  #   'data_object_label_2.zip',
-  #   'data_object_image_2.zip',
-  #   'data_object_image_3.zip',
-  #   'data_object_prev_2.zip',
-  #   'data_object_prev_3.zip',
-  #   'data_object_velodyne.zip',
-  #   'data_object_calib.zip',
-  # )
-
-  # TRACKING_BENCHMARK_FNAMES = (
-  #   'data_tracking_label_2.zip',
-  #   'data_tracking_image_2.zip',
-  #   'data_tracking_image_3.zip',
-  #   'data_tracking_velodyne.zip',
-  #   'data_tracking_oxts.zip',
-  #   'data_tracking_calib.zip',
-  # )
-
-  # @classmethod
-  # def zip_path(cls, zipname):
-  #   return cls.ROOT / zipname
-
-
   ### Extension Data ##########################################################
   ### See https://github.com/pwais/psegs-ios-lidar-ext
 
@@ -908,92 +882,17 @@ class DSUtil(IDatasetUtil):
   FIXTURES = Fixtures
 
   @classmethod
-  def all_zips(cls):
-    import itertools
-    all_zips = itertools.chain(
-                  cls.FIXTURES.OBJECT_BENCHMARK_FNAMES,
-                  cls.FIXTURES.TRACKING_BENCHMARK_FNAMES)
-    return list(all_zips)
-
-  @classmethod
   def emplace(cls):
-    cls.FIXTURES.maybe_emplace_psegs_kitti_ext()
-
-    if not cls.FIXTURES.ROOT.exists():
-      zips = '\n        '.join('  * %s' % fname for fname in cls.all_zips())
-      cls.show_md("""
-        Due to KITTI license constraints, you need to manually accept the KITTI
-        license to obtain the download URLs for the
-        [Tracking](http://www.cvlibs.net/datasets/kitti/eval_tracking.php) and
-        [Object Benchmark](http://www.cvlibs.net/datasets/kitti/eval_object.php)
-        zip files.  But once you have the URL, it's easy to write a short bash
-        loop with `wget` to fetch them in parallel.
-
-        You'll want to download all the following zip files (do not decompress
-        them) to a single directory on a local disk (spinning disk OK):
-
-        %s
-
-        Once you've downloaded the archives, we'll need the path to where
-        you put them.  Enter that below, or exit this program.
-
-      """ % (zips,))
-      kitti_root = input(
-        "Please enter the directory containing your KITTI zip archives; "
-        "PSegs will create a (read-only) symlink to them: ")
-      kitti_root = Path(kitti_root.strip())
-      assert kitti_root.exists()
-      assert kitti_root.is_dir()
-
-      from oarphpy import util as oputil
-      oputil.mkdir(str(cls.FIXTURES.ROOT.parent))
-
-      cls.show_md("Symlink: \n%s <- %s" % (kitti_root, cls.FIXTURES.ROOT))
-      os.symlink(kitti_root, cls.FIXTURES.ROOT)
-
-      # Make symlink read-only
-      import stat
-      os.chmod(
-        kitti_root,
-        stat.S_IREAD|stat.S_IRGRP|stat.S_IROTH,
-        follow_symlinks=False)
-
-    cls.show_md("Validating KITTI archives ...")
-    zips_needed = set(cls.all_zips())
-    zips_have = set()
-    for entry in cls.FIXTURES.ROOT.iterdir():
-      if entry.name in zips_needed:
-        zips_needed.remove(entry.name)
-        zips_have.add(entry.name)
-    
-    if zips_needed:
-      s_have = \
-        '\n        '.join('  * %s' % fname for fname in zips_have)
-      s_needed = \
-        '\n        '.join('  * %s' % fname for fname in zips_needed)
-      cls.show_md("""
-        Missing some expected archives!
-
-        Found:
-        
-        %s
-
-        Missing:
-
-        %s
-      """ % (s_have, s_needed))
-      return False
-    
-    cls.show_md("... all KITTI archives found!")
+    cls.FIXTURES.maybe_emplace_psegs_ios_lidar_ext()
     return True
 
   @classmethod
   def test(cls):
     from oarphpy import util as oputil
-    oputil.run_cmd("cd %s && pytest -s -vvv -k test_kitti" % C.PS_ROOT)
+    oputil.run_cmd("cd %s && pytest -s -vvv -k test_ios_lidar" % C.PS_ROOT)
     return True
 
   @classmethod
   def build_table(cls):
-    KITTISDTable.build()
+    # IOSLidarSDTable.build()
     return True

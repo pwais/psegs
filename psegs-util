@@ -211,7 +211,7 @@ def run_dsutil(dataset):
     "psegs-util --shell ?")
   
   assert sys.version_info[0] >= 3, \
-    "Python 3 required, run with `python3 ./psegs-util`"
+    "Python 3 required, run with `python3 ./psegs-util --dsutil=help`"
 
   # Import PSegs or die
   sys.path.append(PS_ROOT)

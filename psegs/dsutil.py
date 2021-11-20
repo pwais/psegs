@@ -14,10 +14,12 @@
 
 from psegs.datasets import nuscenes
 from psegs.datasets import kitti
+from psegs.datasets import ios_lidar
 
 DS_TO_UTIL_IMPL = {
   'kitti': kitti.DSUtil,
   'nuscenes': nuscenes.NuscDSUtil,
+  'ios_lidar': ios_lidar.DSUtil,
 }
 
 def run(dataset):
