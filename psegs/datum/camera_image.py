@@ -66,7 +66,7 @@ def uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy):
 
     if uvdcs.shape[1] > 3:
       cs = uvdcs[:, 3:]
-      return np.concatenate([xyz, cs], axis=0)
+      return np.concatenate([xyz, cs], axis=1)
     else:
       return xyz
 
@@ -225,6 +225,9 @@ class CameraImage(object):
         fx, cx, fy, cy = intrinsics
         depth_image = image_factory()
         depth_image = depth_image[:, :, axes]
+        # import cv2
+        # depth_image = cv2.resize(depth_image, (1440, 1920))
+        # print('hacks')
         uvdcs = depth_to_uvcs(depth_image)
         xyzcs = uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy)
         return xyzcs
@@ -239,7 +242,7 @@ class CameraImage(object):
       cloud = uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy)
       cloud_factory = None
 
-    from psegs.datum.transform import PointCloud
+    from psegs.datum.point_cloud import PointCloud
     pc = PointCloud(
           sensor_name=self.sensor_name + '|point_cloud',
           timestamp=self.timestamp,
@@ -281,7 +284,8 @@ class CameraImage(object):
       debug_img = np.copy(self.image)
     
     for pc in clouds or []:
-      xyz = pc.ego_to_sensor.get_inverse().apply(pc.cloud[:, :3]).T # err why inv~~~~
+      cloud_raw = pc.get_cloud()
+      xyz = pc.ego_to_sensor.get_inverse().apply(cloud_raw[:, :3]).T # err why inv~~~~
       uvd = self.project_ego_to_image(xyz, omit_offscreen=True)
       pspl.draw_xy_depth_in_image(
         debug_img, uvd, marker_radius=4, alpha=0.9, period_meters=period_meters)

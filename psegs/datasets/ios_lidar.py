@@ -149,6 +149,14 @@ def threeDScannerApp_create_frame_to_timestamp(scene_dir):
   corresponds to the uptime recorded in frame_00000.json (the info / pose)
   file for the 0th frame).
   
+  One caveat: the mtimes of the image files can sometimes change if the files
+  are copied or moved between hosts / filesystems.  (Note that the zip file
+  export of 3D Scanner App appears to preserve timestamps).  To preserve
+  timestamps in a json file, we run this command in the root of any
+  scene directory:
+
+  python -c "import os; import json; print(json.dumps(dict((p, os.path.getmtime(p)) for p in os.listdir('.')), indent=2))" > psegs_mtime.json 
+
   This helper creates and returns a map of frame id -> nanostamp, including
   for frames that do not have images (e.g. in low-res capture mode).
 
@@ -158,15 +166,26 @@ def threeDScannerApp_create_frame_to_timestamp(scene_dir):
   import json
   from oarphpy import util as oputil
 
-  frame_0_img_path = Path(scene_dir) / 'frame_00000.jpg'
-  if not frame_0_img_path.exists():
-    return {}
+  scene_dir = Path(scene_dir)
 
-  frame_0_info_path = Path(scene_dir) / 'frame_00000.json'
+  base_stamp = None
+  psegs_mtimes_path = scene_dir / 'psegs_mtime.json'
+  if psegs_mtimes_path.exists():
+    with open(psegs_mtimes_path, 'r') as f:
+      psegs_mtimes = json.load(f)
+    
+    if 'frame_00000.jpg' in psegs_mtimes:
+      base_stamp = psegs_mtimes['frame_00000.jpg']
+
+  if base_stamp is None:
+    frame_0_img_path = scene_dir / 'frame_00000.jpg'
+    if not frame_0_img_path.exists():
+      return {}
+    base_stamp = os.path.getmtime(frame_0_img_path)
+
+  frame_0_info_path = scene_dir / 'frame_00000.json'
   if not frame_0_info_path.exists():
     return {}
-
-  base_stamp = os.path.getmtime(frame_0_img_path)
   base_nanostamp = int(1e9 * base_stamp)
 
   with open(frame_0_info_path, 'r') as f:
@@ -177,8 +196,8 @@ def threeDScannerApp_create_frame_to_timestamp(scene_dir):
     # here as a time in seconds (float format)?
   
   # Now infer timestamps for all frames
-  frame_info_paths = oputil.all_paths_recursive(
-                        scene_dir, pattern='frame_*.json')
+  frame_info_paths = oputil.all_files_recursive(
+                        str(scene_dir), pattern='frame_*.json')
   frame_info_paths.sort()
   
   frame_id_to_nanostamp = {}
@@ -200,6 +219,7 @@ def threeDScannerApp_create_camera_image(
         sensor_name='camera|front',
         timestamp=None):
 
+  frame_json_path = str(frame_json_path)
   assert os.path.exists(frame_json_path), frame_json_path
 
   scan_dir = Path(os.path.dirname(frame_json_path))
@@ -240,19 +260,19 @@ def threeDScannerApp_create_camera_image(
   extra['threeDScannerApp.frame_id'] = str(frame_id)
   extra['threeDScannerApp.scan_dir'] = str(os.path.basename(scan_dir))
 
-  WORLD_T_PSEGS = np.array([
-    [ 0,  0, -1,  0],
-    [-1,  0,  0,  0],
-    [ 0,  1,  0,  0],
-    [ 0,  0,  0,  1],
-  ])
+  # WORLD_T_PSEGS = np.array([
+  #   [ 0,  0, -1,  0],
+  #   [-1,  0,  0,  0],
+  #   [ 0,  1,  0,  0],
+  #   [ 0,  0,  0,  1],
+  # ])
 
-  PSEGS_T_IOS_CAM = np.array([
-    [ 0, -1,  0,  0],
-    [ 0,  0,  1,  0],
-    [-1,  0,  0,  0],
-    [ 0,  0,  0,  1],
-  ])
+  # PSEGS_T_IOS_CAM = np.array([
+  #   [ 0, -1,  0,  0],
+  #   [ 0,  0,  1,  0],
+  #   [-1,  0,  0,  0],
+  #   [ 0,  0,  0,  1],
+  # ])
 
 
   # https://docs.ros.org/en/api/rtabmap/html/classrtabmap_1_1CameraModel.html#a0853af9d0117565311da4ffc3965f8d2
@@ -292,7 +312,24 @@ def threeDScannerApp_create_camera_image(
     from psegs.util import misc
     with open(conf_path, 'rb') as f:
       w, h = misc.get_png_wh(f.read(1024))
+    
+    # The intrinsics are for the RGB camera, which has a bigger image sensor.
+    # We need to know the size of that image in order to adjust the
+    # intrinsics for the depth sensor
+    rbg_path = scan_dir / f'frame_00000.jpg'
+    assert os.path.exists(rbg_path), rbg_path
+    
+    from oarphpy import util as oputil
+    with open(rbg_path, 'rb') as f:
+      rgb_w, rgb_h = oputil.get_jpeg_size(f.read(1024))
   
+    scale_x = float(rgb_w) / w
+    scale_y = float(rgb_h) / h
+    K[0, 0] /= scale_x
+    K[0, 2] /= scale_x
+    K[1, 1] /= scale_y
+    K[1, 2] /= scale_y
+
     def _get_depth_conf_image(depth_path, conf_path):
       import imageio
       import numpy as np
@@ -300,12 +337,15 @@ def threeDScannerApp_create_camera_image(
       
       # millimeters -> meters
       depth = depth.astype(np.float32) * .001
+      depth = depth.reshape([depth.shape[0], depth.shape[1], 1])
 
       conf = imageio.imread(conf_path)
-      depth_image = np.concatenate([depth, conf.astype(np.float32)], axis=-1)
+      conf = conf.reshape([conf.shape[0], conf.shape[1], 1])
+      depth_image = np.concatenate([depth, conf], axis=2)
       return depth_image
     
     image_factory = lambda: _get_depth_conf_image(depth_path, conf_path)
+    channel_names = ['depth', 'confidence']
 
     extra['threeDScannerApp.depth_path'] = os.path.basename(depth_path)
     extra['threeDScannerApp.conf_path'] = os.path.basename(conf_path)
@@ -322,12 +362,14 @@ def threeDScannerApp_create_camera_image(
       import imageio
       return imageio.imread(path)
     image_factory = lambda: _load_image(frame_img_path)
+    channel_names = ['r', 'g', 'b']
 
     extra['threeDScannerApp.img_path'] = os.path.basename(frame_img_path)
 
   ci = datum.CameraImage(
                 sensor_name=sensor_name,
                 image_factory=image_factory,
+                channel_names=channel_names,
                 height=h,
                 width=w,
                 timestamp=timestamp,
@@ -360,7 +402,7 @@ def threeDScannerApp_create_point_cloud_from_mesh(
   def _get_cloud(mesh_path):
     import open3d as o3d
     import numpy as np
-    mesh = o3d.io.read_triangle_mesh(mesh_path)
+    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
     xyz = np.asarray(mesh.vertices)
     return xyz
   cloud_factory = lambda: _get_cloud(mesh_path)
@@ -706,6 +748,10 @@ class Fixtures(object):
   @classmethod
   def threeDScannerApp_data_root(cls):
     return cls.EXT_DATA_ROOT / 'threeDScannerApp_data'
+
+  @classmethod
+  def threeDScannerApp_test_data_root(cls):
+    return cls.EXT_DATA_ROOT / 'threeDScannerApp_data_test_fixtures'
 
   @classmethod
   def get_threeDScannerApp_uri_to_segment_dir(cls):
