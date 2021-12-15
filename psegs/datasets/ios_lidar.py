@@ -293,9 +293,9 @@ def threeDScannerApp_create_camera_image(
               # [ 0,  -1,   0],
               # [ 0,   0,   1],
               # [-1,   0,   0],
-              [ 1,   0,   0],
-              [ 0,  -1,   0],
-              [ 0,   0,  -1],
+              [ 1.,   0.,   0.],
+              [ 0.,  -1.,   0.],
+              [ 0.,   0.,  -1.],
             ]),
             src_frame='camera_front',
             dest_frame='ego')
@@ -454,9 +454,9 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
   # Sometimes the frame json info data gets lost.  Without that data,
   # we can't deduce timestamps nor transforms.  So just ignore dropped
   # frames.
-  info_paths = oputil.all_files_recursive(scan_dir, pattern='frame*.json')
-  for info_path in info_paths:
-    frame_id = threeDScannerApp_frame_id_from_fname(info_path)
+  finfo_paths = oputil.all_files_recursive(scan_dir, pattern='frame*.json')
+  for finfo_path in finfo_paths:
+    frame_id = threeDScannerApp_frame_id_from_fname(finfo_path)
     t = frame_to_t[frame_id]
 
     xform_uri = datum.URI(
@@ -466,11 +466,11 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
                   extra={
                     'threeDScannerApp.scan_dir': scan_dir,
                     'threeDScannerApp.frame_id': frame_id,
-                    'threeDScannerApp.json_path': os.path.basename(info_path),
+                    'threeDScannerApp.json_path': os.path.basename(finfo_path),
                   })
     uris.append(xform_uri)
 
-    img_path = info_path.replace('.json', '.jpg')
+    img_path = finfo_path.replace('.json', '.jpg')
     if os.path.exists(img_path):
       # NB: for 'low-res' capture mode, Depth gets recorded at ~6Hz but images
       # only at ~2Hz.  Also, sometimes images just don't get recorded
@@ -483,13 +483,13 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
                     'threeDScannerApp.scan_dir': scan_dir,
                     'threeDScannerApp.frame_id': frame_id,
                     'threeDScannerApp.img_path': os.path.basename(img_path),
-                    'threeDScannerApp.json_path': os.path.basename(info_path),
+                    'threeDScannerApp.json_path': os.path.basename(finfo_path),
                   })
       uris.append(ci_uri)
     
-    depth_path = scan_dir / f'depth_{frame_id}.png'
-    conf_path = scan_dir / f'conf_{frame_id}.png'
-    if os.path.exist(depth_path) and os.path.exists(conf_path):
+    depth_path = Path(scan_dir) / f'depth_{frame_id}.png'
+    conf_path = Path(scan_dir) / f'conf_{frame_id}.png'
+    if depth_path.exists() and conf_path.exists():
       # NB: raw depth only available when app is in 'low-res' mode
       pc_uri = datum.URI(
                   segment_id=segment_id,
@@ -500,7 +500,7 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
                     'threeDScannerApp.frame_id': frame_id,
                     'threeDScannerApp.depth_path': os.path.basename(depth_path),
                     'threeDScannerApp.conf_path': os.path.basename(conf_path),
-                    'threeDScannerApp.json_path': os.path.basename(info_path),
+                    'threeDScannerApp.json_path': os.path.basename(finfo_path),
                   })
       uris.append(pc_uri)
     
@@ -511,8 +511,8 @@ def threeDScannerApp_create_stamped_datum(uri):
   if 'threeDScannerApp.scan_dir' not in uri.extra:
     raise ValueError(uri)
   scan_dir = Path(uri.extra['threeDScannerApp.scan_dir'])
-  frame_json_path = scan_dir / uri.extra['threeDScannerApp.json_path']
   if uri.topic.startswith('camera'):
+    frame_json_path = scan_dir / uri.extra['threeDScannerApp.json_path']
     ci = threeDScannerApp_create_camera_image(
             frame_json_path,
             sensor_name=uri.topic,
@@ -526,6 +526,7 @@ def threeDScannerApp_create_stamped_datum(uri):
     pc.timestamp = uri.timestamp
     return datum.StampedDatum(uri=uri, point_cloud=pc)
   elif uri.topic == 'ego_pose':
+    frame_json_path = scan_dir / uri.extra['threeDScannerApp.json_path']
     with open(frame_json_path, 'r') as f:
       json_data = json.load(f)
     xform = threeDScannerApp_get_ego_pose(json_data)
@@ -761,7 +762,7 @@ class Fixtures(object):
                         pattern='info.json')
     uri_to_segment_dir = {}
     for info_path in all_info_paths:
-      seg_dir = os.path.basename(info_path)
+      seg_dir = os.path.dirname(info_path)
       segment_id = threeDScannerApp_get_segment_id(info_path=info_path)
       uri = datum.URI(
               dataset='psegs-ios-lidar-ext',
@@ -852,7 +853,7 @@ class IOSLidarSDTable(StampedDatumTableBase):
                         (uri, seg_dir)
                         for uri, seg_dir in uri_to_seg_dir.items()
                         if any(
-                            suri.soft_matches_segment(uri)
+                            suri.soft_matches_segment_of(uri)
                             for suri in only_segments))
     
     ## ... generate URIs for those segments ...

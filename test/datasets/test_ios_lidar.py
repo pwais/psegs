@@ -318,3 +318,45 @@ def test_threeDScannerApp_create_camera_image_high():
       'test_threeDScannerApp_create_camera_image_highres')
   testutil.assert_img_directories_equal(outdir, expected_base)
 
+"""
+
+need test of stamped datum table. see also print() todo in 
+test_kitti
+
+fast path:
+ * tool to stamped datum to blender
+ * run thingy on blender format
+ * want tool for thingy to mesh
+
+"""
+
+def test_threeDScannerApp_sd_table():
+  testutil.skip_if_fixture_absent(
+      ios_lidar.Fixtures.threeDScannerApp_data_root())
+  
+  TEST_TEMPDIR = testutil.test_tempdir('test_threeDScannerApp_sd_table')
+    
+  class IOSLidarTestTable(ios_lidar.IOSLidarSDTable):
+
+    @classmethod
+    def table_root(cls):
+      return TEST_TEMPDIR / 'sd_table'
+  
+  with testutil.LocalSpark.sess() as spark:
+    suri = datum.URI.from_str(
+      'psegs://dataset=psegs-ios-lidar-ext&split=threeDScannerApp_data&segment_id=charuco-test-fixture-lowres')
+    IOSLidarTestTable.build(spark, only_segments=[suri])
+
+    df = IOSLidarTestTable.as_df(spark)
+    df.createOrReplaceTempView('seg')
+    spark.sql(""" SELECT uri.topic AS topic, count(*) AS N, MAX(uri.timestamp),  MIN(uri.timestamp) FROM seg GROUP BY topic """).show()
+    import pdb; pdb.set_trace()
+    print() # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    """
+    
+    test fixture:
+      * uris, hashes of any image arrays and cloud arrays, hashes of messages? minutes cloudpicklecallables ?
+    
+    """
+
+

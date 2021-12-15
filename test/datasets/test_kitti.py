@@ -778,6 +778,12 @@ def test_kitti_sd_table_tracking():
     spark.sql(""" SELECT uri.topic AS topic, count(*) AS N, MAX(uri.timestamp),  MIN(uri.timestamp) FROM seg GROUP BY topic """).show()
     import pdb; pdb.set_trace()
     print() # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    """
+    
+    test fixture:
+      * uris, hashes of any image arrays and cloud arrays, hashes of messages? minutes cloudpicklecallables ?
+    
+    """
 
 
 EXPECTED_SEGMENTS = (

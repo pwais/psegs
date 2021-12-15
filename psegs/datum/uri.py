@@ -143,6 +143,9 @@ class URI(object):
       soft match with psegs://segment_id=s 
 
     """
+    if isinstance(other, six.string_types):
+      other = self.__class__.from_str(other)
+
     return (
       ((not self.segment_id) or (self.segment_id == other.segment_id)) and
       ((not self.dataset) or (self.dataset == other.dataset)) and
@@ -277,6 +280,7 @@ class URI(object):
       
     if isinstance(s, cls):
       return s
+
     assert s.startswith(URI.PREFIX), "Missing %s in %s" % (URI.PREFIX, s)
     toks_s = s[len(URI.PREFIX):]
     if not toks_s:

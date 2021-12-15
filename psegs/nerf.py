@@ -79,7 +79,7 @@ def save_sample_blender_format(
   K = None
   cis = sorted(cis, key=lambda ci: ci.timestamp)
   callables = []
-  for i, ci in enumerate(cis):
+  for ci in cis:
 
     if camera_angle_x is None:
       fov_h, fov_v = ci.get_fov()
@@ -90,7 +90,7 @@ def save_sample_blender_format(
       K = ci.K
     
     c = SaveAndGetFrame()
-    c.i = i
+    c.i = int(ci.extra['threeDScannerApp.frame_id'])
     c.ci = ci
     c.img_dir_out = img_dir_out
     callables.append(c)
@@ -103,13 +103,13 @@ def save_sample_blender_format(
     'camera_angle_x': camera_angle_x,
     'frames': frames,
   }
-  
+
   transforms_dest = os.path.join(outdir, 'transforms_%s.json' % split)
   with open(transforms_dest, 'w') as f:
     json.dump(transforms_data, f, indent=2)
 
   full_intrinsic = os.path.join(outdir, 'full_intrinsic.json')
-  with open(transforms_dest, 'w') as f:
+  with open(full_intrinsic, 'w') as f:
     json.dump(K.tolist(), f, indent=2)
 
   util.log.info("... done writing to %s ." % outdir)
@@ -122,11 +122,12 @@ if __name__ == '__main__':
   from psegs.datasets import ios_lidar
 
   # base_dir = '/outer_root/home/au/lidarphone_scans/2021_06_27_12_37_38'
-  base_dir = '/outer_root/media/970-evo-plus-raid0/lidarphone_lidar_scans/2021_06_27_12_54_20/'
+  base_dir = '/outer_root/media/970-evo-plus-raid0/lidarphone_lidar_scans/2021_10_31_20_24_07/'
   # base_dir = '/outer_root/home/au/lidarphone_scans/landscape_home_button_right_07_09_49'
 
   from oarphpy import util as oputil
-  json_paths = oputil.all_files_recursive(base_dir, pattern='frame*.json')
+  jpg_paths = oputil.all_files_recursive(base_dir, pattern='frame*.jpg')
+  json_paths = [p.replace('jpg', 'json') for p in jpg_paths]
   json_paths = sorted(json_paths)
   cis = [ios_lidar.threeDScannerApp_create_camera_image(p) for p in json_paths]
 
@@ -135,6 +136,6 @@ if __name__ == '__main__':
 
   save_sample_blender_format(
     cis,
-    '/outer_root/home/pwais/NerfingMVS/data/petersen-bug-dakar-renegade/psegs_export')
+    '/outer_root/home/pwais/bundle-adjusting-NeRF/data/blender/soma-pizza-mural')
 
 
