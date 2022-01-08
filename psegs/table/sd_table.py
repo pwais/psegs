@@ -74,11 +74,11 @@ class StampedDatumTableBase(object):
         compression='lz4')
 
   @classmethod
-  def as_df(cls, spark, force_compute=False):
+  def as_df(cls, spark, force_compute=False, only_segments=None):
     # TODO REPLACE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     """ comments ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
     if force_compute: # hacks
-      sd_rdds = cls._create_datum_rdds(spark)
+      sd_rdds = cls._create_datum_rdds(spark, only_segments=only_segments)
       sd_dfs = [cls._sd_rdd_to_sd_df(spark, rdd) for rdd in sd_rdds]
       import oarphpy.spark
       return oarphpy.spark.union_dfs(*sd_dfs)

@@ -20,15 +20,15 @@ from oarphpy import util as oputil
 from oarphpy.spark import SessionFactory
 
 import psegs
-from psegs import spark
 from psegs import util
+from psegs.spark import Spark
 
 
 # PS_TEST_TEMPDIR_ROOT = os.path.join(tempfile.gettempdir(), 'psegs_test')
 PS_TEST_TEMPDIR_ROOT = '/opt/psegs/psegs_test'
 
 
-class LocalSpark(spark.Spark):
+class LocalSpark(Spark):
   """A local Spark session; should result in only one session being created
   per testing run"""
 
@@ -104,3 +104,42 @@ def check_sample_debug_images(sample, expected_dir, testname=''):
         cuboids=cuboids))
 
   assert_img_directories_equal(outdir, expected_dir)
+
+
+def check_stamped_datum_dfs_equal(
+        spark,
+        sd_df_actual,
+        sd_df_expected_path='',
+        testname='',
+        sd_df_expected=None):
+  
+  from psegs.table.sd_table import StampedDatumTableBase
+
+  if not testname:
+    seg_df = sd_df_actual.select('uri.segment_id').orderBy('uri.segment_id')
+    seg_name = seg_df.first().segment_id
+    testname = seg_name
+  
+  # Make tests faster and artifacts more compact
+  sd_df_actual = sd_df_actual.repartition(5).persist()
+
+  actual_path = test_tempdir(testname)
+  util.log.info("Testing serialization of actual to %s ..." % actual_path)
+  Spark.save_df_thunks(
+        [lambda: sd_df_actual],
+        path=str(actual_path),
+        format='parquet',
+        partitionBy=StampedDatumTableBase.PARTITION_KEYS,
+        compression='lz4')
+  
+  if sd_df_expected is None:
+    util.log.info("Fetching expected from %s ..." % sd_df_expected_path)
+    assert (
+      sd_df_expected_path and 
+        (not oputil.missing_or_empty(str(sd_df_expected_path))))
+    sd_df_expected = spark.read.parquet(str(sd_df_expected_path))
+
+  difftxt = StampedDatumTableBase.find_diff(sd_df_actual, sd_df_expected)
+  assert difftxt != '', \
+        "Non-zero diff!\nActual path %s\nExpected path %s\nDiff:\n%s" % (
+          actual_path, sd_df_expected_path, difftxt)
