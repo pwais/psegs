@@ -746,6 +746,9 @@ class Fixtures(object):
 
   EXT_DATA_ROOT = C.EXT_DATA_ROOT / 'psegs-ios-lidar-ext'
 
+  DATASET = 'psegs-ios-lidar-ext'
+  SPLIT = 'threeDScannerApp_data'
+
   @classmethod
   def threeDScannerApp_data_root(cls):
     return cls.EXT_DATA_ROOT / 'threeDScannerApp_data'
@@ -755,21 +758,23 @@ class Fixtures(object):
     return cls.EXT_DATA_ROOT / 'threeDScannerApp_data_test_fixtures'
 
   @classmethod
-  def get_threeDScannerApp_uri_to_segment_dir(cls):
+  def get_threeDScannerApp_segment_uris(cls):
+    """Createa and return one segment URI per scan"""
     from oarphpy import util as oputil
     all_info_paths = oputil.all_files_recursive(
                         str(cls.threeDScannerApp_data_root()),
                         pattern='info.json')
-    uri_to_segment_dir = {}
+    uris = []
     for info_path in all_info_paths:
-      seg_dir = os.path.dirname(info_path)
+      scan_dir = os.path.dirname(info_path)
       segment_id = threeDScannerApp_get_segment_id(info_path=info_path)
       uri = datum.URI(
-              dataset='psegs-ios-lidar-ext',
-              split='threeDScannerApp_data',
-              segment_id=segment_id)
-      uri_to_segment_dir[str(uri.to_segment_uri())] = seg_dir
-    return uri_to_segment_dir
+              dataset=cls.DATASET,
+              split=cls.SPLIT,
+              segment_id=segment_id,
+              extra={'threeDScannerApp.scan_dir': scan_dir})
+      uris.append(uri)
+    return uris
 
   # @classmethod
   # def index_root(cls):
@@ -777,13 +782,11 @@ class Fixtures(object):
   #   return C.PS_TEMP / 'psegs_ios_lidar'
 
   @classmethod
-  def get_uri_to_seg_dir(cls):
-    """Build and return a map of segment uri -> segment data dir
-    for all known segments"""
-    uri_to_seg_dir = dict()
-    uri_to_seg_dir.update(
-      cls.get_threeDScannerApp_uri_to_segment_dir())
-    return uri_to_seg_dir
+  def get_all_seg_uris(cls):
+    seg_uris = []
+    seg_uris += cls.get_threeDScannerApp_segment_uris()
+      # Room for other recording sources ...
+    return seg_uris
 
   ### Testing #################################################################
 
@@ -836,31 +839,29 @@ class IOSLidarSDTable(StampedDatumTableBase):
   ## Subclass API
 
   @classmethod
-  def _get_all_segment_uris(cls):   
-    uri_to_seg_dir = cls.FIXTURES.get_uri_to_seg_dir()
-    return sorted(datum.URI.from_str(uri) for uri in uri_to_seg_dir.keys())
+  def _get_all_segment_uris(cls):
+    return sorted(cls.FIXTURES.get_all_seg_uris())
 
   @classmethod
   def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
     from oarphpy import util as oputil
 
     ## First get the data dirs for the segments we need ...
-    uri_to_seg_dir = cls.FIXTURES.get_uri_to_seg_dir()
+    seg_uris = cls.FIXTURES.get_all_seg_uris()
     if only_segments:
       util.log.info(
         "Filtering to only %s segments" % len(only_segments))
-      uri_to_seg_dir = dict(
-                        (uri, seg_dir)
-                        for uri, seg_dir in uri_to_seg_dir.items()
-                        if any(
-                            suri.soft_matches_segment_of(uri)
-                            for suri in only_segments))
+      seg_uris = [
+          u for u in seg_uris
+          if any(
+              suri.soft_matches_segment_of(u)
+              for suri in only_segments)
+      ]
     
     ## ... generate URIs for those segments ...
-    seg_dirs = sorted(uri_to_seg_dir.values())
-    seg_dir_rdd = spark.sparkContext.parallelize(
-                    seg_dirs, numSlices=len(seg_dirs))
-    uri_rdd = seg_dir_rdd.flatMap(cls.get_uris_for_seg_dir)
+    seg_uri_rdd = spark.sparkContext.parallelize(
+                    seg_uris, numSlices=len(seg_uris))
+    uri_rdd = seg_uri_rdd.flatMap(cls.get_uris_for_seg_uri)
 
     ## ... filter if necessary ...
     if existing_uri_df is not None:
@@ -905,12 +906,21 @@ class IOSLidarSDTable(StampedDatumTableBase):
     return bad_seg_dirs
 
   @classmethod
-  def get_uris_for_seg_dir(cls, seg_dir):
+  def get_uris_for_seg_uri(cls, seg_uri):
     # For now, we don't need to sniff the seg_dir type, we only
     # support threeDScannerApp format.  In the future, we'll need
     # to condition on seg_dir type.
-    uris = threeDScannerApp_get_uris_from_scan_dir(seg_dir)
-    return uris
+    
+    scan_dir = seg_uri.extra['threeDScannerApp.scan_dir']
+    datum_uris = threeDScannerApp_get_uris_from_scan_dir(scan_dir)
+    datum_uris = [
+      duri.replaced(
+            dataset=seg_uri.dataset,
+            split=seg_uri.split,
+            segment_id=seg_uri.segment_id)
+      for duri in datum_uris
+    ]
+    return datum_uris
 
   @classmethod
   def create_stamped_datum(cls, uri):

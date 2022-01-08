@@ -62,21 +62,21 @@ class PUnion(object):
 
   @classmethod
   def create_html_obj(cls, html='', html_factory=None, html_method=None):
-    if html is not '':
+    if html != '':
       return cls(v_str=html)
-    elif html_factory is not None:
+    elif html_factory != None:
       return cls(v_factory=html_factory)
-    elif html_method is not None:
+    elif html_method != None:
       return cls(v_method=html_method)
     else:
       raise ValueError("Don't know how to HTML-ize")
 
   def to_html_value(self):
-    if self.v_str is not '':
+    if self.v_str != '':
       return self.v_str
-    elif self.v_factory is not None:
+    elif self.v_factory != None:
       return self.v_factory()
-    elif self.v_method is not None:
+    elif self.v_method != None:
       return self.v_method(self)
 
 

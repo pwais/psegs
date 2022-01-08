@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
+
 import numpy as np
 
+from psegs import datum
 from psegs.datum import datumutils as du
 
 
@@ -25,3 +28,40 @@ def test_maybe_make_homogeneous():
   np.testing.assert_equal(
     du.maybe_make_homogeneous(np.array([[0, 0, 0, 1]])),
     np.array([[0, 0, 0, 1]]))
+
+
+def test_datum_to_diffable_tree():
+
+  sd1 = copy.deepcopy(datum.STAMPED_DATUM_PROTO)
+  sd2 = copy.deepcopy(datum.STAMPED_DATUM_PROTO)
+
+  tree1 = du.datum_to_diffable_tree(sd1)
+  tree2 = du.datum_to_diffable_tree(sd2)
+
+  assert tree1 == tree2
+
+
+  sd1 = copy.deepcopy(datum.STAMPED_DATUM_PROTO)
+  sd1.camera_image = None
+  sd2 = copy.deepcopy(datum.STAMPED_DATUM_PROTO)
+
+  tree1 = du.datum_to_diffable_tree(sd1)
+  tree2 = du.datum_to_diffable_tree(sd2)
+
+  assert tree1 != tree2
+
+  difftxt = du.get_datum_diff_string(sd1, sd2)
+  assert "-  'camera_image': None," in difftxt
+  assert "+  'camera_image': {'K':" in difftxt
+
+
+  sd1 = copy.deepcopy(datum.STAMPED_DATUM_PROTO)
+  sd1.uri.dataset = 'foo'
+  sd2 = copy.deepcopy(datum.STAMPED_DATUM_PROTO)
+
+  assert tree1 != tree2
+
+  difftxt = du.get_datum_diff_string(sd2, sd1)
+  assert "-          'dataset': ''" in difftxt
+  assert "+          'dataset': 'foo'" in difftxt
+

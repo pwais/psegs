@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from psegs.datum.pboj import PObj
+from psegs.datum.pobj import PObj
 
 
 def test_pobj_html_str():

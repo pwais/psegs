@@ -111,7 +111,7 @@ class Sample(object):
   """List[StampedDatum]: All datums associated with this `Sample`"""
 
   uri = attr.ib(type=URI, default=None)
-  """URI: The URI addressing this frame (and group of datums)"""
+  """URI: The URI addressing this `Sample` (and group of datums)"""
 
   def __attrs_post_init__(self):
     if not self.uri:

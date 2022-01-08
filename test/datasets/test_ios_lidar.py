@@ -318,17 +318,9 @@ def test_threeDScannerApp_create_camera_image_high():
       'test_threeDScannerApp_create_camera_image_highres')
   testutil.assert_img_directories_equal(outdir, expected_base)
 
-"""
 
-need test of stamped datum table. see also print() todo in 
-test_kitti
 
-fast path:
- * tool to stamped datum to blender
- * run thingy on blender format
- * want tool for thingy to mesh
 
-"""
 
 def test_threeDScannerApp_sd_table():
   testutil.skip_if_fixture_absent(
@@ -350,7 +342,14 @@ def test_threeDScannerApp_sd_table():
     df = IOSLidarTestTable.as_df(spark)
     df.createOrReplaceTempView('seg')
     spark.sql(""" SELECT uri.topic AS topic, count(*) AS N, MAX(uri.timestamp),  MIN(uri.timestamp) FROM seg GROUP BY topic """).show()
-    import pdb; pdb.set_trace()
+    from oarphpy import util as oputil
+    nnn = df.rdd.map(lambda r: oputil.get_size_of_deep(r)).sum()
+
+    df2 = IOSLidarTestTable.get_segment_datum_df(spark, IOSLidarTestTable.get_all_segment_uris()[0])
+
+    from psegs.datum import datumutils as du
+
+    import ipdb; ipdb.set_trace()
     print() # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     """
     

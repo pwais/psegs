@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import difflib
+import pprint
 from pathlib import Path
 
 import attr
@@ -113,6 +115,18 @@ def get_png_wh(png_bytes):
   return int(w), int(h)
 
 
+def diff_of_pprint(v1, v2):
+  """Return a human-readable diff string of the diff of `v1` and `v2`"""
+  # Based upon pytest:
+  # https://github.com/pytest-dev/pytest/blob/55debfad1f690d11da3b33022d55c49060460e44/src/_pytest/assertion/util.py#L236
+  # https://docs.python.org/3/library/difflib.html#difflib.ndiff
+
+  lines1 = pprint.pformat(v1).splitlines(keepends=True)
+  lines2 = pprint.pformat(v2).splitlines(keepends=True)
+  difftxt = ''.join(difflib.ndiff(lines1, lines2))
+  return difftxt
+
+
 # Stolen from oarphpy RowAdapter ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # def _get_classname_from_obj(o):
 #   # Based upon https://stackoverflow.com/a/2020083
@@ -129,73 +143,73 @@ def get_png_wh(png_bytes):
 #   assert obj_cls
 #   return obj_cls
 
-_LAZY_SLOTS = (
-  # '__pyclass',
-  '__thunktor_bytes',
-  # '__pyclass_bytes',
-  '__value',
-  '__lock',
-)
+# _LAZY_SLOTS = (
+#   # '__pyclass',
+#   '__thunktor_bytes',
+#   # '__pyclass_bytes',
+#   '__value',
+#   '__lock',
+# )
 
-class LazyThunktor(object):
-  """
-  design: thunktor can get invoked:
-    * once per process when impl is called
-    * the above, but once after deser
-    * the big value is never serialized ...
-  """
+# class LazyThunktor(object):
+#   """
+#   design: thunktor can get invoked:
+#     * once per process when impl is called
+#     * the above, but once after deser
+#     * the big value is never serialized ...
+#   """
 
-  __slots__ = _LAZY_SLOTS
+#   __slots__ = _LAZY_SLOTS
 
-  def __init__(self, thunktor):#, embed_cls=True):
-    self.__value = None
-    # self.__pyclass = _get_classname_from_obj(thunktor)
+#   def __init__(self, thunktor):#, embed_cls=True):
+#     self.__value = None
+#     # self.__pyclass = _get_classname_from_obj(thunktor)
 
-    import cloudpickle
-    self.__thunktor_bytes = cloudpickle.dumps(thunktor)
+#     import cloudpickle
+#     self.__thunktor_bytes = cloudpickle.dumps(thunktor)
 
-    import threading
-    self.__lock = threading.Lock()
+#     import threading
+#     self.__lock = threading.Lock()
   
-  def __getstate__(self):
-    d = dict(
-      (k, getattr(self, k))
-      for k in self.__slots__
-      if k not in ('__lock', '__value'))
-    return d
+#   def __getstate__(self):
+#     d = dict(
+#       (k, getattr(self, k))
+#       for k in self.__slots__
+#       if k not in ('__lock', '__value'))
+#     return d
   
-  def __setstate__(self, d):
-    for k, v in d.items():
-      if k not in ('__lock', '__value'):
-        setattr(self, k, v)
-    import threading
-    self.__lock = threading.Lock()
+#   def __setstate__(self, d):
+#     for k, v in d.items():
+#       if k not in ('__lock', '__value'):
+#         setattr(self, k, v)
+#     import threading
+#     self.__lock = threading.Lock()
   
-  @property
-  def impl(self):
-    if self.__value is not None:
-      return self.__value
+#   @property
+#   def impl(self):
+#     if self.__value is not None:
+#       return self.__value
     
-    with self.__lock:
-      import cloudpickle
-      thunktor = cloudpickle.loads(self.__thunktor_bytes)
-      self.__value = thunktor()
-    return self.__value
+#     with self.__lock:
+#       import cloudpickle
+#       thunktor = cloudpickle.loads(self.__thunktor_bytes)
+#       self.__value = thunktor()
+#     return self.__value
 
-  def __getattribute__(self, name):
-    if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
-      return object.__getattribute__(self, name)
-    else:
-      return object.__getattribute__(self.impl, name)
+#   def __getattribute__(self, name):
+#     if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
+#       return object.__getattribute__(self, name)
+#     else:
+#       return object.__getattribute__(self.impl, name)
            
-  def __setattr__(self, name, value):
-    if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
-      return object.__setattr__(self, name)
-    else:
-      return object.__setattr__(self.impl, name)
+#   def __setattr__(self, name, value):
+#     if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
+#       return object.__setattr__(self, name)
+#     else:
+#       return object.__setattr__(self.impl, name)
   
-  def __delattr__(self, name, value):
-    if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
-      return object.__delattr__(self, name)
-    else:
-      return object.__delattr__(self.impl, name)
+#   def __delattr__(self, name, value):
+#     if name in _LAZY_SLOTS or name in ('impl', '__slots__'):
+#       return object.__delattr__(self, name)
+#     else:
+#       return object.__delattr__(self.impl, name)

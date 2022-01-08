@@ -98,3 +98,125 @@ def test_sd_table_one_of_every():
     datum_rdd = OneOfEvery.as_datum_rdd(spark)
     datums = datum_rdd.collect()
     assert sorted(datums) == sorted(test_datums)
+
+
+###############################################################################
+## Diff Tests
+
+def create_sd_table_and_df(spark, datums):
+
+  class DiffTable(TestStampedDatumTableBase):
+    @classmethod
+    def _create_datum_rdds(
+          cls, spark, existing_uri_df=None, only_segments=None):
+      return [spark.sparkContext.parallelize(datums)]
+  
+  df = DiffTable.as_df(spark, force_compute=True)
+  return DiffTable, df
+
+
+def test_sd_table_diff_empty():
+  with testutil.LocalSpark.sess() as spark:
+    _, df1 = create_sd_table_and_df(spark, [])
+    _, df2 = create_sd_table_and_df(spark, [])
+    
+    # Make the test faster
+    df1 = df1.repartition(1).cache()
+    df2 = df2.repartition(1).cache()
+    
+    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    assert difftxt == ''
+
+    
+def test_sd_table_diff_identical():
+  with testutil.LocalSpark.sess() as spark:
+    BASE_URI = URI(dataset='d', split='s', segment_id='seg')
+    one_of_every_datum = [
+      StampedDatum(
+        uri=BASE_URI.replaced(topic='camera|front', timestamp=1),
+        camera_image=CameraImage()),
+      StampedDatum(
+        uri=BASE_URI.replaced(topic='labels|cuboids', timestamp=1),
+        cuboids=[Cuboid()]),
+      StampedDatum(
+        uri=BASE_URI.replaced(topic='lidar|front', timestamp=1),
+        point_cloud=PointCloud()),
+      StampedDatum(
+        uri=BASE_URI.replaced(topic='ego_pose', timestamp=1),
+        transform=Transform()),
+    ]
+    _, df1 = create_sd_table_and_df(spark, one_of_every_datum)
+    _, df2 = create_sd_table_and_df(spark, one_of_every_datum)
+    
+    # Make the test faster
+    df1 = df1.repartition(1).cache()
+    df2 = df2.repartition(1).cache()
+    
+    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    assert difftxt == ''
+
+
+def test_sd_table_diff_mismatch_dataset():
+  pass
+
+
+def test_sd_table_diff_mismatch_segments():
+  pass
+
+
+def test_sd_table_diff_mismatch_segments():
+  pass
+
+
+def test_sd_table_diff_mismatch_uri_count_many():
+  pass
+
+
+def test_sd_table_diff_mismatch_uri_content():
+  pass
+
+
+def test_sd_table_diff_mismatch_uri_dupes():
+  pass
+
+
+def test_sd_table_diff_mismatch_sd_content():
+  pass
+
+
+  BASE_URI = URI(dataset='d', split='s', segment_id='seg')
+  test_datums = [
+    StampedDatum(
+      uri=BASE_URI.replaced(topic='camera|front', timestamp=1),
+      camera_image=CameraImage()),
+    StampedDatum(
+      uri=BASE_URI.replaced(topic='labels|cuboids', timestamp=1),
+      cuboids=[Cuboid()]),
+    StampedDatum(
+      uri=BASE_URI.replaced(topic='lidar|front', timestamp=1),
+      point_cloud=PointCloud()),
+    StampedDatum(
+      uri=BASE_URI.replaced(topic='ego_pose', timestamp=1),
+      transform=Transform()),
+  ]
+
+  class OneOfEvery(TestStampedDatumTableBase):
+    @classmethod
+    def _create_datum_rdds(
+          cls, spark, existing_uri_df=None, only_segments=None):
+      return [spark.sparkContext.parallelize(test_datums)]
+    
+  with testutil.LocalSpark.sess() as spark:
+    OneOfEvery.build(spark)
+    df = OneOfEvery.as_df(spark)
+    assert df.count() == len(test_datums)
+    
+    # Let's do a basic query
+    TOPICS = [datum.uri.topic for datum in test_datums]
+    assert (
+      sorted(TOPICS) ==
+      sorted(r.topic for r in df.select('uri.topic').collect()))
+
+    datum_rdd = OneOfEvery.as_datum_rdd(spark)
+    datums = datum_rdd.collect()
+    assert sorted(datums) == sorted(test_datums)
