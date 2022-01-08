@@ -325,7 +325,7 @@ class StampedDatumTableBase(object):
     ds1 = get_dataset_splits(sd_df1)
     ds2 = get_dataset_splits(sd_df2)
     if ds1 != ds2:
-      return "Dataset/Split Mismatch: %s" % misc.diff_of_pprint(ds1, ds2)
+      return "Dataset/Split Mismatch: \n%s" % misc.diff_of_pprint(ds1, ds2)
     
     
     ## Next, do we have the same segments?
@@ -339,7 +339,7 @@ class StampedDatumTableBase(object):
     segs1 = get_seg_uris(sd_df1)
     segs2 = get_seg_uris(sd_df2)
     if segs1 != segs2:
-      return "Segment Mismatch: %s" % misc.diff_of_pprint(segs1, segs2)
+      return "Segment Mismatch: \n%s" % misc.diff_of_pprint(segs1, segs2)
     
 
     ## Next, let's compare URIs.  
@@ -366,21 +366,28 @@ class StampedDatumTableBase(object):
     to_key = lambda uri: (uri.to_str(), 1)
     kv1 = uri_rdd1.map(to_key).reduceByKey(add)
     kv2 = uri_rdd2.map(to_key).reduceByKey(add)
-    missing_rdd1 = kv1.subtractByKey(kv2).values().collect()
-    missing_rdd2 = kv2.subtractByKey(kv1).values().collect()
+    missing_rdd2 = sorted(kv1.subtractByKey(kv2).keys().collect())
+    missing_rdd1 = sorted(kv2.subtractByKey(kv1).keys().collect())
 
     if missing_rdd1 or missing_rdd2:
-      return "Missing URIs: %s" % misc.diff_of_pprint(
-        missing_rdd1, missing_rdd2)
+      return """
+                Missing URIs (first 50):
+                Missing left: %s 
+                Missing right: %s""" % (
+                  pprint.pformat(missing_rdd1[:50]),
+                  pprint.pformat(missing_rdd2[:50]))
 
     # ... and check for dupes!!
     has_dupes = lambda kv: kv[-1] > 1
     rdd1_dupes = kv1.filter(has_dupes).collect()
     rdd2_dupes = kv2.filter(has_dupes).collect()
     if rdd1_dupes or rdd2_dupes:
-      return "Dupe URIs (first 100): %s" % misc.diff_of_pprint(
-                rdd1_dupes[:100], rdd2_dupes[:100])
-
+      return """
+                Dupe URIs (first 50):
+                Dupes left: %s 
+                Dupes right: %s""" % (
+                  pprint.pformat(rdd1_dupes[:50]),
+                  pprint.pformat(rdd2_dupes[:50]))
 
     ## Finally, let's compare actual Datums.
     SD_COLS = [f.name for f in attr.fields(StampedDatum)]
@@ -412,7 +419,7 @@ class StampedDatumTableBase(object):
     nonzero_diffs = diffs.filter(lambda s: bool(s))
     nonzero_diffs_sample = nonzero_diffs.take(10)
     if nonzero_diffs_sample:
-      return "Datum mismatch, first 10: %s" % (
+      return "Datum mismatch, first 10: \n%s" % (
         pprint.pformat(nonzero_diffs_sample))
     
     # No diffs!
