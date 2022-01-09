@@ -245,8 +245,8 @@ def test_sd_table_diff_mismatch_uri_content():
 
     difftxt = StampedDatumTableBase.find_diff(df1, df2)
     assert "Missing URIs" in difftxt
-    assert "Missing left: ['psegs://dataset=d&split=s&segment_id=seg&timestamp=1&topic=camera|rear'" in difftxt
-    assert "Missing right: ['psegs://dataset=d&split=s&segment_id=seg&timestamp=1&topic=camera|front'" in difftxt
+    assert "Missing left (10): ['psegs://dataset=d&split=s&segment_id=seg&timestamp=1&topic=camera|rear'" in difftxt
+    assert "Missing right (10): ['psegs://dataset=d&split=s&segment_id=seg&timestamp=1&topic=camera|front'" in difftxt
 
 
 def test_sd_table_diff_mismatch_uri_dupes():
@@ -272,8 +272,8 @@ def test_sd_table_diff_mismatch_uri_dupes():
     
     difftxt = StampedDatumTableBase.find_diff(df1, df2)
     assert "Dupe URIs" in difftxt
-    assert "Dupes left: []" in difftxt
-    assert "Dupes right: " in difftxt
+    assert "Dupes left (0): []" in difftxt
+    assert "Dupes right (4): " in difftxt
     assert "psegs://dataset=d&split=s&segment_id=seg&timestamp=1&topic=ego_pose', 2" in difftxt
 
 

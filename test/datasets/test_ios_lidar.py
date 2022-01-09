@@ -336,6 +336,17 @@ def test_threeDScannerApp_sd_table():
           'test_threeDScannerApp_charuco-test-fixture-lowres-sd.parquet'))
 
 
+    suri = datum.URI.from_str(
+      'psegs://dataset=psegs-ios-lidar-ext&split=threeDScannerApp_data&segment_id=charuco-test-fixture-highres')
+    sd_df_actual = ios_lidar.IOSLidarSDTable.as_df(spark, force_compute=True, only_segments=[suri])
+    
+    testutil.check_stamped_datum_dfs_equal(
+      spark,
+      sd_df_actual,
+      sd_df_expected_path=(
+        ios_lidar.Fixtures.threeDScannerApp_test_data_root() / 
+          'test_threeDScannerApp_charuco-test-fixture-highres-sd.parquet'))
+
   # TEST_TEMPDIR = testutil.test_tempdir('test_threeDScannerApp_sd_table')
     
   # class IOSLidarTestTable(ios_lidar.IOSLidarSDTable):

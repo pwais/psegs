@@ -372,9 +372,11 @@ class StampedDatumTableBase(object):
     if missing_rdd1 or missing_rdd2:
       return """
                 Missing URIs (first 50):
-                Missing left: %s 
-                Missing right: %s""" % (
+                Missing left (%s): %s 
+                Missing right (%s): %s""" % (
+                  len(missing_rdd1),
                   pprint.pformat(missing_rdd1[:50]),
+                  len(missing_rdd2),
                   pprint.pformat(missing_rdd2[:50]))
 
     # ... and check for dupes!!
@@ -384,9 +386,11 @@ class StampedDatumTableBase(object):
     if rdd1_dupes or rdd2_dupes:
       return """
                 Dupe URIs (first 50):
-                Dupes left: %s 
-                Dupes right: %s""" % (
+                Dupes left (%s): %s 
+                Dupes right (%s): %s""" % (
+                  len(rdd1_dupes),
                   pprint.pformat(rdd1_dupes[:50]),
+                  len(rdd2_dupes),
                   pprint.pformat(rdd2_dupes[:50]))
 
     ## Finally, let's compare actual Datums.
@@ -419,7 +423,8 @@ class StampedDatumTableBase(object):
     nonzero_diffs = diffs.filter(lambda s: bool(s))
     nonzero_diffs_sample = nonzero_diffs.take(10)
     if nonzero_diffs_sample:
-      return "Datum mismatch, first 10: \n%s" % (
+      return "Datum mismatch (%s datums), first 10: \n%s" % (
+        nonzero_diffs.count(),
         pprint.pformat(nonzero_diffs_sample))
     
     # No diffs!

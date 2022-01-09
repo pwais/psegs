@@ -440,14 +440,15 @@ def threeDScannerApp_get_uris_from_scan_dir(scan_dir):
   for mesh_path in mesh_paths:
     start_t = min(frame_to_t.values())
     frame_id = min(frame_to_t.keys())
+    fname = os.path.basename(mesh_path)
     mesh_uri = datum.URI(
                   segment_id=segment_id,
-                  topic='lidar|mesh',
+                  topic='lidar|mesh|' + fname.replace('.obj', ''),
                   timestamp=start_t,
                   extra={
                     'threeDScannerApp.scan_dir': scan_dir,
                     'threeDScannerApp.frame_id': frame_id,
-                    'threeDScannerApp.mesh_path': os.path.basename(mesh_path),
+                    'threeDScannerApp.mesh_path': fname,
                   })
     uris.append(mesh_uri)
 
@@ -518,12 +519,13 @@ def threeDScannerApp_create_stamped_datum(uri):
             sensor_name=uri.topic,
             timestamp=uri.timestamp)
     return datum.StampedDatum(uri=uri, camera_image=ci)
-  elif uri.topic == 'lidar|mesh':
+  elif uri.topic.startswith('lidar|mesh'):
     scan_dir = Path(uri.extra['threeDScannerApp.scan_dir'])
     mesh_path = scan_dir / uri.extra['threeDScannerApp.mesh_path']
     pc = threeDScannerApp_create_point_cloud_from_mesh(
       mesh_path, sensor_name=uri.topic)
     pc.timestamp = uri.timestamp
+    pc.sensor_name = uri.topic
     return datum.StampedDatum(uri=uri, point_cloud=pc)
   elif uri.topic == 'ego_pose':
     frame_json_path = scan_dir / uri.extra['threeDScannerApp.json_path']

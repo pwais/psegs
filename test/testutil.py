@@ -140,6 +140,6 @@ def check_stamped_datum_dfs_equal(
     sd_df_expected = spark.read.parquet(str(sd_df_expected_path))
 
   difftxt = StampedDatumTableBase.find_diff(sd_df_actual, sd_df_expected)
-  assert difftxt != '', \
+  assert difftxt == '', \
         "Non-zero diff!\nActual path %s\nExpected path %s\nDiff:\n%s" % (
           actual_path, sd_df_expected_path, difftxt)
