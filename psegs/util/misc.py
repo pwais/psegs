@@ -101,7 +101,6 @@ def get_png_wh(png_bytes):
     int: width of the image in pixels
     int: height of the image in pixels
   """
-
   
   from io import BytesIO
   buf = BytesIO(png_bytes)

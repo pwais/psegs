@@ -317,8 +317,6 @@ def test_threeDScannerApp_create_camera_image_high():
 
 
 
-
-
 def test_threeDScannerApp_sd_table():
   testutil.skip_if_fixture_absent(
       ios_lidar.Fixtures.threeDScannerApp_data_root())
@@ -346,43 +344,4 @@ def test_threeDScannerApp_sd_table():
       sd_df_expected_path=(
         ios_lidar.Fixtures.threeDScannerApp_test_data_root() / 
           'test_threeDScannerApp_charuco-test-fixture-highres-sd.parquet'))
-
-  # TEST_TEMPDIR = testutil.test_tempdir('test_threeDScannerApp_sd_table')
-    
-  # class IOSLidarTestTable(ios_lidar.IOSLidarSDTable):
-
-  #   @classmethod
-  #   def table_root(cls):
-  #     return TEST_TEMPDIR / 'sd_table'
-  
-  # with testutil.LocalSpark.sess() as spark:
-  #   suri = datum.URI.from_str(
-  #     'psegs://dataset=psegs-ios-lidar-ext&split=threeDScannerApp_data&segment_id=charuco-test-fixture-lowres')
-  #   IOSLidarTestTable.build(spark, only_segments=[suri])
-
-  #   df = IOSLidarTestTable.as_df(spark)
-  #   df.createOrReplaceTempView('seg')
-  #   spark.sql(""" SELECT uri.topic AS topic, count(*) AS N, MAX(uri.timestamp),  MIN(uri.timestamp) FROM seg GROUP BY topic """).show()
-  #   from oarphpy import util as oputil
-  #   nnn = df.rdd.map(lambda r: oputil.get_size_of_deep(r)).sum()
-
-  #   df2 = IOSLidarTestTable.get_segment_datum_df(spark, IOSLidarTestTable.get_all_segment_uris()[0])
-
-  #   from psegs.datum import datumutils as du
-
-  #   import ipdb; ipdb.set_trace()
-  #   print() # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  #   """
-    
-  #    * test defines uri(s) / seg uris -> sd_df
-  #    * there needs to be a fixture on disk
-  #    * test runner will compare them
-  #    * need a util for updating the fixture if desired ... how about test runner dumps
-  #        to disk (test serialization) and then gives you the paths?
-
-  #   test fixture:
-  #     * uris, hashes of any image arrays and cloud arrays, hashes of messages? minutes cloudpicklecallables ?
-    
-  #   """
-
 

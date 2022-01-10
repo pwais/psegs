@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from colorsys import hsv_to_rgb
+
 import numpy as np
+
+from psegs.table.sd_table import StampedDatumTableBase
 
 
 def color_to_opencv(color):
@@ -442,3 +444,482 @@ def get_ortho_debug_image(
   img = np.flipud(img)
 
   return img
+
+
+def images_to_html_video(images=[], fps=4, play_on_hover=True):
+  """Given a sequence of HWC numpy images, create and return an HTML video
+  
+  Args:
+    images (List of np.ndarray): A sequence of HWC images (prefer RGB)
+    fps (float): Render video to this frames per second
+    play_on_hover (bool): Make the video autoplay on hover
+  
+  Returns:
+    str: An HTML string with the included video
+  """
+  
+  import base64
+  import tempfile
+  import urllib.parse
+  
+  import imageio
+
+  if not images:
+    return "<i>(No images for video)</i>"
+
+  h, w = images[0].shape[:2]
+
+  # We tried BytesIO but imageio seems to struggle with that and ffmpeg
+  buffer = tempfile.NamedTemporaryFile(suffix=".psegs_html_video.mp4")
+  imageio.mimsave(
+          buffer.name,
+          images,
+          fps=fps)
+
+  video_bytes = open(buffer.name, 'rb').read()
+  encoded = base64.b64encode(video_bytes)
+  html_data = urllib.parse.quote(encoded.decode('ascii'))
+
+  attrs = ''
+  if play_on_hover:
+    attrs = """
+        onmouseover="this.play()" onmouseout="this.pause();this.currentTime=0;"
+      """.strip()
+  
+  html = """
+    <video width="{w}", height="{h}" controls {attrs}>
+    <source type="video/mp4" src="data:video/mp4;base64,{html_data}"></source>
+    </vid>
+  """.format(
+        h=h, w=w,
+        attrs=attrs,
+        html_data=html_data)
+  return html
+
+
+def sample_to_html(
+        spark,
+        sample,
+        include_videos=True,
+        videos_n_frames=50,
+        video_fps=4,
+        rgbd_depth_to_clouds=True,
+        include_cloud_viz=True,
+        clouds_n_clouds=50,
+        clouds_n_pts_per_cloud=1000,
+        cloud_include_cam_poses=True):
+  
+  from psegs import util
+  from psegs.table.sd_db import StampedDatumTableBase
+
+  # Ensure we have a Spark Dataframe
+  from psegs.datum.stamped_datum import Sample
+  if isinstance(sample, Sample):
+    sd_rdd = spark.parallelize(sample.datums, numSlices=len(sample.datums))
+    sd_df = StampedDatumTableBase._sd_rdd_to_sd_df(spark, sd_rdd)
+  else:
+    sd_df = sample
+  
+  sd_df.persist().createTempView('sd_df')
+  reports = []
+
+
+  util.log.info("Rendering summaries %s datums ..." % sd_df.count())
+
+  def _get_table_html(sql):
+    res = spark.sql(sql)
+    pdf = res
+    return pdf.T.style.render() # Pandas "to HTML"
+
+  ## Summary ###############################################################
+  html = _get_table_html("""
+          SELECT 
+            segment_id,
+            dataset,
+            split,
+            n AS total_datums,
+            1e-9 * duration_ns AS duration_sec,
+            FROM_UNIXTIME(start * 1e-9) AS start,
+            FROM_UNIXTIME(end * 1e-9) AS end
+          FROM 
+              (
+                  SELECT
+                      FIRST(uri.dataset) AS dataset,
+                      FIRST(uri.split) AS split,
+                      FIRST(uri.segment_id) AS segment_id,
+                      MIN(uri.timestamp) AS start,
+                      MAX(uri.timestamp) AS end,
+                      MAX(uri.timestamp) - MIN(uri.timestamp) AS duration_ns,
+                      COUNT(*) AS n
+                  FROM sd_df
+                  GROUP BY (uri.dataset, uri.split, uri.segment_id)
+              )
+      """)
+  reports.append({'section': 'Sample', 'html': html})
+
+
+  ## CameraImages ##########################################################
+  html = _get_table_html("""
+          SELECT 
+            topic,
+            n,
+            (n / (1e-9 * duration_ns)) AS Hz,
+            1e-9 * duration_ns AS duration_sec,
+            width,
+            height,
+            channel_names,
+            uncompressed_MBytes,
+            uncompressed_MBytes / (1e-9 * duration_ns) AS uncompressed_MBps,
+            FROM_UNIXTIME(start * 1e-9) AS start,
+            FROM_UNIXTIME(end * 1e-9) AS end
+
+          FROM 
+              (
+                  SELECT
+                      FIRST(uri.topic) AS topic,
+                      MIN(uri.timestamp) AS start,
+                      MAX(uri.timestamp) AS end,
+                      MAX(uri.timestamp) - MIN(uri.timestamp) AS duration_ns,
+                      FIRST(camera_image.width) AS width,
+                      FIRST(camera_image.height) AS height,
+                      FIRST(camera_image.channel_names) AS channel_names,
+                      1e-6 * FIRST(camera_image.width * camera_image.height * 3) AS uncompressed_MBytes,
+                      COUNT(*) AS n
+                  FROM sd_df
+                  WHERE camera_image IS NOT NULL
+                  GROUP BY uri.topic
+              )
+          ORDER BY topic
+      """)
+  reports.append({'section': 'CameraImages', 'html': html})
+
+
+  ## PointClouds ###########################################################
+  html = _get_table_html("""
+          SELECT 
+            topic,
+            n,
+            (n / (1e-9 * duration_ns)) AS Hz,
+            1e-9 * duration_ns AS duration_sec,
+            cloud_colnames,
+            FROM_UNIXTIME(start * 1e-9) AS start,
+            FROM_UNIXTIME(end * 1e-9) AS end
+
+          FROM 
+              (
+                  SELECT
+                      FIRST(uri.topic) AS topic,
+                      MIN(uri.timestamp) AS start,
+                      MAX(uri.timestamp) AS end,
+                      MAX(uri.timestamp) - MIN(uri.timestamp) AS duration_ns,
+                      FIRST(point_cloud.cloud_colnames) AS cloud_colnames,
+                      COUNT(*) AS n
+                  FROM sd_df
+                  WHERE point_cloud IS NOT NULL
+                  GROUP BY uri.topic
+              )
+          ORDER BY topic
+      """)
+  reports.append({'section': 'PointClouds', 'html': html})
+  
+
+  ## Transforms ############################################################
+  html = _get_table_html("""
+          SELECT 
+            topic,
+            n,
+            (n / (1e-9 * duration_ns)) AS Hz,
+            1e-9 * duration_ns AS duration_sec,
+            xform,
+            FROM_UNIXTIME(start * 1e-9) AS start,
+            FROM_UNIXTIME(end * 1e-9) AS end
+
+          FROM 
+              (
+                  SELECT
+                      FIRST(uri.topic) AS topic,
+                      MIN(uri.timestamp) AS start,
+                      MAX(uri.timestamp) AS end,
+                      MAX(uri.timestamp) - MIN(uri.timestamp) AS duration_ns,
+                      FIRST(CONCAT(transform.src_frame, '->', transform.dest_frame)) AS xform,
+                      COUNT(*) AS n
+                  FROM sd_df
+                  WHERE transform IS NOT NULL
+                  GROUP BY uri.topic
+              )
+          ORDER BY topic
+      """)
+  reports.append({'section': 'Transforms', 'html': html})
+  
+
+  ## Cuboids ###############################################################
+  html = _get_table_html("""
+          SELECT 
+            topic,
+            n,
+            (n / (1e-9 * duration_ns)) AS Hz,
+            1e-9 * duration_ns AS duration_sec,
+            FROM_UNIXTIME(start * 1e-9) AS start,
+            FROM_UNIXTIME(end * 1e-9) AS end
+
+          FROM 
+              (
+                  SELECT
+                      FIRST(uri.topic) AS topic,
+                      MIN(uri.timestamp) AS start,
+                      MAX(uri.timestamp) AS end,
+                      MAX(uri.timestamp) - MIN(uri.timestamp) AS duration_ns,
+                      COUNT(*) AS n
+                  FROM sd_df
+                  WHERE SIZE(cuboids) > 0
+                  GROUP BY uri.topic
+              )
+          ORDER BY topic
+      """)
+  reports.append({'section': 'Transforms', 'html': html})
+
+  # Find depth topics for later
+  rows = spark.sql("""
+              SELECT
+                FIRST(uri.topic) AS topic,
+                FIRST(camera_image.channel_names) AS channel_names
+              FROM sd_df
+              WHERE camera_image IS NOT NULL
+              GROUP BY uri.topic
+            """).collect()
+  depth_camera_topics = set([
+    r.topic
+    for r in rows
+    if 'depth' in r.channel_names
+  ])
+
+  ## Videos ################################################################
+  if include_videos:
+    topic_htmls = []
+
+    camera_topics = spark.sql(
+      "SELECT DISTINCT uri.topic FROM sd_df WHERE camera_image IS NOT NULL")
+    camera_topics = sorted(r.topic for r in camera_topics.collect())
+    for topic in camera_topics:
+      util.log.info("... rendering video for %s ..." % topic)
+      sample_sd_df = spark.sql("""
+                        SELECT 
+                          *
+                        FROM sd_df
+                        WHERE uri.topic == '{topic}'
+                        ORDER BY RAND(1337)
+                        LIMIT {videos_n_frames}
+                    """.format(topic=topic, videos_n_frames=videos_n_frames))
+
+      ##################################################
+      ## We want to adapt period_meters for depth topics
+      period_meters = 10.
+      if topic in depth_camera_topics:
+        def _get_depth_90th(row):
+          ci = StampedDatumTableBase.from_row(row.camera_image)
+          depth = ci.get_depth()
+          if depth is None:
+              return 0
+          else:
+              return np.percentile(depth, 0.9)
+        depth_top_90th = sample_sd_df.rdd.map(_get_depth_90th).max()
+        if depth_top_90th <= 0.1:
+            period_meters = 0.005
+        elif depth_top_90th <= 1.0:
+            period_meters = 0.05
+        elif depth_top_90th <= 10.0:
+            period_meters = 0.5
+        else:
+            period_meters = 10.
+      
+      ##################################################
+      ## Now render video
+      def _to_t_debug_image(row):
+        import cv2
+        ci = StampedDatumTableBase.from_row(row.camera_image)
+        image = ci.get_debug_image(period_meters=period_meters)
+        aspect = float(ci.width) / float(ci.height)
+        target_height = 400
+        target_width = int(aspect * target_height)
+        
+        # Pad the width a little to make ffmpeg most efficient
+        if target_width % 16 != 0:
+            target_width += 16 - (target_width % 16)
+        image = cv2.resize(image, (target_width, target_height))
+
+        return row.uri.timestamp, image
+      
+      iter_t_image = sample_sd_df.rdd.map(_to_t_debug_image).collect()
+      images = [
+        image.astype('float')
+        for t, image in sorted(iter_t_image, key=lambda ti: ti[0])
+      ]
+
+      # Global re-scale (e.g. scale depth debug coloring to full brightness)
+      im_min = min(i.min() for i in images)
+      im_max = min(i.max() for i in images)
+      images = [
+        (255 * (i - im_min) / (im_max - im_min)).astype('uint8')
+        for i in images
+      ]
+      html = images_to_html_video(images, fps=video_fps)
+      topic_htmls.append((topic, html))
+    
+    def _to_section_html(info):
+      topic, vhtml = info
+      html = """
+        <h3>{topic}</h3><br/><br/>
+        {vhtml}
+        <br/><br/>
+      """.format(topic=topic, vhtml=vhtml)
+      return html
+    section_html = ''.join(_to_section_html(i) for i in topic_htmls)
+    reports.append({'section': 'Videos', 'html': section_html})
+
+  
+  ## Clouds ################################################################
+  if include_cloud_viz:
+    import pandas as pd
+    import plotly
+    import plotly.graph_objects as go
+    
+    topic_htmls = []
+
+    pc_topics = spark.sql(
+      "SELECT DISTINCT uri.topic FROM sd_df WHERE point_cloud IS NOT NULL")
+    pc_topics = sorted(r.topic for r in pc_topics.collect())
+    if rgbd_depth_to_clouds:
+      pc_topics += sorted(depth_camera_topics)
+    
+    for topic in pc_topics:
+      util.log.info("... rendering point cloud viz for %s ..." % topic)
+
+      ##################################################
+      ## Get the clouds to viz
+      sample_sd_df = spark.sql("""
+                        SELECT 
+                          *
+                        FROM sd_df
+                        WHERE uri.topic == '{topic}'
+                        ORDER BY RAND(1337)
+                        LIMIT {clouds_n_clouds}
+                    """.format(topic=topic, clouds_n_clouds=clouds_n_clouds))
+
+      if topic in depth_camera_topics:
+        def _make_pc(row):
+          sd = StampedDatumTableBase.from_row(row)
+          pc = sd.camera_image.depth_image_to_point_cloud()
+          sd.camera_image = None
+          sd.point_cloud = pc
+          return sd
+        sd_rdd = sample_sd_df.rdd.map(_make_pc)
+        sample_sd_df = StampedDatumTableBase._sd_rdd_to_sd_df(spark, sd_rdd)
+        sample_sd_df = sample_sd_df.persist()
+      
+      def _get_cloud_world(row):
+        pc = StampedDatumTableBase.from_row(row.point_cloud)
+        cloud = pc.get_cloud()
+        cloud = cloud[:, :3]
+        T_world_from_ego = pc.ego_pose['ego', 'world']
+        cloud_world = T_world_from_ego.apply(cloud).T
+        return cloud_world
+      
+      ##################################################
+      ## Package clouds for plotly
+      total_n_world = 0
+      cloud_worlds = sample_sd_df.rdd.map(_get_cloud_world).collect()
+      cloud_df = None
+      for i, cloud in enumerate(cloud_worlds):
+        total_n_world  += cloud.shape[0]
+        color = int(255 * (float(i) / len(cloud_worlds)))
+        if cloud.shape[0] > clouds_n_pts_per_cloud:
+          idx = np.random.choice(
+                  np.arange(cloud.shape[0]), clouds_n_pts_per_cloud)
+          cloud = cloud[idx, :]
+        cur_df = pd.DataFrame(cloud, columns=['x', 'y', 'z'])
+        cur_df['color'] = 'rgb(%s, %s, %s)' % (color, color, color)
+        if cloud_df is None:
+          cloud_df = cur_df
+        else:
+          cloud_df = pd.concat([cloud_df, cur_df])
+      
+      ##################################################
+      ## Create plots
+      plots = []
+      scatter = go.Scatter3d(
+                x=cloud_df['x'], y=cloud_df['y'], z=cloud_df['z'],
+                mode='markers',
+                marker=dict(size=2, color=cloud_df['color'], opacity=0.5),)
+      plots.append(scatter)
+
+      ##################################################
+      ## Add pose plots if needed
+      if cloud_include_cam_poses:
+        util.log.info("... adding camera poses for %s ..." % topic)
+        ci_sd_df = spark.sql("""
+                        SELECT 
+                          *
+                        FROM sd_df
+                        WHERE camera_image IS NOT NULL
+                        ORDER BY RAND(1337)
+                        LIMIT {limit}
+                    """.format(limit=clouds_n_clouds))
+
+        def _get_t_ci(row):
+          ci = StampedDatumTableBase.from_row(row.camera_image)
+          return row.uri.timestamp, ci
+        t_cis = ci_sd_df.rdd.map(_get_t_ci).collect()
+        cis = [ci for t, ci in sorted(t_cis, key=lambda tc: tc[0])]
+
+        plots += [ci.to_plotly_world_frame_3d() for ci in cis]
+
+      ##################################################
+      ## Render to HTML
+      fig = go.Figure(data=plots)
+      fig.update_layout(
+        width=1000, height=700,
+        scene_aspectmode='data')
+      footer = """
+            <i>Showing {sample} of {total} points from {n} clouds</i>
+            """.format(
+                  sample=len(cloud_df),
+                  total=total_n_world,
+                  n=clouds_n_clouds)
+
+      html = (
+        fig.to_html(include_plotlyjs=False, full_html=False) + '<br/><br/>' + 
+        footer)
+      topic_htmls.append((topic, html))
+    
+    def _to_section_html(info):
+      topic, pchtml = info
+      html = """
+        <h3>{topic}</h3><br/><br/>
+        {pchtml}
+        <br/><br/>
+      """.format(topic=topic, pchtml=pchtml)
+      return html
+    section_html = ''.join(_to_section_html(i) for i in topic_htmls)
+    reports.append({'section': 'Point Clouds', 'html': section_html})
+
+      
+  ## Generate full report!
+  def report_info_to_html(info):
+    section = info['section']
+    content = info['html']
+
+    html = """
+      <hr/>
+      <h2>{section}</h2><br/><br/>
+
+      {content}
+
+    <br/><br/>
+    """.format(section=section, content=content)
+    return html
+
+  full_html = "".join(report_info_to_html(info) for info in reports)
+
+  util.log.info(
+    "... completed report is %s MBytes ..." % (1e-6 * len(full_html))
+  return full_html

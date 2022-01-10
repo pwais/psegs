@@ -19,7 +19,8 @@ import attr
 from psegs import util
 from psegs.datum.uri import URI
 from psegs.table.sd_table import StampedDatumTableBase
-from psegs.datum.stamped_datum import Sample, StampedDatum
+from psegs.datum.stamped_datum import Sample
+from psegs.datum.stamped_datum import StampedDatum
 
 
 URI_ATTRNAMES = set(a.name for a in attr.fields(URI))
@@ -313,7 +314,7 @@ class StampedDatumDB(object):
                 uri_col='uri',
                 datum_col='datums',
                 spark=None):
-    # fixme it took 23 mins just to get union df of 42 segments
+    # fixme it took 23 mins just to get union df of 42 segments ~~~~~~~~~~~~~~~~~~~~~
     suri_df = df.select(
                     df[uri_col + '.dataset'],
                     df[uri_col + '.split'],

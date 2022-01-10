@@ -297,7 +297,7 @@ def threeDScannerApp_create_camera_image(
               [ 0.,  -1.,   0.],
               [ 0.,   0.,  -1.],
             ]),
-            src_frame='camera_front',
+            src_frame=sensor_name,
             dest_frame='ego')
   
   if 'depth' in sensor_name:

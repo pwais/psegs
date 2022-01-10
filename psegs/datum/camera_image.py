@@ -1086,6 +1086,7 @@ class CameraImage(object):
 
     return html
 
+
   def to_plotly_world_frame_3d(self, frustum_size_meters=0.1):
     
     corners = np.array([
