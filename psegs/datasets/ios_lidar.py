@@ -42,7 +42,6 @@
 #     https://docs.ros.org/en/api/rtabmap/html/CameraImages_8cpp_source.html
 
 import json
-from multiprocessing import Value
 import os
 from pathlib import Path
 
@@ -52,6 +51,7 @@ from psegs import datum
 from psegs import util
 from psegs.conf import C
 from psegs.datasets.idsutil import IDatasetUtil
+from psegs.datum.transform import Transform
 from psegs.table.sd_table import StampedDatumTableBase
 
 
@@ -398,6 +398,7 @@ def threeDScannerApp_create_point_cloud_from_mesh(
   ego_to_sensor = datum.Transform(
             src_frame='world',
             dest_frame=sensor_name)
+  ego_pose = Transform(src_frame='ego', dest_frame='world')
   
   def _get_cloud(mesh_path):
     import open3d as o3d
@@ -411,6 +412,7 @@ def threeDScannerApp_create_point_cloud_from_mesh(
           sensor_name=sensor_name,
           cloud_factory=cloud_factory,
           ego_to_sensor=ego_to_sensor,
+          ego_pose=ego_pose,
           extra=extra)
   return pc
 

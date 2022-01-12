@@ -1,4 +1,4 @@
-# Copyright 2021 Maintainers of PSegs
+# Copyright 2022 Maintainers of PSegs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -163,9 +163,9 @@ def test_db_get_sample():
 
 
 def _get_actual_uris(datum_df):
-    return [
-      r.uri for r in datum_df.select('uri').rdd.map(T1.from_row).collect()
-    ]
+  return [
+    r.uri for r in datum_df.select('uri').rdd.map(T1.from_row).collect()
+  ]
 
 def test_db_get_datum_df_uri_list():
   db = _create_db_simple()

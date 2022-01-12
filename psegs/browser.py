@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # vim: tabstop=2 shiftwidth=2 expandtab
 
-# Copyright 2020 Maintainers of PSegs
+# Copyright 2021 Maintainers of PSegs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if __name__ == '__main__':
+
+
+def main(args=None):
   from psegs.table.sd_db import StampedDatumDB
   StampedDatumDB.show_all_segment_uris()
+
+if __name__ == '__main__':
+  main()

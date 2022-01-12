@@ -55,20 +55,20 @@ def depth_to_uvcs(hwc_arr):
   return uvc
 
 
-def uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy):
-    
-    rays = np.zeros((uvdcs.shape[0], 3))
-    rays[:, 0] = (uvdcs[:, 0] - cx) / fx
-    rays[:, 1] = (uvdcs[:, 1] - cy) / fy
-    rays[:, 2] = 1.
+def uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy, normed_rays=False):
+  rays = np.zeros((uvdcs.shape[0], 3))
+  rays[:, 0] = (uvdcs[:, 0] - cx) / fx
+  rays[:, 1] = (uvdcs[:, 1] - cy) / fy
+  rays[:, 2] = 1.
+  if normed_rays:
     rays /= np.linalg.norm(rays, axis=-1)[:, np.newaxis]
-    xyz = uvdcs[:, 2][:, np.newaxis] * rays
+  xyz = uvdcs[:, 2][:, np.newaxis] * rays
 
-    if uvdcs.shape[1] > 3:
-      cs = uvdcs[:, 3:]
-      return np.concatenate([xyz, cs], axis=1)
-    else:
-      return xyz
+  if uvdcs.shape[1] > 3:
+    cs = uvdcs[:, 3:]
+    return np.concatenate([xyz, cs], axis=1)
+  else:
+    return xyz
 
 
 @attr.s(slots=True, eq=False, weakref_slot=False)

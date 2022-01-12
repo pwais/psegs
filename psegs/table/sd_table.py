@@ -13,15 +13,264 @@
 # limitations under the License.
 
 
-from oarphpy.spark import RowAdapter
-from pyspark.sql import Row
-
 from psegs import util
 from psegs.conf import C
 from psegs.datum import URI
 from psegs.datum.stamped_datum import Sample
 from psegs.datum.stamped_datum import STAMPED_DATUM_PROTO
 from psegs.spark import Spark
+
+
+from oarphpy.spark import RowAdapter
+from pyspark.sql import Row
+
+
+# class StampedDatumTable(object):
+
+#   PARTITION_KEYS = ('dataset', 'split', 'segment_id')
+
+#   def __init__(self):
+#     self._sample = None
+#     self._spark_df = None
+#     self._spark = None
+
+#   def get_all_segment_uris(self):
+#     return [URI.from_str(u) for u in cls._get_all_segment_uris()]
+
+#   def to_spark_df(self, spark=None):
+#     pass
+
+#   @classmethod
+#   def from_spark_df(cls, spark_df):
+#     pass
+
+#   @classmethod
+#   def from_pandas(cls, pd_df):
+#     pass
+
+#   def to_pandas(self):
+#     pass
+
+#   @classmethod
+#   def from_sample(cls, sample):
+#     pass
+
+#   def to_sample(self):
+#     pass
+
+#   @classmethod
+#   def from_datum_rdd(self, spark, datum_rdd):
+#     pass
+
+#   def to_datum_rdd(self):
+#     pass
+
+#   @classmethod
+#   def get_sample(cls, uri, spark=None):
+#     with Spark.sess(spark) as spark:
+#       datums = cls._get_segment_datum_rdd_or_df(spark, uri)
+#       if hasattr(datums, 'rdd'):
+#         datums = cls.sd_df_to_rdd(datums)
+#       return Sample(uri=uri, datums=datums.collect())
+
+#   @staticmethod
+#   def to_row(sd):
+#     """This method is FINAL! ~~~~~~~~~~~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
+#     from oarphpy.spark import RowAdapter
+#     from pspark.sql import Row
+    
+#     # TODO do we need this method or can we add partition keys in a dataframe step ? ~~~~~~~~~~~~~~~~~~~~~
+#     row = RowAdapter.to_row(sd)
+#     row = row.asDict()
+
+#     # TODO: ditch these partition things and do it in the df writer?
+#     for k in StampedDatumTableBase.PARTITION_KEYS:
+#       row[k] = getattr(sd.uri, k)
+#     return Row(**row)
+
+#   @staticmethod
+#   def from_row(row):
+#     """This method is FINAL! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
+#     return RowAdapter.from_row(row)
+
+#   @classmethod
+#   def as_uri_df(cls, spark):
+#     if util.missing_or_empty(cls.table_root()):
+#       return spark.sparkContext.parallelize([])
+#     df = cls.as_df(spark)
+
+#     import attr
+#     colnames = [
+#       'uri.' + f.name
+#       for f in attr.fields(URI)
+#       if f.name not in cls.PARTITION_KEYS
+#     ]
+#     colnames += [c for c in cls.PARTITION_KEYS]
+#       # Use the partition columns for faster filters
+#     uri_df = df.select(colnames)
+#     return uri_df
+#     # COLS = list(URI.__slots__)
+#     # uri_df = df.select(*COLS)
+#     # return uri_df
+
+#   @classmethod
+#   def table_schema(cls):
+#     """ comments ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
+#     if not hasattr(cls, '_schema'):
+#       to_row = StampedDatumTableBase.to_row
+#       cls._schema = RowAdapter.to_schema(to_row(STAMPED_DATUM_PROTO))
+#     return cls._schema
+
+#   @classmethod
+#   def _sd_rdd_to_sd_df(cls, spark, sd_rdd):
+#     """ comments ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
+    
+#     row_rdd = sd_rdd.map(StampedDatumTableBase.to_row)
+#     df = spark.createDataFrame(row_rdd, schema=cls.table_schema())
+#     return df
+
+#   @classmethod
+#   def sd_df_to_rdd(cls, sd_df):
+#     # TODO refactor this and above ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
+#     return sd_df.rdd.map(cls.from_row)
+  
+#   @classmethod
+#   def find_diff(cls, sd_df1, sd_df2):
+#     """Compare all entries of Spark DataFrames of `StampedDatum`s `sd_df1`
+#     and `sd_df2` and return a string report on the first major difference.
+#     Return the empty string if the tables are equal.
+#     """
+
+#     import pprint
+#     from operator import add
+
+#     import attr
+#     from pyspark.sql import functions as F
+
+#     from psegs.util import misc
+#     from psegs.datum import datumutils as du
+#     from psegs.datum.stamped_datum import StampedDatum
+
+
+#     ## First, do we have the same datasets / splits?
+#     def get_dataset_splits(df):
+#       rows = df.select(df.uri.dataset, df.uri.split).distinct().collect()
+#       return sorted(tuple(r) for r in rows)
+    
+#     ds1 = get_dataset_splits(sd_df1)
+#     ds2 = get_dataset_splits(sd_df2)
+#     if ds1 != ds2:
+#       return "Dataset/Split Mismatch: \n%s" % misc.diff_of_pprint(ds1, ds2)
+    
+    
+#     ## Next, do we have the same segments?
+#     def get_seg_uris(df):
+#       rows = df.select(
+#               df.uri.dataset,
+#               df.uri.split,
+#               df.uri.segment_id).distinct().collect()
+#       return sorted(tuple(r) for r in rows)
+
+#     segs1 = get_seg_uris(sd_df1)
+#     segs2 = get_seg_uris(sd_df2)
+#     if segs1 != segs2:
+#       return "Segment Mismatch: \n%s" % misc.diff_of_pprint(segs1, segs2)
+    
+
+#     ## Next, let's compare URIs.  
+#     def get_uri_rdd(df):
+#       uri_rdd = df.select(df.uri).rdd.map(lambda row: cls.from_row(row.uri))
+#       return uri_rdd
+    
+#     # First in number ...
+#     uri_rdd1 = get_uri_rdd(sd_df1).cache()
+#     uri_rdd2 = get_uri_rdd(sd_df2).cache()
+#     c1 = uri_rdd1.count()
+#     c2 = uri_rdd2.count()
+
+#     if c1 == 0 and c2 == 0:
+#       return '' # Short-circuit: Spark is slow for empty data below
+#     elif c1 == 0 and c2 > 0:
+#       return "Left table is EMPTY but right table has %s rows" % c2
+#     elif c1 > 0 and c2 == 0:
+#       return "Right table is EMPTY but left table has %s rows" % c1
+#     elif c1 != c2 and (abs(c1 - c2) >= 1000):
+#       return "URI Count Mismatch: left count: %s right count: %s" % (c1, c2)
+
+#     # ... then in content ...
+#     to_key = lambda uri: (uri.to_str(), 1)
+#     kv1 = uri_rdd1.map(to_key).reduceByKey(add)
+#     kv2 = uri_rdd2.map(to_key).reduceByKey(add)
+#     missing_rdd2 = sorted(kv1.subtractByKey(kv2).keys().collect())
+#     missing_rdd1 = sorted(kv2.subtractByKey(kv1).keys().collect())
+
+#     if missing_rdd1 or missing_rdd2:
+#       return """
+#                 Missing URIs (first 50):
+#                 Missing left (%s): %s 
+#                 Missing right (%s): %s""" % (
+#                   len(missing_rdd1),
+#                   pprint.pformat(missing_rdd1[:50]),
+#                   len(missing_rdd2),
+#                   pprint.pformat(missing_rdd2[:50]))
+
+#     # ... and check for dupes!!
+#     has_dupes = lambda kv: kv[-1] > 1
+#     rdd1_dupes = kv1.filter(has_dupes).collect()
+#     rdd2_dupes = kv2.filter(has_dupes).collect()
+#     if rdd1_dupes or rdd2_dupes:
+#       return """
+#                 Dupe URIs (first 50):
+#                 Dupes left (%s): %s 
+#                 Dupes right (%s): %s""" % (
+#                   len(rdd1_dupes),
+#                   pprint.pformat(rdd1_dupes[:50]),
+#                   len(rdd2_dupes),
+#                   pprint.pformat(rdd2_dupes[:50]))
+
+#     ## Finally, let's compare actual Datums.
+#     SD_COLS = [f.name for f in attr.fields(StampedDatum)]
+
+#     # Do key-value mapping and join using the Dataframe API
+#     # because it's faster
+#     def to_key_datum_df(df):
+#       URI_KEYS = (
+#         'dataset',        # Use partition col
+#         'split',          # Use partition col
+#         'segment_id',     # Use partition col
+#         'uri.timestamp',  # Must read from uri
+#         'uri.topic')      # Must read from uri
+#       kv_df = df.select(
+#                 F.concat(*URI_KEYS).alias('key'),
+#                 F.struct(*SD_COLS).alias('datum'))
+#       return kv_df
+    
+#     kv_df1 = to_key_datum_df(sd_df1)
+#     kv_df2 = to_key_datum_df(sd_df2)
+#     kv_df1 = kv_df1.withColumn('datum1', kv_df1.datum)
+#     kv_df2 = kv_df2.withColumn('datum2', kv_df2.datum)
+#     joined = kv_df1.join(kv_df2, on='key', how='inner')
+
+#     def get_diff_string(row):
+#       return du.get_datum_diff_string(row.datum1, row.datum2)
+
+#     diffs = joined.rdd.map(get_diff_string)
+#     nonzero_diffs = diffs.filter(lambda s: bool(s))
+#     nonzero_diffs_sample = nonzero_diffs.take(10)
+#     if nonzero_diffs_sample:
+#       return "Datum mismatch (%s datums), first 10: \n%s" % (
+#         nonzero_diffs.count(),
+#         pprint.pformat(nonzero_diffs_sample))
+    
+#     # No diffs!
+#     return ''
+
+
+
+
+
+
+
 
 
 

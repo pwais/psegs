@@ -15,7 +15,14 @@
 
 import numpy as np
 
-from psegs.table.sd_table import StampedDatumTableBase
+
+PLOTLY_INIT_HTML = """
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src='https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js'></script>
+    <script>requirejs.config({
+        paths: { 'plotly': ['https://cdn.plot.ly/plotly-latest.min']},});
+        if(!window.Plotly) {{require(['plotly'],function(plotly) {window.Plotly=plotly;});}}</script>
+    """
 
 
 def color_to_opencv(color):
@@ -488,8 +495,8 @@ def images_to_html_video(images=[], fps=4, play_on_hover=True):
   
   html = """
     <video width="{w}", height="{h}" controls {attrs}>
-    <source type="video/mp4" src="data:video/mp4;base64,{html_data}"></source>
-    </vid>
+    <source type="video/mp4" src="data:video/mp4;base64,{html_data}" />
+    </video>
   """.format(
         h=h, w=w,
         attrs=attrs,
@@ -506,7 +513,7 @@ def sample_to_html(
         rgbd_depth_to_clouds=True,
         include_cloud_viz=True,
         clouds_n_clouds=50,
-        clouds_n_pts_per_cloud=1000,
+        clouds_n_pts_per_plot=50000,
         cloud_include_cam_poses=True):
   
   from psegs import util
@@ -520,7 +527,7 @@ def sample_to_html(
   else:
     sd_df = sample
   
-  sd_df.persist().createTempView('sd_df')
+  sd_df.persist().createOrReplaceTempView('sd_df')
   reports = []
 
 
@@ -528,8 +535,46 @@ def sample_to_html(
 
   def _get_table_html(sql):
     res = spark.sql(sql)
-    pdf = res
-    return pdf.T.style.render() # Pandas "to HTML"
+    pdf = res.toPandas()
+    util.log.info('\n%s\n' % str(pdf))
+    pdf.style.set_precision(2)
+    pdf.style.hide_index()
+    css = """
+        <style type="text/css" >
+          table {
+            border: none;
+            border-collapse: collapse;
+            border-spacing: 0;
+            color: black;
+            font-size: 14px;
+            font-family: "Monaco", monospace;
+            table-layout: fixed;
+          }
+          thead {
+            border-bottom: 1px solid black;
+            vertical-align: bottom;
+          }
+          tr, th, td {
+            text-align: right;
+            vertical-align: middle;
+            padding: 0.5em 0.5em;
+            line-height: normal;
+            white-space: normal;
+            max-width: none;
+            border: none;
+          }
+          th {
+            font-weight: bold;
+          }
+          tbody tr:nth-child(odd) {
+            background: #f5f5f5;
+          }
+          tbody tr:hover {
+            background: rgba(66, 165, 245, 0.2);
+          }
+        </style>
+    """
+    return css + pdf.style.render() # Pandas succint "to HTML" with nice style
 
   ## Summary ###############################################################
   html = _get_table_html("""
@@ -676,7 +721,7 @@ def sample_to_html(
               )
           ORDER BY topic
       """)
-  reports.append({'section': 'Transforms', 'html': html})
+  reports.append({'section': 'Cuboids', 'html': html})
 
   # Find depth topics for later
   rows = spark.sql("""
@@ -703,8 +748,7 @@ def sample_to_html(
     for topic in camera_topics:
       util.log.info("... rendering video for %s ..." % topic)
       sample_sd_df = spark.sql("""
-                        SELECT 
-                          *
+                        SELECT *
                         FROM sd_df
                         WHERE uri.topic == '{topic}'
                         ORDER BY RAND(1337)
@@ -751,18 +795,25 @@ def sample_to_html(
       
       iter_t_image = sample_sd_df.rdd.map(_to_t_debug_image).collect()
       images = [
-        image.astype('float')
+        image
         for t, image in sorted(iter_t_image, key=lambda ti: ti[0])
       ]
 
-      # Global re-scale (e.g. scale depth debug coloring to full brightness)
-      im_min = min(i.min() for i in images)
-      im_max = min(i.max() for i in images)
-      images = [
-        (255 * (i - im_min) / (im_max - im_min)).astype('uint8')
-        for i in images
-      ]
+      # Global re-scale for depth debug coloring
+      if topic in depth_camera_topics:
+        im_min = min(i.min() for i in images)
+        im_max = min(i.max() for i in images)
+        images = [
+          (255 * 
+            (i.astype('float') - im_min) / (im_max - im_min)).astype('uint8')
+          for i in images
+        ]
       html = images_to_html_video(images, fps=video_fps)
+      if topic in depth_camera_topics:
+        footer = """
+          <br/><i>Depth coloring with {period_meters}-meter hue period</i><br/>
+          """.format(period_meters=period_meters)
+        html = html + footer
       topic_htmls.append((topic, html))
     
     def _to_section_html(info):
@@ -773,16 +824,19 @@ def sample_to_html(
         <br/><br/>
       """.format(topic=topic, vhtml=vhtml)
       return html
+
     section_html = ''.join(_to_section_html(i) for i in topic_htmls)
     reports.append({'section': 'Videos', 'html': section_html})
 
   
   ## Clouds ################################################################
+  need_plotly_init = False
   if include_cloud_viz:
     import pandas as pd
-    import plotly
     import plotly.graph_objects as go
     
+    need_plotly_init = True
+
     topic_htmls = []
 
     pc_topics = spark.sql(
@@ -796,14 +850,14 @@ def sample_to_html(
 
       ##################################################
       ## Get the clouds to viz
-      sample_sd_df = spark.sql("""
-                        SELECT 
-                          *
-                        FROM sd_df
-                        WHERE uri.topic == '{topic}'
-                        ORDER BY RAND(1337)
-                        LIMIT {clouds_n_clouds}
-                    """.format(topic=topic, clouds_n_clouds=clouds_n_clouds))
+      orig_sample_sd_df = spark.sql("""
+                                SELECT *
+                                FROM sd_df
+                                WHERE uri.topic == '{topic}'
+                                ORDER BY RAND(1337)
+                                LIMIT {clouds_n_clouds}
+                            """.format(
+                              topic=topic, clouds_n_clouds=clouds_n_clouds))
 
       if topic in depth_camera_topics:
         def _make_pc(row):
@@ -812,29 +866,35 @@ def sample_to_html(
           sd.camera_image = None
           sd.point_cloud = pc
           return sd
-        sd_rdd = sample_sd_df.rdd.map(_make_pc)
+        sd_rdd = orig_sample_sd_df.rdd.map(_make_pc)
         sample_sd_df = StampedDatumTableBase._sd_rdd_to_sd_df(spark, sd_rdd)
         sample_sd_df = sample_sd_df.persist()
+      else:
+        sample_sd_df = orig_sample_sd_df
       
-      def _get_cloud_world(row):
+      def _get_t_cloud_world(row):
         pc = StampedDatumTableBase.from_row(row.point_cloud)
         cloud = pc.get_cloud()
         cloud = cloud[:, :3]
         T_world_from_ego = pc.ego_pose['ego', 'world']
         cloud_world = T_world_from_ego.apply(cloud).T
-        return cloud_world
+        return row.uri.timestamp, cloud_world
       
       ##################################################
       ## Package clouds for plotly
       total_n_world = 0
-      cloud_worlds = sample_sd_df.rdd.map(_get_cloud_world).collect()
+      cloud_t_worlds = sample_sd_df.rdd.map(_get_t_cloud_world).collect()
+      cloud_worlds = [
+        c for t, c in sorted(cloud_t_worlds, key=lambda tc: tc[0])
+      ]
       cloud_df = None
+      pts_per_cloud = int(clouds_n_pts_per_plot / len(cloud_worlds))
       for i, cloud in enumerate(cloud_worlds):
         total_n_world  += cloud.shape[0]
         color = int(255 * (float(i) / len(cloud_worlds)))
-        if cloud.shape[0] > clouds_n_pts_per_cloud:
+        if cloud.shape[0] > pts_per_cloud:
           idx = np.random.choice(
-                  np.arange(cloud.shape[0]), clouds_n_pts_per_cloud)
+                  np.arange(cloud.shape[0]), pts_per_cloud)
           cloud = cloud[idx, :]
         cur_df = pd.DataFrame(cloud, columns=['x', 'y', 'z'])
         cur_df['color'] = 'rgb(%s, %s, %s)' % (color, color, color)
@@ -856,15 +916,16 @@ def sample_to_html(
       ## Add pose plots if needed
       if cloud_include_cam_poses:
         util.log.info("... adding camera poses for %s ..." % topic)
-        ci_sd_df = spark.sql("""
-                        SELECT 
-                          *
-                        FROM sd_df
-                        WHERE camera_image IS NOT NULL
-                        ORDER BY RAND(1337)
-                        LIMIT {limit}
-                    """.format(limit=clouds_n_clouds))
-
+        if topic in depth_camera_topics:
+          ci_sd_df = orig_sample_sd_df
+        else:
+          ci_sd_df = spark.sql("""
+                          SELECT *
+                          FROM sd_df
+                          WHERE camera_image IS NOT NULL
+                          ORDER BY RAND(1337)
+                          LIMIT {limit}
+                      """.format(limit=clouds_n_clouds))
         def _get_t_ci(row):
           ci = StampedDatumTableBase.from_row(row.camera_image)
           return row.uri.timestamp, ci
@@ -885,10 +946,9 @@ def sample_to_html(
                   sample=len(cloud_df),
                   total=total_n_world,
                   n=clouds_n_clouds)
-
       html = (
-        fig.to_html(include_plotlyjs=False, full_html=False) + '<br/><br/>' + 
-        footer)
+        fig.to_html(include_plotlyjs=True, full_html=False) + '<br/><br/>' + 
+        footer)     
       topic_htmls.append((topic, html))
     
     def _to_section_html(info):
@@ -899,11 +959,15 @@ def sample_to_html(
         <br/><br/>
       """.format(topic=topic, pchtml=pchtml)
       return html
+
     section_html = ''.join(_to_section_html(i) for i in topic_htmls)
     reports.append({'section': 'Point Clouds', 'html': section_html})
 
       
   ## Generate full report!
+  util.log.info(
+    "... have reports %s ..." % ([i['section'] for i in reports],))
+
   def report_info_to_html(info):
     section = info['section']
     content = info['html']
@@ -914,12 +978,95 @@ def sample_to_html(
 
       {content}
 
-    <br/><br/>
+      <br/><br/>
     """.format(section=section, content=content)
     return html
 
   full_html = "".join(report_info_to_html(info) for info in reports)
+  if need_plotly_init:
+    full_html = PLOTLY_INIT_HTML + '<br />' + full_html
 
   util.log.info(
-    "... completed report is %s MBytes ..." % (1e-6 * len(full_html))
+    "... completed report is %s MBytes ..." % (1e-6 * len(full_html)))
   return full_html
+
+
+if __name__ == '__main__':
+  import sys
+  sys.path.append('/opt/psegs')
+
+  import os
+  lidar_root = '/outer_root/media/970-evo-plus-raid0/lidarphone_lidar_scans/'
+  # scan_dirs = [
+  #   os.path.join(lidar_root, f)
+  #   for f in os.listdir(lidar_root)
+  #   if os.path.isdir(os.path.join(lidar_root, f))
+  # ]
+  # scan_dirs = sorted(scan_dirs)
+
+  from psegs.datasets import ios_lidar
+  from psegs.spark import Spark
+
+  class F(ios_lidar.Fixtures):
+    @classmethod
+    def threeDScannerApp_data_root(cls):
+      return lidar_root
+
+  T = ios_lidar.IOSLidarSDTable
+  T.FIXTURES = F
+
+  seg_uris = T.get_all_segment_uris()
+  import pprint
+  # pprint.pprint(seg_uris)
+  with Spark.sess() as spark:
+    for suri in seg_uris:
+
+      if suri.segment_id == 'Untitled Scan':
+        print('fixme', suri)
+        continue
+      if suri.segment_id in ('amiot-crow-bar', 'headlands-downhill-2'):
+        print("fixme", 'amiot-crow-bar')
+        continue
+
+
+      pprint.pprint('working on')
+      pprint.pprint(suri)
+      sd_df = T.as_df(spark, force_compute=True, only_segments=[suri])
+      if not sd_df:
+        print('no df!', suri)
+        continue
+    
+      outpath = os.path.join(lidar_root, suri.segment_id + '.html')
+
+      # import plotly.graph_objects as go
+      # import pandas as pd
+      # cloud_df = pd.DataFrame(np.ones((100, 3)), columns=['x', 'y', 'z'])
+      # color = 128
+      # cloud_df['color'] = 'rgb(%s, %s, %s)' % (color, color, color)
+      
+      # plots = []
+      # scatter = go.Scatter3d(
+      #           x=cloud_df['x'], y=cloud_df['y'], z=cloud_df['z'],
+      #           mode='markers',
+      #           marker=dict(size=2, color=cloud_df['color'], opacity=0.5),)
+      # plots.append(scatter)
+
+      # fig = go.Figure(data=plots)
+      # fig.update_layout(
+      #   width=1000, height=700,
+      #   scene_aspectmode='data')
+      # footer = """
+      #       <i>asdgasgs</i>
+      #       """
+      # html = (
+      #   fig.to_html(include_plotlyjs=True, full_html=False) + '<br/><br/>' + 
+      #   footer)     
+
+
+
+      html = sample_to_html(spark, sd_df)
+      with open(outpath, 'w') as f:
+        f.write(html)
+
+      print('saved', outpath)
+      print(suri)
