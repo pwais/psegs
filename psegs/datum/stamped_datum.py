@@ -29,12 +29,12 @@ from psegs.datum.uri import URI
 
 @attr.s(slots=True, eq=True, weakref_slot=False)
 class StampedDatum(object):
-  """A single piece of data associated with a specific time and a specific
-  segment of data (i.e. a single `segment_id`).  Represents a single row in a
+  """A union-like class containing a single piece of data associated with a
+  specific time ("stamp" or "timestamp") from a specific segment of data
+  (i.e. a single `segment_id`).  Represents a single row in a
   `StampedDatumTable`.  While the object has multiple attributes, only one
   data attribute typically has non-vacuous value.
   """
-
 
   ## Every datum can be addressed
   
@@ -62,39 +62,6 @@ class StampedDatum(object):
   transform = attr.ib(type=Transform, default=None)
   """Transform: A transform such as ego pose; topic indicates semantics"""
 
-  # __slots__ = tuple(list(URI.__slots__) + [
-  #   # Inherit everything from a URI; we'll use URIs to address StampedDatums.
-  #   # Python users can access URI attributes directly or thru the `uri`
-  #   # property below.
-  #   # Parquet users can partition data using URI attributes.
-
-  #   # The actual Data
-  #   'camera_image',       # type: CameraImage
-  #   'point_cloud',        # type: PointCloud
-  #   'cuboids',            # type: List[Cuboid]
-  #   # 'bboxes',             # type: List[BBox]
-  #   'transform',          # type: Transform
-  # ])
-
-  # def __init__(self, **kwargs):
-  #   # Handle subclass attributes first to let superclass control defaults for
-  #   # its own attributes
-  #   DEFAULTS = {
-  #     'cuboids': [],
-  #   }
-  #   _set_defaults(self, kwargs, DEFAULTS)
-  #   super(StampedDatum, self).__init__(**kwargs)
-
-  # @property
-  # def uri(self):
-  #   kwargs = dict((attr, getattr(self, attr)) for attr in URI.__slots__)
-  #   return URI(**kwargs)
-
-  # @classmethod
-  # def from_uri(cls, uri, **init_kwargs):
-  #   sd = cls(**attr.asdict(uri))
-  #   sd.update(**init_kwargs)
-  #   return sd
 
 
 @attr.s(slots=True, eq=True, weakref_slot=False)
@@ -116,9 +83,9 @@ class Sample(object):
   def __attrs_post_init__(self):
     if not self.uri:
       if self.datums:
-        # Note this is not safe ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # because the first URI might have a different segment .. ?
-        # also because extra might get blown away
+        # Note this might effectively select a segment_id and/or uri.extra
+        # data that is not consistent with the rest of the `datums`.  You
+        # probably want to specify your own `uri`.
         base_uri = sorted(d.uri for d in self.datums)[0]
         self.uri = copy.deepcopy(base_uri)
     
@@ -207,9 +174,6 @@ class Sample(object):
 ### Prototypes
 ###
 
-# TODO make this easier to establish schema ? ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# or just doc why we have to spec some members so that types can be inferred
-
 # Spark (and `RowAdapter`) can automatically deduce schemas from object
 # heirarchies, but these tools need non-null, non-empty members to deduce
 # proper types.  Creating a DataFrame with an explicit schema can also
@@ -286,4 +250,3 @@ STAMPED_DATUM_PROTO = StampedDatum(
   transform=TRANSFORM_PROTO,
 )
 
-# TODO: Sample proto?

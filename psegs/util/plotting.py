@@ -516,16 +516,25 @@ def sample_to_html(
         clouds_n_pts_per_plot=50000,
         cloud_include_cam_poses=True):
   
+  from psegs import datum
+  from psegs import table
   from psegs import util
-  from psegs.table.sd_db import StampedDatumTableBase
 
   # Ensure we have a Spark Dataframe
-  from psegs.datum.stamped_datum import Sample
-  if isinstance(sample, Sample):
-    sd_rdd = spark.parallelize(sample.datums, numSlices=len(sample.datums))
-    sd_df = StampedDatumTableBase._sd_rdd_to_sd_df(spark, sd_rdd)
-  else:
+  if isinstance(sample, datum.Sample):
+    sdt = table.StampedDatumTable.from_sample(sample)
+    sd_df = sdt.to_spark_df(spark=spark)
+  elif isinstance(sample, table.StampedDatumTable):
+    sd_df = sample.to_spark_df(spark=spark)
+  elif hasattr(sample, '_jrdd'):
+    sdt = table.StampedDatumTable.from_datum_rdd(spark, sample)
+    sd_df = sdt.to_spark_df(spark=spark)
+  elif hasattr(sample, 'rdd'):
+    # Probably is already a Spark Dataframe
     sd_df = sample
+  else:
+    raise ValueError("Don't know what to do with %s" % (sample,))
+
   
   sd_df.persist().createOrReplaceTempView('sd_df')
   reports = []
@@ -760,7 +769,7 @@ def sample_to_html(
       period_meters = 10.
       if topic in depth_camera_topics:
         def _get_depth_90th(row):
-          ci = StampedDatumTableBase.from_row(row.camera_image)
+          ci = table.StampedDatumTable.sd_from_row(row.camera_image)
           depth = ci.get_depth()
           if depth is None:
               return 0
@@ -780,7 +789,7 @@ def sample_to_html(
       ## Now render video
       def _to_t_debug_image(row):
         import cv2
-        ci = StampedDatumTableBase.from_row(row.camera_image)
+        ci = table.StampedDatumTable.sd_from_row(row.camera_image)
         image = ci.get_debug_image(period_meters=period_meters)
         aspect = float(ci.width) / float(ci.height)
         target_height = 400
@@ -861,19 +870,20 @@ def sample_to_html(
 
       if topic in depth_camera_topics:
         def _make_pc(row):
-          sd = StampedDatumTableBase.from_row(row)
+          sd = table.StampedDatumTable.sd_from_row(row)
           pc = sd.camera_image.depth_image_to_point_cloud()
           sd.camera_image = None
           sd.point_cloud = pc
           return sd
         sd_rdd = orig_sample_sd_df.rdd.map(_make_pc)
-        sample_sd_df = StampedDatumTableBase._sd_rdd_to_sd_df(spark, sd_rdd)
+        sdt = table.StampedDatumTable.from_datum_rdd(spark, sd_rdd)
+        sample_sd_df = sdt.to_spark_df(spark=spark)
         sample_sd_df = sample_sd_df.persist()
       else:
         sample_sd_df = orig_sample_sd_df
       
       def _get_t_cloud_world(row):
-        pc = StampedDatumTableBase.from_row(row.point_cloud)
+        pc = table.StampedDatumTable.sd_from_row(row.point_cloud)
         cloud = pc.get_cloud()
         cloud = cloud[:, :3]
         T_world_from_ego = pc.ego_pose['ego', 'world']
@@ -927,7 +937,7 @@ def sample_to_html(
                           LIMIT {limit}
                       """.format(limit=clouds_n_clouds))
         def _get_t_ci(row):
-          ci = StampedDatumTableBase.from_row(row.camera_image)
+          ci = table.StampedDatumTable.sd_from_row(row.camera_image)
           return row.uri.timestamp, ci
         t_cis = ci_sd_df.rdd.map(_get_t_ci).collect()
         cis = [ci for t, ci in sorted(t_cis, key=lambda tc: tc[0])]

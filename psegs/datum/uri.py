@@ -109,9 +109,9 @@ class URI(object):
 
   ## Extended Selection
 
-  # TODO dump this? ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  track_id = attr.ib(default='', type='str')
-  """str: A string identifier of a specific track, e.g. a UUID"""
+  # # TODO dump this? ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  # track_id = attr.ib(default='', type='str')
+  # """str: A string identifier of a specific track, e.g. a UUID"""
 
   sel_datums = attr.ib(
                 default=[], type=typing.List[DatumSelection],

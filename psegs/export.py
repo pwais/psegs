@@ -1,4 +1,7 @@
-# Copyright 2022 Maintainers of PSegs
+#!/usr/bin/env python3
+# vim: tabstop=2 shiftwidth=2 expandtab
+
+# Copyright 2021 Maintainers of PSegs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,18 +15,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-BROWSER_DESC = """
-browser - A script (and library) providing basic browsing functionality for
-available PSegs data
+DESC = """
+seg2html.py -- A library module of tools (as well as a script) to convert
+PSegs segments to HTML visualizations.  Run this script in the PSegs dockerized
+environment; FMI see ./psegs-util --help in the PSegs project.
 
-## Examples
+## Example
 
-Show all known segments:
-python3 psegs/browser.py --list-segments
+python3 psegs/seg2html.py \
+  --segment-id=charuco-lowres-test \
+  --out-dir=./my_html_viz
 
-Show all known segments only for 'my-dataset'
-python3 psegs/browser.py --list-segments --dataset=my-dataset
-
+This will render only the segment named `charuco-lowres-test` to HTML and
+put rendered assets in ./my_html_viz .
 
 """
 
@@ -34,29 +38,27 @@ def create_arg_parser():
   import argparse
 
   parser = argparse.ArgumentParser(
-                    description=BROWSER_DESC,
+                    description=DESC,
                     formatter_class=argparse.RawDescriptionHelpFormatter)
 
   parser.add_argument(
-    '--list-segments', default=False, action='store_true',
-    help='List all known segments')
+    '--viz-all-segments', default=False, action='store_true',
+    help='Render all available segments')
 
   psx.configure_arg_parser(parser)
 
   return parser
 
-
 def main(args=None):
-  import pprint
-
   if args is None:
     parser = create_arg_parser()
     args = parser.parse_args()
   
-  if args.list_segments:
-    seg_uris = psx.get_matching_seg_uris(args)
-    strs = [str(u) for u in seg_uris]
-    pprint.pprint(strs)
+  
+  # hacks for now
+  
+
+
 
 if __name__ == '__main__':
-  main()
+  main(args=None)

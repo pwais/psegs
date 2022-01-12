@@ -57,5 +57,4 @@ class ProjConf(object):
   """Path: cache any PSegs-specific files in this temp directory; co-locate
   them to make introspection and deletion easier."""
 
-
 C = ProjConf()

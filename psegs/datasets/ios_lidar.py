@@ -52,7 +52,7 @@ from psegs import util
 from psegs.conf import C
 from psegs.datasets.idsutil import IDatasetUtil
 from psegs.datum.transform import Transform
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
 """
@@ -755,6 +755,8 @@ class Fixtures(object):
 
   @classmethod
   def threeDScannerApp_data_root(cls):
+    """A directory with 3DScannerApp scan sub-directories.  Subclasses
+    may override this to provide their own scans."""
     return cls.EXT_DATA_ROOT / 'threeDScannerApp_data'
 
   @classmethod
@@ -836,7 +838,7 @@ class Fixtures(object):
     #   util.log.info("(You can remove %s if needed)" % ext_root)
 
 
-class IOSLidarSDTable(StampedDatumTableBase):
+class IOSLidarSDTFactory(StampedDatumTableFactory):
   
   FIXTURES = Fixtures
 
