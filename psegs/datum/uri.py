@@ -278,7 +278,7 @@ class URI(object):
       URI: The constructed instance
     """
       
-    if isinstance(s, cls):
+    if isinstance(s, cls) or not bool(s):
       return s
 
     assert s.startswith(URI.PREFIX), "Missing %s in %s" % (URI.PREFIX, s)

@@ -89,6 +89,18 @@ class PointCloud(object):
     raise ValueError(
       "Colname %s not found in %s" % (colname, self.cloud_colnames))
 
+  def get_xyz_axes(self):
+    return [
+      self.get_col_idx('x'),
+      self.get_col_idx('y'),
+      self.get_col_idx('z'),
+    ]
+
+  def get_xyz_cloud(self):
+    cloud = self.get_cloud()
+    xyz = cloud[:, self.get_xyz_axes()]
+    return xyz
+
   # @
   # def _get_2d_debug_image(
       
@@ -182,7 +194,7 @@ class PointCloud(object):
     xyzrgb[:, :3] = cloud[:, :3]
 
     camera_images = camera_images or []
-    alpha = 1. / len(camera_images) if camera_images else 1.
+    #alpha = 1. / len(camera_images) if camera_images else 1.
     for i, ci in enumerate(camera_images):
       uvd = ci.project_ego_to_image(xyzrgb[:, :3], omit_offscreen=False)
       
@@ -208,6 +220,7 @@ class PointCloud(object):
   @staticmethod
   def get_ortho_debug_image(
         cloud,
+        user_colors=None,
         cuboids=None,
         camera_images=None,
         ego_to_sensor=None,
@@ -227,7 +240,7 @@ class PointCloud(object):
     Args:
       cloud (np.array): An nx3 array of points (in units of meters)
         draw this cloud.
-      colors (np.array): Optionally color each point using this nx3 array of
+      user_colors (np.array): Optionally color each point using this nx3 array of
         RGB colors (with color values in [0, 255]).  By default, color
         points based on distance from the origin.
       cuboids (List[:class:`~psegs.datum.cuboid.Cuboid`]): Optionally draw
@@ -296,8 +309,7 @@ class PointCloud(object):
       uvd[:, 2] = depth_values
 
     # Maybe paint the cloud
-    user_colors = None
-    if camera_images:
+    if camera_images and (user_colors is None):
       cloud = cloud[:, :3] # Ignore any non-position columns
       to_paint = (
         ego_to_sensor.get_inverse().apply(cloud).T
@@ -336,8 +348,8 @@ class PointCloud(object):
       box_uv = np.rint(box_uv).astype(np.int)
 
       from oarphpy.plotting import hash_to_rbg
-      color = pspl.color_to_opencv(
-        np.array(hash_to_rbg(c.category_name)))
+      # color = pspl.color_to_opencv(
+      #   np.array(hash_to_rbg(c.category_name)))
 
       pspl.draw_cuboid_xy_in_image(
         img,
@@ -373,7 +385,7 @@ class PointCloud(object):
     Returns:
       np.array: A HWC RGB debug image.
     """
-    cloud = self.get_cloud()
+    cloud = self.get_xyz_cloud()
     return PointCloud.get_ortho_debug_image(
               cloud,
               cuboids=cuboids,
@@ -413,7 +425,7 @@ class PointCloud(object):
     Returns:
       np.array: A HWC RGB debug image.
     """
-    cloud = self.get_cloud()
+    cloud = self.get_xyz_cloud()
     depth_values = np.linalg.norm(cloud[:, (0, 1)], axis=-1)
     return PointCloud.get_ortho_debug_image(
               cloud,
@@ -503,6 +515,38 @@ class PointCloud(object):
     #   #   1) #thickness
 
     # return img
+
+  def to_trimeshes_world_frame(
+          self,
+          period_meters=1.,
+          max_num_points=100_000):
+
+    import trimesh
+    from psegs.util.plotting import rgb_for_distance
+
+    T_ego_from_sensor = self.ego_to_sensor[self.sensor_name, 'ego']
+    T_world_from_ego = self.ego_pose['ego', 'world']
+    p2w = T_world_from_ego @ T_ego_from_sensor
+    w2p = p2w.get_inverse()
+
+    xyz = self.get_xyz_cloud()
+    xyz = w2p.apply(xyz).T
+    print('xyz', xyz.shape)
+    if xyz.shape[0] > max_num_points:
+      idx = np.random.choice(
+              np.arange(xyz.shape[0]), max_num_points)
+      xyz = xyz[idx, :]
+    
+    colors = rgb_for_distance(
+                np.linalg.norm(xyz, axis=1),
+                period_meters=period_meters)
+    colors = np.clip(colors, 0, 255).astype('uint8')
+    pc_tmesh = trimesh.points.PointCloud(
+                vertices=xyz,
+                colors=colors)
+    
+    return [pc_tmesh]
+      
 
 
   def to_html(self, cuboids=None, bev_debug=False, rv_debug=False):

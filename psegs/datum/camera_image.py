@@ -14,7 +14,6 @@
 
 import copy
 import math
-from os import confstr_names
 import typing
 
 import attr
@@ -195,6 +194,10 @@ class CameraImage(object):
         depth = full_img[:, :, i]
         return depth
     return None
+
+  def has_rgb(self):
+    missing = set(['r', 'g', 'b']) - set(self.channel_names)
+    return not missing
 
   def depth_image_to_point_cloud(self):
     """Create and return a datum.PointCloud instance if this image is
@@ -1185,7 +1188,99 @@ class CameraImage(object):
 
     return lines_plot
 
+  def to_trimeshes_world_frame(
+         self,
+         frustum_meters=.1,
+         include_thumnail=True,
+         thumb_height_pixels=128,
+         thumb_height_meters=0.1,
+         thumb_offset_meters=0.1,
+         thumb_thickness_meters=0.001,
+         thumb_alpha=0.75):
+    
+    import io
+    import trimesh
+    import shapely # Required for frustum marker
 
+    T_ego_from_sensor = self.ego_to_sensor[self.sensor_name, 'ego']
+    T_world_from_ego = self.ego_pose['ego', 'world']
+    w2c = T_world_from_ego @ T_ego_from_sensor
+    w2c = w2c.get_transformation_matrix(homogeneous=True)
+    
+    meshes = []
+
+    # Create camera marker
+    fov_h, fov_v = self.get_fov()
+    fov_h_deg = fov_h * 180. / math.pi
+    fov_v_deg = fov_v * 180. / math.pi
+
+    cam = trimesh.creation.camera_marker(
+                  trimesh.scene.Camera(
+                      fov=(fov_h_deg, fov_v_deg)),
+                  marker_height=frustum_meters) # Actually also frustum depth
+    cam[1].colors = [[.5, .5, .5, 1.]] * 5
+      # Actually frustum color
+
+    for m in cam:
+      m.apply_transform(w2c)
+      meshes.append(m)
+
+    if include_thumnail:
+      # Create the thumbnail image and texture
+      from PIL import Image
+      import imageio
+      import cv2
+
+      debug = self.image
+      debug = debug.astype('uint8')
+      
+      h = thumb_height_pixels
+      aspect = debug.shape[1] / debug.shape[0]
+      w = int(aspect * h)
+
+      debug = cv2.resize(debug, (w, h))
+      
+      buf = io.BytesIO()
+      imageio.imwrite(buf, debug, format='jpg', quality=75)
+      buf.seek(0)
+      pil_img = Image.open(buf)
+      thumb_material = trimesh.visual.material.PBRMaterial(
+                    baseColorTexture=pil_img.copy(),
+                    baseColorFactor=[255, 255, 255, int(255 * thumb_alpha)],
+                    alphaMode="BLEND",
+                    alphaCutoff=0.01)
+      
+      # Create thumnail mesh
+      thumb_h = thumb_height_meters
+      thumb_w = aspect * thumb_h
+      thumb_RT = np.eye(4, 4)
+      thumb_RT[2, 3] -= thumb_offset_meters
+      thumb_mesh = trimesh.creation.box(
+                      extents=[thumb_w, thumb_h, thumb_thickness_meters],
+                      transform=thumb_RT)
+
+      thumb_mesh.visual.material = thumb_material
+      thumb_mesh.visual.uv = np.zeros((len(thumb_mesh.vertices), 2))
+
+      # -z face
+      thumb_mesh.visual.uv[0] = [0, 1] # include a ud flip
+      thumb_mesh.visual.uv[4] = [1, 1]
+      thumb_mesh.visual.uv[2] = [0, 0]
+      thumb_mesh.visual.uv[6] = [1, 0]
+
+      # +z face
+      thumb_mesh.visual.uv[1] = [0, 1] # include a ud flip
+      thumb_mesh.visual.uv[5] = [1, 1]
+      thumb_mesh.visual.uv[3] = [0, 0]
+      thumb_mesh.visual.uv[7] = [1, 0]
+
+      thumb_mesh.apply_transform(w2c)
+      meshes.append(thumb_mesh)
+  
+    return meshes
+
+
+# show_html(html)
 
 # import numpy as np
 # import plotly.graph_objects as go

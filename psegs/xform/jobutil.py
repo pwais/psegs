@@ -52,6 +52,9 @@ def configure_arg_parser(parser=None):
     help='Select only this segment. Use --dataset and/or --split if you need '
          'to distinguish segments with the same name.')
   segex_sel_group.add_argument(
+    '--segment-ids-with', default='',
+    help='Select only segment IDs that contain this string.')
+  segex_sel_group.add_argument(
     '--dataset', default='',
     help='Restrict to only this dataset')
   segex_sel_group.add_argument(
@@ -75,6 +78,11 @@ def get_matching_seg_uris(args):
     seg_uris = [
       suri for suri in seg_uris
       if suri.segment_id == args.segment_id
+    ]
+  if args.segment_ids_with:
+    seg_uris = [
+      suri for suri in seg_uris
+      if args.segment_ids_with in suri.segment_id
     ]
   if args.dataset:
     seg_uris = [

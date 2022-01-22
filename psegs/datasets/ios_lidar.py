@@ -51,7 +51,6 @@ from psegs import datum
 from psegs import util
 from psegs.conf import C
 from psegs.datasets.idsutil import IDatasetUtil
-from psegs.datum.transform import Transform
 from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
@@ -394,11 +393,11 @@ def threeDScannerApp_create_point_cloud_from_mesh(
     'threeDScannerApp.scan_dir': os.path.basename(scan_dir),
   }
 
-  # The meshes are in the world frame
+  # The meshes are in the world frame; provide identity transform(s)
   ego_to_sensor = datum.Transform(
-            src_frame='world',
+            src_frame='ego',
             dest_frame=sensor_name)
-  ego_pose = Transform(src_frame='ego', dest_frame='world')
+  ego_pose = datum.Transform(src_frame='ego', dest_frame='world')
   
   def _get_cloud(mesh_path):
     import open3d as o3d
@@ -888,6 +887,8 @@ class IOSLidarSDTFactory(StampedDatumTableFactory):
     ## ... now build Datum RDDs ...
     URIS_PER_CHUNK = os.cpu_count() * 128
     uris = uri_rdd.collect()
+    assert len(uris) > 0, \
+      "Broken scan(s) ? No URIS for segments %s" % (seg_uris,)
     util.log.info("... creating datums for %s URIs." % len(uris))
 
     datum_rdds = []

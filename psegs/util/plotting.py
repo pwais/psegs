@@ -997,7 +997,7 @@ def sample_to_html(
     full_html = PLOTLY_INIT_HTML + '<br />' + full_html
 
   util.log.info(
-    "... completed report is %s MBytes ..." % (1e-6 * len(full_html)))
+    "... completed report is %.2f MBytes ..." % (1e-6 * len(full_html)))
   return full_html
 
 

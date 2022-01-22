@@ -58,12 +58,12 @@ def save_htmls(
   segs = seg_uris or sdtables
   assert segs, "Need either Segment URIs or StampedDatumTables"
 
-  util.log.info(\
+  util.log.info(
     f"Saving to {out_dir}. Have {len(segs)} segments to HTMLize ...")
+  segs = segs[155:]
   pbar = tqdm(segs)
   total_bytes = 0
   for seg in pbar:
-    
     ## Fetch segment data
     if not isinstance(seg, table.StampedDatumTable):
       if isinstance(seg, six.string_types):
@@ -110,11 +110,11 @@ def create_arg_parser():
                     formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument(
     '--out-dir', default=os.path.abspath('./my_html_viz'),
-    help='Place all rendered assets in this directory [default %(default)s].')
+    help='Place all computed assets in this directory [default %(default)s].')
   parser.add_argument(
     '--partition-by-segment', default=False, action='store_true',
     help='Save rendered assets in a directory tree partitioned by dataset, '
-         'split, and segment_id (as is done for Parquet data).')
+         'split, and segment_id (as is done for PSegs StampedDatumTables).')
 
   psx.configure_arg_parser(parser)
 

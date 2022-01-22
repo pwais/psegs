@@ -66,19 +66,21 @@ class StampedDatumTable(object):
     if self._sample:
       return self._sample
     elif self._spark_df:
-      datum_rdd = self._sd_df_to_rdd(self._spark_df)
+      datum_rdd = self.datum_df_to_datum_rdd(self._spark_df)
       return Sample(datums=datum_rdd.collect())
     else:
       return Sample()
 
-  def to_datum_rdd(self, spark):
+  def to_datum_rdd(self, spark=None):
     if self._sample:
-      return spark.sparkContext.parallelize(
+      with spark.Spark.sess(spark) as spark:
+        return spark.sparkContext.parallelize(
                     self._sample.datums, numSlices=len(self._sample.datums))
     elif self._spark_df:
-      return self._sd_df_to_rdd(self._spark_df)
+      return self.datum_df_to_datum_rdd(self._spark_df)
     else:
-      spark.sparkContext.parallelize([])
+      with spark.Spark.sess(spark) as spark:
+        return spark.sparkContext.parallelize([])
   
 
   ## Accessors
@@ -107,7 +109,7 @@ class StampedDatumTable(object):
     with Spark.sess(spark) as spark:
       datums = cls._get_segment_datum_rdd_or_df(spark, uri)
       if hasattr(datums, 'rdd'):
-        datums = cls.sd_df_to_rdd(datums)
+        datums = cls.datum_df_to_datum_rdd(datums)
       return Sample(uri=uri, datums=datums.collect())
 
   
@@ -180,7 +182,7 @@ class StampedDatumTable(object):
     return df
 
   @classmethod
-  def _sd_df_to_rdd(cls, sd_df):
+  def datum_df_to_datum_rdd(cls, sd_df):
     return sd_df.rdd.map(cls.sd_from_row)
   
 

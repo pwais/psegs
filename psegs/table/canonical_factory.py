@@ -47,7 +47,8 @@ if True:
         # Room for other recording sources ...
 
       BROKEN_SEGMENTS = (
-        'Untitled Scan', 'amiot-crow-bar', 'headlands-downhill-2'
+        'Untitled Scan', 'amiot-crow-bar', 'headlands-downhill-2',
+        'headlands-long-descent', 'san-anselmo-rock-fort-broken',
       )
       seg_uris = [
         suri for suri in seg_uris
