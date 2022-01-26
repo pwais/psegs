@@ -536,17 +536,19 @@ def sample_to_html(
     raise ValueError("Don't know what to do with %s" % (sample,))
 
   
-  sd_df.persist().createOrReplaceTempView('sd_df')
+  sd_df = sd_df.repartition('uri.timestamp')
+  sd_df = sd_df.persist()
+  sd_df.createOrReplaceTempView('sd_df')
   reports = []
 
 
-  util.log.info("Rendering summaries %s datums ..." % sd_df.count())
+  util.log.info("Rendering summaries for %s datums ..." % sd_df.count())
 
   def _get_table_html(sql):
     res = spark.sql(sql)
     pdf = res.toPandas()
     util.log.info('\n%s\n' % str(pdf))
-    pdf.style.set_precision(2)
+    pdf.style.format(precision=2)
     pdf.style.hide_index()
     css = """
         <style type="text/css" >
@@ -763,6 +765,7 @@ def sample_to_html(
                         ORDER BY RAND(1337)
                         LIMIT {videos_n_frames}
                     """.format(topic=topic, videos_n_frames=videos_n_frames))
+      sample_sd_df = sample_sd_df.repartition('uri.timestamp')
 
       ##################################################
       ## We want to adapt period_meters for depth topics
@@ -774,7 +777,7 @@ def sample_to_html(
           if depth is None:
               return 0
           else:
-              return np.percentile(depth, 0.9)
+              return np.percentile(depth[depth > 0], 0.9)
         depth_top_90th = sample_sd_df.rdd.map(_get_depth_90th).max()
         if depth_top_90th <= 0.1:
             period_meters = 0.005
@@ -796,12 +799,13 @@ def sample_to_html(
         target_width = int(aspect * target_height)
         
         # Pad the width a little to make ffmpeg most efficient
+        # (and complain less)
         if target_width % 16 != 0:
             target_width += 16 - (target_width % 16)
         image = cv2.resize(image, (target_width, target_height))
 
         return row.uri.timestamp, image
-      
+
       iter_t_image = sample_sd_df.rdd.map(_to_t_debug_image).collect()
       images = [
         image
@@ -867,6 +871,7 @@ def sample_to_html(
                                 LIMIT {clouds_n_clouds}
                             """.format(
                               topic=topic, clouds_n_clouds=clouds_n_clouds))
+      orig_sample_sd_df = orig_sample_sd_df.repartition('uri.timestamp')
 
       if topic in depth_camera_topics:
         def _make_pc(row):

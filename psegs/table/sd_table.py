@@ -16,7 +16,7 @@
 from psegs.datum import URI
 from psegs.datum.stamped_datum import Sample
 from psegs.datum.stamped_datum import STAMPED_DATUM_PROTO
-
+from psegs.spark import Spark
 
 class StampedDatumTable(object):
 
@@ -42,25 +42,27 @@ class StampedDatumTable(object):
 
   @classmethod
   def from_datum_rdd(self, spark, datum_rdd):
-    spark_df = self._sd_rdd_to_sd_df(spark, datum_rdd)
-    return self.from_spark_df(spark_df)
+    with Spark.sess(spark) as spark:
+      spark_df = self._sd_rdd_to_sd_df(spark, datum_rdd)
+      spark_df = spark_df.persist()
+      return self.from_spark_df(spark_df)
 
 
   ## StampedDatumTable -> Datums
 
   def to_spark_df(self, spark=None):
     if self._sample:
-      assert spark is not None
-      datum_rdd = spark.sparkContext.parallelize(
-                    self._sample.datums, numSlices=len(self._sample.datums))
-      self._spark_df = self._sd_rdd_to_sd_df(spark, datum_rdd)
+      with Spark.sess(spark) as spark:
+        datum_rdd = spark.sparkContext.parallelize(
+                      self._sample.datums, numSlices=len(self._sample.datums))
+        self._spark_df = self._sd_rdd_to_sd_df(spark, datum_rdd)
     elif self._spark_df:
       return self._spark_df
     else:
       # Create an empty Spark DF
-      assert spark is not None
-      self._spark_df = self._sd_rdd_to_sd_df(spark, [])
-      return self._spark_df
+      with Spark.sess(spark) as spark:
+        self._spark_df = self._sd_rdd_to_sd_df(spark, [])
+        return self._spark_df
 
   def to_sample(self):
     if self._sample:
@@ -73,13 +75,13 @@ class StampedDatumTable(object):
 
   def to_datum_rdd(self, spark=None):
     if self._sample:
-      with spark.Spark.sess(spark) as spark:
+      with Spark.sess(spark) as spark:
         return spark.sparkContext.parallelize(
                     self._sample.datums, numSlices=len(self._sample.datums))
     elif self._spark_df:
       return self.datum_df_to_datum_rdd(self._spark_df)
     else:
-      with spark.Spark.sess(spark) as spark:
+      with Spark.sess(spark) as spark:
         return spark.sparkContext.parallelize([])
   
 
@@ -143,6 +145,33 @@ class StampedDatumTable(object):
                 spark,
                 self.to_spark_df(spark=spark),
                 **html_kwargs)
+
+
+  ## I/O
+
+  def save_parquet(
+        self,
+        dest_dir,
+        partition=True,
+        mode='overwrite',
+        compression='snappy',
+        spark=None,
+        num_partitions=-1):
+
+    save_opts = dict(
+      path=str(dest_dir),
+      compression=compression,
+      mode=mode,
+    )
+
+    spark_df = self.to_spark_df(spark=spark)
+    if partition:
+      for k in self.PARTITION_KEYS:
+        spark_df = spark_df.withColumn(k, spark_df['uri.' + k])
+      save_opts['partitionBy'] = self.PARTITION_KEYS
+    if num_partitions > 0:
+      spark_df = spark_df.repartition(num_partitions)
+    spark_df.write.save(**save_opts)
 
 
   ## StampedDatum <-> Table Rows

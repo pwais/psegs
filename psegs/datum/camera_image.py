@@ -50,7 +50,7 @@ def depth_to_uvcs(hwc_arr):
   axes = list(range(2 + c))
   axes[0] = 1
   axes[1] = 0
-  uvc = vuc[:, axes]  
+  uvc = vuc[:, axes]
   return uvc
 
 
@@ -228,10 +228,12 @@ class CameraImage(object):
         fx, cx, fy, cy = intrinsics
         depth_image = image_factory()
         depth_image = depth_image[:, :, axes]
-        # import cv2
-        # depth_image = cv2.resize(depth_image, (1440, 1920))
-        # print('hacks')
         uvdcs = depth_to_uvcs(depth_image)
+        
+        # Ignore depth 0
+        idx = np.where(uvdcs[:, 2] > 0)
+        uvdcs = uvdcs[idx[0]]
+        
         xyzcs = uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy)
         return xyzcs
       
@@ -242,6 +244,11 @@ class CameraImage(object):
       depth_image = np.copy(self.image)
       depth_image = depth_image[:, :, axes]
       uvdcs = depth_to_uvcs(depth_image)
+
+      # Ignore depth 0
+      idx = np.where(uvdcs[:, 2] > 0)
+      uvdcs = uvdcs[idx[0]]
+
       cloud = uvdcs_to_xyzcs(uvdcs, fx, cx, fy, cy)
       cloud_factory = None
 
@@ -279,6 +286,10 @@ class CameraImage(object):
       assert depth is not None, (self.channel_names, self.image.shape)
       debug_img = np.zeros((self.height, self.width, 3))
       uvd = depth_to_uvcs(depth.reshape([self.height, self.width, 1]))
+
+      # Ignore depth 0
+      idx = np.where(uvd[:, 2] > 0)
+      uvd = uvd[idx[0]]
 
       from psegs.util.plotting import draw_xy_depth_in_image
       draw_xy_depth_in_image(

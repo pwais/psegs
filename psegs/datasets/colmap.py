@@ -54,21 +54,14 @@ def colmap_recon_create_world_cloud(
     xyzrgbErrViz[i, 7] = info.track.length()
   
   # The points are in the world frame; provide identity transform(s)
-  ego_to_sensor = datum.Transform(
-            src_frame='ego',
-            dest_frame=sensor_name)
-  ego_pose = datum.Transform(src_frame='ego', dest_frame='world')
-
-  pc = datum.PointCloud(
+  pc = datum.PointCloud.create_world_frame_cloud(
           sensor_name=sensor_name,
           cloud=xyzrgbErrViz,
           cloud_colnames=[
             'x', 'y', 'z',
             'r', 'g', 'b',
             'colmap_err', 'num_views_visible',
-          ],
-          ego_to_sensor=ego_to_sensor,
-          ego_pose=ego_pose)
+          ])
   return pc
 
 
@@ -134,6 +127,7 @@ def colmap_recon_create_camera_image(
                 translation=T,
                 src_frame='world',
                 dest_frame='ego')
+                  # COLMAP provides world-to-camera transforms
 
   if create_depth_image:
     
@@ -151,7 +145,7 @@ def colmap_recon_create_camera_image(
       [ptid_to_info[p2d.point3D_id].track.length() for p2d in p2ds]
     )
     
-    dev = np.zeros((h, w, 3))
+    dev = np.zeros((h, w, 3), dtype=np.float32)
     channel_names = ['depth', 'colmap_err', 'num_views_visible']
     uu, vv = uv[:, 0].astype(int), uv[:, 1].astype(int)
       # TODO: bilinear interpolation ? 
@@ -208,8 +202,7 @@ def colmap_recon_create_camera_image(
 def load_array(path):
   """Listed as a package-level function to improve clarity / portability."""
   import numpy as np
-  with open(path, 'rb') as f:
-    return np.load(f)
+  return np.load(path)
 
 
 class COLMAP_SDTFactory(StampedDatumTableFactory):
@@ -258,6 +251,10 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     return cls.PSEGS_ASSETS_DIR / 'psegs_imgpath_to_uri.json'
 
   @classmethod
+  def psegs_npy_cache_dir(cls):
+    return cls.PSEGS_ASSETS_DIR / 'npy_cached'
+
+  @classmethod
   def create_imgpath_to_uri_and_images(cls, sd_table, only_topics=None):
     
     # Select the datums to export
@@ -267,7 +264,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
       sdf = sdf.where(sdf['uri.topic'].isin(only_topics))
     util.log.info(f"Selected {sdf.count()} input images ...")
     
-    datum_rdd = sd_table.datum_df_to_datum_rdd(selected_df)
+    datum_rdd = sd_table.datum_df_to_datum_rdd(sdf)
     cls.COLMAP_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     def save_image(stamped_datum):
       import imageio
@@ -275,7 +272,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
       if not ci.has_rgb(): # TODO: can we support grey?
         return False
       fname = (
-        str(stamped_datum.uri.topic) + "_" + 
+        str(stamped_datum.uri.topic) + "." + 
         str(stamped_datum.uri.timestamp) + ".png")
       dest = cls.COLMAP_IMAGES_DIR / fname
       image = ci.image 
@@ -285,7 +282,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     uri_paths = datum_rdd.map(save_image).filter(lambda x: x).collect()
     util.log.info(f"... saved {len(uri_paths)} input images ...")
     data_path = cls.psegs_imgpath_to_uri_path()
-    with open(data_path, 'w+') as f:
+    with open(data_path, 'w') as f:
       json.dump(uri_paths, f, indent=2)
     util.log.info(f"... saved PSegs uri<->image mapping to f{data_path}")
   
@@ -294,10 +291,10 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     data_path = cls.psegs_imgpath_to_uri_path()
     if data_path.exists():
       with open(data_path) as f:
-        imgpath_to_uri = json.read(f)
-      imgpath_to_uri = dict(
+        uri_paths = json.load(f)
+      return dict(
         (p, datum.URI.from_str(suri))
-        for p, suri in sorted(imgpath_to_uri.items()))
+        for suri, p in sorted(uri_paths))
     else:
       # Create an anonymous segment if no prior PSegs data available
       base_uri = datum.URI(
@@ -393,16 +390,39 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
   def create_input_images_and_psegs_assets_for_colmap(
         cls,
         sd_table,
-        colmap_recon_dir,
         colmap_input_images_dir,
         psegs_assets_dir):
     
     class MyCOLMAP_SDTFactory(cls):
-      COLMAP_RECON_DIR = colmap_recon_dir
+      # COLMAP_RECON_DIR not needed
       COLMAP_IMAGES_DIR = colmap_input_images_dir
       PSEGS_ASSETS_DIR = psegs_assets_dir
 
     MyCOLMAP_SDTFactory.create_imgpath_to_uri_and_images(sd_table)
+
+  @classmethod
+  def get_reconstruction_sd_table(
+        cls,
+        use_np_assets=True,
+        force_recompute_np_assets=False,
+        spark=None):
+    
+    seg_uri = cls.get_segment_uri()
+    if not seg_uri:
+      return None
+    
+    sdt = cls.get_segment_sd_table(seg_uri, spark=spark)
+    if use_np_assets:
+      cls.psegs_npy_cache_dir().mkdir(parents=True, exist_ok=True)
+      datum_rdd = sdt.to_datum_rdd(spark=spark)
+      datum_rdd = datum_rdd.map(
+                      lambda sd: 
+                        cls.to_lazy_datum(
+                          sd, force_recompute=force_recompute_np_assets))
+      return StampedDatumTable.from_datum_rdd(spark, datum_rdd)
+    else:
+      return sdt
+
 
   @classmethod
   def create_sd_table_for_reconstruction(
@@ -419,22 +439,10 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
       COLMAP_IMAGES_DIR = colmap_input_images_dir
       PSEGS_ASSETS_DIR = psegs_assets_dir
     
-    seg_uri = MyCOLMAP_SDTFactory.get_segment_uri()
-    if not seg_uri:
-      return None
-    
-    sdt = MyCOLMAP_SDTFactory.get_segment_sd_table(
-                    seg_uri, spark=spark)
-    if use_np_assets:
-      datum_rdd = sdt.to_datum_rdd(spark=spark)
-      datum_rdd = datum_rdd.map(
-                      lambda sd: 
-                        MyCOLMAP_SDTFactory.to_lazy_datum(
-                          sd, force_recompute=force_recompute_np_assets))
-      datum_rdd = datum_rdd.cache() # Uses much less memory
-      return StampedDatumTable.from_datum_rdd(spark, datum_rdd)
-    else:
-      return sdt
+    return MyCOLMAP_SDTFactory.get_reconstruction_sd_table(
+              use_np_assets=use_np_assets,
+              force_recompute_np_assets=force_recompute_np_assets,
+              spark=spark)
 
 
   @classmethod
@@ -447,22 +455,23 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
         return sd
       
       depth_npy_fname = f"{sd.uri.topic}_{sd.uri.timestamp}_depth.npy"
-      depth_npy_path = cls.PSEGS_ASSETS_DIR / depth_npy_fname
-      if force_recompute or not depth_npy_path.exists():
+      depth_npy_path = cls.psegs_npy_cache_dir() / depth_npy_fname
+      if force_recompute or (not depth_npy_path.exists()):
         with open(depth_npy_path, 'wb') as f:
-          np.save(f, ci.image)
+          np.savez_compressed(f, image=ci.image)
+            # Lots of zeros; compression helps
       ci.image_factory = CloudpickeledCallable(
-        lambda: load_array(depth_npy_path))
+        lambda: load_array(depth_npy_path)['image'])
       return sd
     
     elif sd.point_cloud:
       pc = sd.point_cloud
 
       cloud_npy_fname = f"{sd.uri.topic}_{sd.uri.timestamp}_cloud.npy"
-      cloud_npy_path = cls.PSEGS_ASSETS_DIR / cloud_npy_fname
-      if force_recompute or not cloud_npy_path.exists():
+      cloud_npy_path = cls.psegs_npy_cache_dir() / cloud_npy_fname
+      if force_recompute or (not cloud_npy_path.exists()):
         with open(cloud_npy_path, 'wb') as f:
-          np.save(f, pc.get_cloud())
+          np.save(f, pc.get_cloud()) # Compression doesn't help
         pc.cloud = None
       pc.cloud_factory = CloudpickeledCallable(
         lambda: load_array(cloud_npy_path))

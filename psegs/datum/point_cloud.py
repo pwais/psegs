@@ -74,6 +74,18 @@ class PointCloud(object):
   def __eq__(self, other):
     return misc.attrs_eq(self, other)
 
+  @classmethod
+  def create_world_frame_cloud(cls, cloud, sensor_name='', **kwargs):
+    sensor_name = sensor_name or 'world_frame_cloud'
+    ego_to_sensor = Transform(src_frame=sensor_name, dest_frame='ego')
+    ego_pose = Transform(src_frame='ego', dest_frame='world')
+    return cls(
+            cloud=cloud,
+            sensor_name=sensor_name,
+            ego_to_sensor=ego_to_sensor,
+            ego_pose=ego_pose,
+            **kwargs)
+
   def get_cloud(self):
     if self.cloud is not None:
       return self.cloud
