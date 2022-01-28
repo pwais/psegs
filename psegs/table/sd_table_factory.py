@@ -119,7 +119,7 @@ class StampedDatumTableFactory(object):
   # @classmethod
   # def as_datum_rdd(cls, spark, df=None):
   #   df = df or cls.as_df(spark)
-  #   return df.rdd.map(StampedDatumTableBase.from_row)
+  #   return df.rdd.map(StampedDatumTableFactory.from_row)
 
   # @classmethod
   # def get_segment_datum_rdd(cls, spark, segment_uri, time_ordered=True):
@@ -145,7 +145,7 @@ class StampedDatumTableFactory(object):
   #     seg_df = seg_df.persist()
   #     if time_ordered:
   #       seg_df = seg_df.orderBy('uri.timestamp')
-  #     return seg_df.rdd.map(StampedDatumTableBase.from_row)
+  #     return seg_df.rdd.map(StampedDatumTableFactory.from_row)
 
   @classmethod
   def _get_segment_datum_rdd_or_df(cls, spark, segment_uri):
@@ -239,7 +239,7 @@ class StampedDatumTableFactory(object):
   #     seg_df = seg_df.persist()
   #     if time_ordered:
   #       seg_df = seg_df.orderBy('uri.timestamp')
-  #     return seg_df.rdd.map(StampedDatumTableBase.from_row)
+  #     return seg_df.rdd.map(StampedDatumTableFactory.from_row)
 
   @staticmethod
   def to_row(sd):
@@ -249,7 +249,7 @@ class StampedDatumTableFactory(object):
     row = row.asDict()
 
     # TODO: ditch these partition things and do it in the df writer?
-    for k in StampedDatumTableBase.PARTITION_KEYS:
+    for k in StampedDatumTableFactory.PARTITION_KEYS:
       row[k] = getattr(sd.uri, k)
     return Row(**row)
 
@@ -293,7 +293,7 @@ class StampedDatumTableFactory(object):
   def table_schema(cls):
     """ comments ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
     if not hasattr(cls, '_schema'):
-      to_row = StampedDatumTableBase.to_row
+      to_row = StampedDatumTableFactory.to_row
       cls._schema = RowAdapter.to_schema(to_row(STAMPED_DATUM_PROTO))
     return cls._schema
 
@@ -301,7 +301,7 @@ class StampedDatumTableFactory(object):
   def _sd_rdd_to_sd_df(cls, spark, sd_rdd):
     """ comments ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
     
-    row_rdd = sd_rdd.map(StampedDatumTableBase.to_row)
+    row_rdd = sd_rdd.map(StampedDatumTableFactory.to_row)
     df = spark.createDataFrame(row_rdd, schema=cls.table_schema())
     return df
 

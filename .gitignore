@@ -14,3 +14,4 @@ external_test_fixtures
 notebooks/.ipynb_checkpoints
 notebooks/sparkmonitor_kernelextension.log
 notebooks/pybullet_debug_out.mp4
+psegs_test

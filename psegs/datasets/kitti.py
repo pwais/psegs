@@ -27,7 +27,7 @@ from psegs import datum
 from psegs.conf import C
 from psegs.datasets.idsutil import IDatasetUtil
 from psegs.datum.transform import Transform
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 from psegs.util import misc
 
 
@@ -1050,7 +1050,7 @@ def kitti_tracking_file_to_uri(archive_name, entryname):
   return uri
 
 
-class KITTISDTable(StampedDatumTableBase):
+class KITTISDTable(StampedDatumTableFactory):
   
   FIXTURES = Fixtures
 

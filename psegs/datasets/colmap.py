@@ -395,8 +395,8 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     
     class MyCOLMAP_SDTFactory(cls):
       # COLMAP_RECON_DIR not needed
-      COLMAP_IMAGES_DIR = colmap_input_images_dir
-      PSEGS_ASSETS_DIR = psegs_assets_dir
+      COLMAP_IMAGES_DIR = Path(colmap_input_images_dir)
+      PSEGS_ASSETS_DIR = Path(psegs_assets_dir)
 
     MyCOLMAP_SDTFactory.create_imgpath_to_uri_and_images(sd_table)
 
@@ -435,9 +435,9 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
         force_recompute_np_assets=False):
     
     class MyCOLMAP_SDTFactory(cls):
-      COLMAP_RECON_DIR = colmap_recon_dir
-      COLMAP_IMAGES_DIR = colmap_input_images_dir
-      PSEGS_ASSETS_DIR = psegs_assets_dir
+      COLMAP_RECON_DIR = Path(colmap_recon_dir)
+      COLMAP_IMAGES_DIR = Path(colmap_input_images_dir)
+      PSEGS_ASSETS_DIR = Path(psegs_assets_dir)
     
     return MyCOLMAP_SDTFactory.get_reconstruction_sd_table(
               use_np_assets=use_np_assets,

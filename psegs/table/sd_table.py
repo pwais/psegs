@@ -165,6 +165,7 @@ class StampedDatumTable(object):
     )
 
     spark_df = self.to_spark_df(spark=spark)
+    spark_df = spark_df.persist()
     if partition:
       for k in self.PARTITION_KEYS:
         spark_df = spark_df.withColumn(k, spark_df['uri.' + k])
@@ -172,6 +173,7 @@ class StampedDatumTable(object):
     if num_partitions > 0:
       spark_df = spark_df.repartition(num_partitions)
     spark_df.write.save(**save_opts)
+    spark_df.unpersist()
 
 
   ## StampedDatum <-> Table Rows

@@ -40,9 +40,10 @@ class Spark(spark.SessionFactory):
       # Needed for notebook-based development; FMI see oarphpy.spark.NBSpark
 
     'spark.python.worker.reuse': False,
-    'spark.blockManager.port': '5555',
+    # 'spark.blockManager.port': '5555',
       # Helps reduce memory leaks related to matplotlib / tensorflow / etc
-
+    # 'spark.driver.extraJavaOptions': '-Dlog4j.logger.org.apache.spark.api.python.PythonGatewayServer=DEBUG',
+    # 'spark.driver.extraJavaOptions': '-Dlog4jspark.root.logger=DEBUG,console',
     'spark.sql.files.maxPartitionBytes': int(8 * 1e6),
       # Partitions need to be big enough to potentially fit
       # point clouds / images

@@ -20,7 +20,7 @@ from psegs.datum.point_cloud import PointCloud
 from psegs.datum.stamped_datum import StampedDatum
 from psegs.datum.transform import Transform
 from psegs.datum.uri import URI
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 import test.testutil as testutil
 
@@ -50,7 +50,7 @@ def test_seg_to_uri_str():
     to_seg_uri_str(object())
 
 
-class TestTableBase(StampedDatumTableBase):
+class TestFactoryBase(StampedDatumTableFactory):
   TEST_DATUMS = []
 
   @classmethod
@@ -72,7 +72,7 @@ class TestTableBase(StampedDatumTableBase):
     suris_strs = set(str(sd.uri.to_segment_uri()) for sd in cls.TEST_DATUMS)
     return sorted(suris_strs)
 
-class T1(TestTableBase):
+class T1(TestFactoryBase):
   BASE_URI = URI(dataset='t1', split='s')
   TEST_DATUMS = [
     StampedDatum(
@@ -94,7 +94,7 @@ class T1(TestTableBase):
       camera_image=CameraImage(sensor_name='c', timestamp=2)),
   ]
 
-class T2(TestTableBase):
+class T2(TestFactoryBase):
   BASE_URI = URI(dataset='t2', split='s')
   TEST_DATUMS = [
     StampedDatum(
@@ -107,7 +107,7 @@ class T2(TestTableBase):
       camera_image=CameraImage(sensor_name='c1', timestamp=1)),
   ]
 
-class T3(TestTableBase):
+class T3(TestFactoryBase):
   TEST_DATUMS = ([
       StampedDatum(
         uri=URI(dataset='t3', split='s',

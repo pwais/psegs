@@ -25,7 +25,7 @@ from psegs import datum
 from psegs import util
 from psegs.conf import C
 from psegs.spark import Spark
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table import StampedDatumTableFactory
 
 import numpy as np
 
@@ -3514,10 +3514,10 @@ class KITTI360_KITTIFused_FusedFlowDFFactory(FusedFlowDFFactory):
 
 ### NuScenes
 
-from psegs.datasets.nuscenes import NuscStampedDatumTableBase
+from psegs.datasets.nuscenes import NuscStampedDatumTableFactory
 # from psegs.datasets.nuscenes import NuscStampedDatumTableLabelsAllFrames
 
-class NuscFlowSDTable(NuscStampedDatumTableBase):
+class NuscFlowSDTable(NuscStampedDatumTableFactory):
   SENSORS_KEYFRAMES_ONLY = False
   LABELS_KEYFRAMES_ONLY = False
   INCLUDE_LIDARSEG = False

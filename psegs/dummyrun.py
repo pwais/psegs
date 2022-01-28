@@ -59,7 +59,7 @@ from psegs.exp.fused_lidar_flow import KITTI360_KITTIFused_SampleDFFactory
 
 # class NuscKFOnlyLCCDFFactory(TaskLidarCuboidCameraDFFactory):
     
-#     SRC_SD_TABLE = NuscStampedDatumTableBase
+#     SRC_SD_TABLE = NuscStampedDatumTableFactory
     
 #     @classmethod
 #     def build_df_for_segment(cls, spark, segment_uri):

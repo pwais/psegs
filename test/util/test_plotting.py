@@ -23,7 +23,7 @@ from test import testutil
 
 
 def check_img(actual, fixture_name):
-  FIXTURES_DIR = Path(__file__).parent / '../fixtures'
+  FIXTURES_DIR = testutil.test_fixtures_dir()
   OUTPUT_DIR = testutil.test_tempdir('test_plotting')
   oputil.mkdir(OUTPUT_DIR)
   

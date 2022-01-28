@@ -13,3 +13,8 @@
 # limitations under the License.
 
 
+from test import testutil
+
+def test_yay_yay():
+  with testutil.LocalSpark.sess() as spark:
+    pass

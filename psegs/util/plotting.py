@@ -548,7 +548,7 @@ def sample_to_html(
     res = spark.sql(sql)
     pdf = res.toPandas()
     util.log.info('\n%s\n' % str(pdf))
-    pdf.style.format(precision=2)
+    pdf.style.set_precision(2)
     pdf.style.hide_index()
     css = """
         <style type="text/css" >

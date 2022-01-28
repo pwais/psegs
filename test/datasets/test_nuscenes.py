@@ -135,7 +135,7 @@ def test_nuscenes_fused_lidar():
   samples = ['psegs://segment_id=scene-0594']
   suri = samples[0]
 
-  T = psnusc.NuscStampedDatumTableBase
+  T = psnusc.NuscStampedDatumTableFactory
   with testutil.LocalSpark.getOrCreate() as spark:
     datum_rdd = T.get_segment_datum_rdd(spark, suri)
     datum_rdd = datum_rdd.cache()
@@ -171,7 +171,7 @@ def test_nuscenes_fused_lidar():
 def test_nuscenes_create_sd():
   
   # SAMPLE_URIS below picked using:
-  # T = psnusc.NuscStampedDatumTableBase # with only keyframes!!!
+  # T = psnusc.NuscStampedDatumTableFactory # with only keyframes!!!
   # uris = T.iter_uris_for_segment('scene-0594') 
   # uris = [str(u) for u in sorted(uris)]
   # first_cuboid = None
@@ -211,7 +211,7 @@ def test_nuscenes_create_sd():
   ]
   SAMPLE_URIS = [datum.URI.from_str(s) for s in SAMPLE_URIS]
 
-  T = psnusc.NuscStampedDatumTableBase
+  T = psnusc.NuscStampedDatumTableFactory
   sample = datum.Sample(datums=[T.create_stamped_datum(u) for u in SAMPLE_URIS])
   testutil.check_sample_debug_images(sample, 'test_nuscenes_create_sd')
 
@@ -239,7 +239,7 @@ def test_nuscenes_yay():
   # with testutil.LocalSpark.getOrCreate() as spark:
   #   import random
   #   rand = random.Random(12)
-  #   T = psnusc.NuscStampedDatumTableBase
+  #   T = psnusc.NuscStampedDatumTableFactory
   #   suris = rand.sample(T.get_all_segment_uris(), 3)
   #   nusc_samples = []
   #   for suri in suris:
@@ -260,7 +260,7 @@ def test_nuscenes_yay():
 
   
   import imageio
-  T = psnusc.NuscStampedDatumTableBase
+  T = psnusc.NuscStampedDatumTableFactory
   with testutil.LocalSpark.getOrCreate() as spark:
     for suri in samples:
       sample = T.get_sample(suri, spark=spark)

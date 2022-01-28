@@ -324,7 +324,8 @@ def test_threeDScannerApp_sd_table():
   with testutil.LocalSpark.sess() as spark:
     suri = datum.URI.from_str(
       'psegs://dataset=psegs-ios-lidar-ext&split=threeDScannerApp_data&segment_id=charuco-test-fixture-lowres')
-    sd_df_actual = ios_lidar.IOSLidarSDTable.as_df(spark, force_compute=True, only_segments=[suri])
+    sdt = ios_lidar.IOSLidarSDTFactory.get_segment_sd_table(suri, spark=spark)
+    sd_df_actual = sdt.to_spark_df()
     
     testutil.check_stamped_datum_dfs_equal(
       spark,
@@ -336,7 +337,8 @@ def test_threeDScannerApp_sd_table():
 
     suri = datum.URI.from_str(
       'psegs://dataset=psegs-ios-lidar-ext&split=threeDScannerApp_data&segment_id=charuco-test-fixture-highres')
-    sd_df_actual = ios_lidar.IOSLidarSDTable.as_df(spark, force_compute=True, only_segments=[suri])
+    sdt = ios_lidar.IOSLidarSDTFactory.get_segment_sd_table(suri, spark=spark)
+    sd_df_actual = sdt.to_spark_df()
     
     testutil.check_stamped_datum_dfs_equal(
       spark,

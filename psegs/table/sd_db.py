@@ -18,7 +18,7 @@ import attr
 
 from psegs import util
 from psegs.datum.uri import URI
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 from psegs.datum.stamped_datum import Sample
 from psegs.datum.stamped_datum import StampedDatum
 
@@ -132,7 +132,7 @@ class StampedDatumDB(object):
       # Use the datum_df to get a fully-qualified segment_uri
       row = datum_df.select('uri').take(1)
       assert row, "Dataset for %s is empty" % suri
-      uri = StampedDatumTableBase.from_row(row[0].uri)
+      uri = StampedDatumTableFactory.from_row(row[0].uri)
       matching_seg = uri.to_segment_uri()
       self._segment_to_df[str(matching_seg)] = datum_df
       util.log.info("Added DF for %s" % matching_seg)
@@ -173,7 +173,7 @@ class StampedDatumDB(object):
       if ignore_unknown_tables:
         spark = spark or self._spark
         empty_df = spark.createDataFrame(
-                      [], schema=StampedDatumTableBase.table_schema())
+                      [], schema=StampedDatumTableFactory.table_schema())
         return empty_df
       else:
         raise NoKnownTable("No tables for segments: %s" % suris)
@@ -185,7 +185,7 @@ class StampedDatumDB(object):
   # def _add_datum_df(self, datum_df, seg_uri=None):
   #   if not seg_uri:
   #     row = datum_df.select('uri').take(1)
-  #     row = StampedDatumTableBase.from_row(row)
+  #     row = StampedDatumTableFactory.from_row(row)
   #     uri = row.uri
   #     seg_uri = uri.to_segment_uri()
     
@@ -270,7 +270,7 @@ class StampedDatumDB(object):
     uri = URI.from_str(uri)
     uris = uri.get_datum_uris() or [uri]
     datum_df = self.get_datum_df(uris=uris, spark=spark)
-    datum_rdd = StampedDatumTableBase.sd_df_to_rdd(datum_df)
+    datum_rdd = StampedDatumTableFactory.sd_df_to_rdd(datum_df)
     return Sample(uri=uri, datums=datum_rdd.collect())
 
   def get_datum_df(self, uris=None, spark=None):

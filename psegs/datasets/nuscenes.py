@@ -585,7 +585,7 @@ class PSegsNuScenes(BASE):
 
 
 from psegs import datum
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 def transform_from_record(rec, src_frame='', dest_frame=''):
   from pyquaternion import Quaternion
@@ -616,7 +616,7 @@ def get_camera_normal(K, extrinsic):
 def to_nanostamp(timestamp_micros):
   return int(timestamp_micros) * 1000
 
-class NuscStampedDatumTableBase(StampedDatumTableBase):
+class NuscStampedDatumTableFactory(StampedDatumTableFactory):
 
   API_CLS = PSegsNuScenes
 
@@ -1238,7 +1238,7 @@ class NuscStampedDatumTableBase(StampedDatumTableBase):
       # broken, but the sensor timestamps look corect.
       # https://github.com/lyft/nuscenes-devkit/issues/73
 
-class NuscStampedDatumTableLabelsAllFrames(NuscStampedDatumTableBase):
+class NuscStampedDatumTableLabelsAllFrames(NuscStampedDatumTableFactory):
   LABELS_KEYFRAMES_ONLY = False
 
 

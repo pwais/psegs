@@ -113,7 +113,7 @@ def check_stamped_datum_dfs_equal(
         testname='',
         sd_df_expected=None):
   
-  from psegs.table.sd_table import StampedDatumTableBase
+  from psegs.table.sd_table import StampedDatumTable
 
   if not testname:
     seg_df = sd_df_actual.select('uri.segment_id').orderBy('uri.segment_id')
@@ -129,7 +129,7 @@ def check_stamped_datum_dfs_equal(
         [lambda: sd_df_actual],
         path=str(actual_path),
         format='parquet',
-        partitionBy=StampedDatumTableBase.PARTITION_KEYS,
+        partitionBy=StampedDatumTable.PARTITION_KEYS,
         compression='lz4')
   
   if sd_df_expected is None:
@@ -139,7 +139,11 @@ def check_stamped_datum_dfs_equal(
         (not oputil.missing_or_empty(str(sd_df_expected_path))))
     sd_df_expected = spark.read.parquet(str(sd_df_expected_path))
 
-  difftxt = StampedDatumTableBase.find_diff(sd_df_actual, sd_df_expected)
+  difftxt = StampedDatumTable.find_diff(sd_df_actual, sd_df_expected)
   assert difftxt == '', \
         "Non-zero diff!\nActual path %s\nExpected path %s\nDiff:\n%s" % (
           actual_path, sd_df_expected_path, difftxt)
+
+def test_fixtures_dir():
+  # Path to fixtures *included* with PSegs
+  return Path(__file__).parent / 'fixtures'

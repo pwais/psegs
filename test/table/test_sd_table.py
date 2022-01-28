@@ -18,12 +18,12 @@ from psegs.datum.point_cloud import PointCloud
 from psegs.datum.stamped_datum import StampedDatum
 from psegs.datum.transform import Transform
 from psegs.datum.uri import URI
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 import test.testutil as testutil
 
 
-class TestStampedDatumTableBase(StampedDatumTableBase):
+class TestSDTFactoryBase(StampedDatumTableFactory):
   """Create a clean temp directory for each test table"""
 
   @classmethod
@@ -43,7 +43,7 @@ def test_sd_table_simple():
       transform=Transform()),
   ]
 
-  class Simple(TestStampedDatumTableBase):
+  class Simple(TestSDTFactoryBase):
     @classmethod
     def _create_datum_rdds(
           cls, spark, existing_uri_df=None, only_segments=None):
@@ -78,7 +78,7 @@ def test_sd_table_one_of_every():
       transform=Transform()),
   ]
 
-  class OneOfEvery(TestStampedDatumTableBase):
+  class OneOfEvery(TestSDTFactoryBase):
     @classmethod
     def _create_datum_rdds(
           cls, spark, existing_uri_df=None, only_segments=None):
@@ -105,7 +105,7 @@ def test_sd_table_one_of_every():
 
 def create_sd_table_and_df(spark, datums):
 
-  class DiffTable(TestStampedDatumTableBase):
+  class DiffTable(TestSDTFactoryBase):
     @classmethod
     def _create_datum_rdds(
           cls, spark, existing_uri_df=None, only_segments=None):
@@ -125,7 +125,7 @@ def test_sd_table_diff_empty():
     _, df1 = create_sd_table_and_df(spark, [])
     _, df2 = create_sd_table_and_df(spark, [])
     
-    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    difftxt = StampedDatumTableFactory.find_diff(df1, df2)
     assert difftxt == ''
 
     
@@ -149,7 +149,7 @@ def test_sd_table_diff_identical():
     _, df1 = create_sd_table_and_df(spark, one_of_every_datum)
     _, df2 = create_sd_table_and_df(spark, one_of_every_datum)
     
-    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    difftxt = StampedDatumTableFactory.find_diff(df1, df2)
     assert difftxt == ''
 
 
@@ -171,7 +171,7 @@ def test_sd_table_diff_mismatch_dataset():
     _, df1 = create_sd_table_and_df(spark, t1)
     _, df2 = create_sd_table_and_df(spark, t2)
 
-    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    difftxt = StampedDatumTableFactory.find_diff(df1, df2)
     assert "Dataset/Split Mismatch" in difftxt
     assert "- [('d1', 's')]" in difftxt
     assert "+ [('d2', 's')]" in difftxt
@@ -195,7 +195,7 @@ def test_sd_table_diff_mismatch_segments():
     _, df1 = create_sd_table_and_df(spark, t1)
     _, df2 = create_sd_table_and_df(spark, t2)
 
-    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    difftxt = StampedDatumTableFactory.find_diff(df1, df2)
     assert "Segment Mismatch" in difftxt
     assert "- [('d', 's', 'seg1')]" in difftxt
     assert "+ [('d', 's', 'seg2')]" in difftxt
@@ -219,7 +219,7 @@ def test_sd_table_diff_mismatch_uri_count_many():
     _, df1 = create_sd_table_and_df(spark, t1)
     _, df2 = create_sd_table_and_df(spark, t2)
 
-    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    difftxt = StampedDatumTableFactory.find_diff(df1, df2)
     assert "URI Count Mismatch" in difftxt
     assert "left count: 1000" in difftxt
     assert "right count: 2000" in difftxt
@@ -243,7 +243,7 @@ def test_sd_table_diff_mismatch_uri_content():
     _, df1 = create_sd_table_and_df(spark, t1)
     _, df2 = create_sd_table_and_df(spark, t2)
 
-    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    difftxt = StampedDatumTableFactory.find_diff(df1, df2)
     assert "Missing URIs" in difftxt
     assert "Missing left (10): ['psegs://dataset=d&split=s&segment_id=seg&timestamp=1&topic=camera|rear'" in difftxt
     assert "Missing right (10): ['psegs://dataset=d&split=s&segment_id=seg&timestamp=1&topic=camera|front'" in difftxt
@@ -270,7 +270,7 @@ def test_sd_table_diff_mismatch_uri_dupes():
     _, df2 = create_sd_table_and_df(
                 spark, one_of_every_datum + one_of_every_datum)
     
-    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    difftxt = StampedDatumTableFactory.find_diff(df1, df2)
     assert "Dupe URIs" in difftxt
     assert "Dupes left (0): []" in difftxt
     assert "Dupes right (4): " in difftxt
@@ -311,7 +311,7 @@ def test_sd_table_diff_mismatch_sd_content():
     _, df1 = create_sd_table_and_df(spark, t1)
     _, df2 = create_sd_table_and_df(spark, t2)
     
-    difftxt = StampedDatumTableBase.find_diff(df1, df2)
+    difftxt = StampedDatumTableFactory.find_diff(df1, df2)
 
     assert "Datum mismatch" in difftxt
     

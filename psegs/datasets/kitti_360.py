@@ -24,7 +24,7 @@ from psegs import util
 from psegs import datum
 from psegs.conf import C
 from psegs.datasets.idsutil import IDatasetUtil
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 from psegs.util import misc
 
 
@@ -399,7 +399,7 @@ class Calibration(object):
 ###############################################################################
 ### StampedDatumTable Impl
 
-class KITTI360SDTable(StampedDatumTableBase):
+class KITTI360SDTable(StampedDatumTableFactory):
 
   # TODO: allow inclusion of oxts data.  for now we just use KITTI's refined poses
 

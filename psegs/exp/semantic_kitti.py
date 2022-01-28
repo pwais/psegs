@@ -20,7 +20,7 @@ import numpy as np
 from psegs import datum
 from psegs import util
 from psegs.conf import C
-from psegs.table.sd_table import StampedDatumTableBase
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
 
@@ -167,7 +167,7 @@ class Fixtures(object):
     return cloud
 
 
-class SemanticKITTISDTable(StampedDatumTableBase):
+class SemanticKITTISDTable(StampedDatumTableFactory):
   
   FIXTURES = Fixtures
 

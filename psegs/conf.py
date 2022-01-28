@@ -49,7 +49,7 @@ class ProjConf(object):
     type=Path,
     default=DEFAULT_DATA_ROOT / 'stamped_datum',
     converter=Path)
-  """Path: store :class:`~psegs.table.sd_table.StampedDatumTableBase` data
+  """Path: store :class:`~psegs.table.sd_table.StampedDatumTableFactory` data
   table(s) here.  Putting all tables in the same root 'directory' makes it
   easier to (virtually) concatenate them."""
 
