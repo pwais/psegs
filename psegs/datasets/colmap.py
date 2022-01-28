@@ -497,8 +497,11 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
       util.log.info(
         f"Note: resume mode unsupported, got existing_uri_df {existing_uri_df}")
     if only_segments is not None:
-      util.log.info(
-        f"Note: Segment filter unsupported, got only_segments {only_segments}")
+      has_match = any(
+              suri.soft_matches_segment_of(cls.get_segment_uri())
+              for suri in only_segments)
+      if not has_match:
+        return []
 
     # Generate URIs ...
     colmap_uris = cls.get_colmap_recon_uris()

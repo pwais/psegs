@@ -958,5 +958,5 @@ class DSUtil(IDatasetUtil):
 
   @classmethod
   def build_table(cls):
-    # IOSLidarSDTable.build()
+    # IOSLidarSDTFactory.build()
     return True

@@ -151,6 +151,17 @@ class CameraImage(object):
   def get_world_to_cam(self):
     return self.ego_pose['world', self.sensor_name]
 
+  @classmethod
+  def create_world_frame_ci(cls, sensor_name='', **kwargs):
+    sensor_name = sensor_name or 'world_frame_camera_image'
+    ego_to_sensor = Transform(src_frame=sensor_name, dest_frame='ego')
+    ego_pose = Transform(src_frame='ego', dest_frame='world')
+    return cls(
+            sensor_name=sensor_name,
+            ego_to_sensor=ego_to_sensor,
+            ego_pose=ego_pose,
+            **kwargs)
+
   @property
   def image(self):
     """Decode and return the image.
