@@ -43,20 +43,23 @@ def colmap_recon_create_world_cloud(
   sparse model 3D point cloud as a single `PointCloud` in the world frame.
   """
 
-  recon = pycolmap.Reconstruction(recon_dir)
-  ptid_to_info = recon.points3D
+  def _get_cloud(recon_dir):
 
-  xyzrgbErrViz = np.zeros((len(ptid_to_info), 8), dtype='float')
-  for i, (ptid, info) in enumerate(sorted(ptid_to_info.items())):
-    xyzrgbErrViz[i, :3] = info.xyz
-    xyzrgbErrViz[i, 3:6] = info.color
-    xyzrgbErrViz[i, 6] = info.error
-    xyzrgbErrViz[i, 7] = info.track.length()
+    recon = pycolmap.Reconstruction(recon_dir)
+    ptid_to_info = recon.points3D
+
+    xyzrgbErrViz = np.zeros((len(ptid_to_info), 8), dtype='float')
+    for i, (ptid, info) in enumerate(sorted(ptid_to_info.items())):
+      xyzrgbErrViz[i, :3] = info.xyz
+      xyzrgbErrViz[i, 3:6] = info.color
+      xyzrgbErrViz[i, 6] = info.error
+      xyzrgbErrViz[i, 7] = info.track.length()
+    return xyzrgbErrViz
   
   # The points are in the world frame; provide identity transform(s)
   pc = datum.PointCloud.create_world_frame_cloud(
           sensor_name=sensor_name,
-          cloud=xyzrgbErrViz,
+          cloud_factory=lambda: _get_cloud(recon_dir),
           cloud_colnames=[
             'x', 'y', 'z',
             'r', 'g', 'b',
@@ -233,6 +236,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
 
   INCLUDE_DEPTH_IMAGES = True
   INCLUDE_WORLD_CLOUD = True
+  USE_NP_CACHED_ASSETS = True
 
   CI_RECON_TOPIC_SUFFIX = '|colmap_sparse'
   DCI_RECON_TOPIC_SUFFIX = '|depth'
@@ -258,13 +262,19 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
   def create_imgpath_to_uri_and_images(cls, sd_table, only_topics=None):
     
     # Select the datums to export
-    sdf = sd_table.to_spark_df()
-    sdf = sdf.where("camera_image IS NOT NULL")
-    if only_topics:
-      sdf = sdf.where(sdf['uri.topic'].isin(only_topics))
-    util.log.info(f"Selected {sdf.count()} input images ...")
+    datum_rdd = sd_table.get_datum_rdd_matching(
+                    only_types=['camera_image'],
+                    only_topics=only_topics)
     
-    datum_rdd = sd_table.datum_df_to_datum_rdd(sdf)
+    # Try to favor fewer, longer-lived python processes
+    from oarphpy.spark import cluster_cpu_count
+    from psegs.spark import Spark
+    with Spark.sess() as spark:
+      n_cpus = cluster_cpu_count(spark)
+    datum_rdd = datum_rdd.repartition(n_cpus).cache()
+
+    util.log.info(f"Selected {datum_rdd.count()} input images ...")
+
     cls.COLMAP_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     def save_image(stamped_datum):
       import imageio
@@ -275,7 +285,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
         str(stamped_datum.uri.topic) + "." + 
         str(stamped_datum.uri.timestamp) + ".png")
       dest = cls.COLMAP_IMAGES_DIR / fname
-      image = ci.image 
+      image = ci.image
       imageio.imsave(dest, image)
       return str(stamped_datum.uri), str(dest)
     
@@ -351,29 +361,28 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     return all_uris
   
   @classmethod
-  def create_stamped_datum(cls, uri):
-    if uri.topic == cls.WORLD_CLOUD_TOPIC:
+  def _create_point_cloud(cls, uri):
+    from oarphpy.spark import CloudpickeledCallable
 
-      pc = colmap_recon_create_world_cloud(
+    pc = colmap_recon_create_world_cloud(
             cls.COLMAP_RECON_DIR,
             sensor_name='colmap_sparse')
-      return datum.StampedDatum(uri=uri, point_cloud=pc)
-    
-    elif uri.topic.endswith(cls.DCI_RECON_TOPIC_SUFFIX):
 
-      ci = colmap_recon_create_camera_image(
-              uri.extra['colmap.image_name'],
-              cls.COLMAP_RECON_DIR,
-              cls.COLMAP_IMAGES_DIR,
-              uri=uri,
-              sensor_name=uri.topic,
-              timestamp=uri.timestamp,
-              create_depth_image=True)
-      return datum.StampedDatum(uri=uri, camera_image=ci)
+    if cls.USE_NP_CACHED_ASSETS:
+      cloud_npy_fname = f"{uri.topic}_{uri.timestamp}_cloud.npy"
+      cloud_npy_path = cls.psegs_npy_cache_dir() / cloud_npy_fname
+      if not cloud_npy_path.exists():
+        with open(cloud_npy_path, 'wb') as f:
+          np.save(f, pc.get_cloud()) # Compression doesn't help
+        pc.cloud = None
+      pc.cloud_factory = CloudpickeledCallable(
+        lambda: load_array(cloud_npy_path))
+ 
+    return datum.StampedDatum(uri=uri, point_cloud=pc)
 
-    elif uri.topic.endswith(cls.CI_RECON_TOPIC_SUFFIX):
-
-      dci = colmap_recon_create_camera_image(
+  @classmethod
+  def _create_camera_image(cls, uri):
+    ci = colmap_recon_create_camera_image(
               uri.extra['colmap.image_name'],
               cls.COLMAP_RECON_DIR,
               cls.COLMAP_IMAGES_DIR,
@@ -381,8 +390,41 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
               sensor_name=uri.topic,
               timestamp=uri.timestamp,
               create_depth_image=False)
-      return datum.StampedDatum(uri=uri, camera_image=dci)
-    
+    return datum.StampedDatum(uri=uri, camera_image=ci)
+
+  @classmethod
+  def _create_depth_camera_image(cls, uri):
+    from oarphpy.spark import CloudpickeledCallable
+
+    dci = colmap_recon_create_camera_image(
+              uri.extra['colmap.image_name'],
+              cls.COLMAP_RECON_DIR,
+              cls.COLMAP_IMAGES_DIR,
+              uri=uri,
+              sensor_name=uri.topic,
+              timestamp=uri.timestamp,
+              create_depth_image=True)
+
+    if cls.USE_NP_CACHED_ASSETS:
+      depth_npy_fname = f"{uri.topic}_{uri.timestamp}_depth.npy"
+      depth_npy_path = cls.psegs_npy_cache_dir() / depth_npy_fname
+      if not depth_npy_path.exists():
+        with open(depth_npy_path, 'wb') as f:
+          np.savez_compressed(f, image=dci.image)
+            # Lots of zeros; compression helps
+      dci.image_factory = CloudpickeledCallable(
+        lambda: load_array(depth_npy_path)['image'])
+      
+    return datum.StampedDatum(uri=uri, camera_image=dci)
+
+  @classmethod
+  def create_stamped_datum(cls, uri):
+    if uri.topic == cls.WORLD_CLOUD_TOPIC:
+      return cls._create_point_cloud(uri)
+    elif uri.topic.endswith(cls.DCI_RECON_TOPIC_SUFFIX):
+      return cls._create_depth_camera_image(uri)
+    elif uri.topic.endswith(cls.CI_RECON_TOPIC_SUFFIX):
+      return cls._create_camera_image(uri)
     else:
       raise ValueError(f"Don't know what to do with {uri}")
 
@@ -401,28 +443,11 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     MyCOLMAP_SDTFactory.create_imgpath_to_uri_and_images(sd_table)
 
   @classmethod
-  def get_reconstruction_sd_table(
-        cls,
-        use_np_assets=True,
-        force_recompute_np_assets=False,
-        spark=None):
-    
+  def get_reconstruction_sd_table(cls, spark=None):
     seg_uri = cls.get_segment_uri()
     if not seg_uri:
       return None
-    
-    sdt = cls.get_segment_sd_table(seg_uri, spark=spark)
-    if use_np_assets:
-      cls.psegs_npy_cache_dir().mkdir(parents=True, exist_ok=True)
-      datum_rdd = sdt.to_datum_rdd(spark=spark)
-      datum_rdd = datum_rdd.map(
-                      lambda sd: 
-                        cls.to_lazy_datum(
-                          sd, force_recompute=force_recompute_np_assets))
-      return StampedDatumTable.from_datum_rdd(spark, datum_rdd)
-    else:
-      return sdt
-
+    return cls.get_segment_sd_table(seg_uri, spark=spark)
 
   @classmethod
   def create_sd_table_for_reconstruction(
@@ -443,39 +468,6 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
               use_np_assets=use_np_assets,
               force_recompute_np_assets=force_recompute_np_assets,
               spark=spark)
-
-
-  @classmethod
-  def to_lazy_datum(cls, sd, force_recompute=False):
-    from oarphpy.spark import CloudpickeledCallable
-        
-    if sd.camera_image:
-      ci = sd.camera_image
-      if 'depth' not in ci.channel_names:
-        return sd
-      
-      depth_npy_fname = f"{sd.uri.topic}_{sd.uri.timestamp}_depth.npy"
-      depth_npy_path = cls.psegs_npy_cache_dir() / depth_npy_fname
-      if force_recompute or (not depth_npy_path.exists()):
-        with open(depth_npy_path, 'wb') as f:
-          np.savez_compressed(f, image=ci.image)
-            # Lots of zeros; compression helps
-      ci.image_factory = CloudpickeledCallable(
-        lambda: load_array(depth_npy_path)['image'])
-      return sd
-    
-    elif sd.point_cloud:
-      pc = sd.point_cloud
-
-      cloud_npy_fname = f"{sd.uri.topic}_{sd.uri.timestamp}_cloud.npy"
-      cloud_npy_path = cls.psegs_npy_cache_dir() / cloud_npy_fname
-      if force_recompute or (not cloud_npy_path.exists()):
-        with open(cloud_npy_path, 'wb') as f:
-          np.save(f, pc.get_cloud()) # Compression doesn't help
-        pc.cloud = None
-      pc.cloud_factory = CloudpickeledCallable(
-        lambda: load_array(cloud_npy_path))
-      return sd
       
 
   ## StampedDatumTableFactory Impl
@@ -505,9 +497,16 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
 
     # Generate URIs ...
     colmap_uris = cls.get_colmap_recon_uris()
-    uri_rdd = spark.sparkContext.parallelize(
-                    colmap_uris, numSlices=len(colmap_uris))
-    util.log.info(f"Creating datums for {len(colmap_uris)} URIs")
+    uri_rdd = spark.sparkContext.parallelize(colmap_uris)
+    util.log.info(f"Creating datums for {len(colmap_uris)} URIs ...")
+
+    if cls.USE_NP_CACHED_ASSETS:
+      util.log.info(
+        f"... using numpy asset cache, may take moments to populate ...")
+      if not cls.psegs_npy_cache_dir().exists():
+        # Initial cache population may be memory intensive
+        uri_rdd = uri_rdd.repartition(uri_rdd.count())
+        cls.psegs_npy_cache_dir().mkdir(parents=True, exist_ok=True)
 
     datum_rdd = uri_rdd.map(cls.create_stamped_datum)
 

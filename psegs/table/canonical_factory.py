@@ -61,3 +61,43 @@ if True:
     FIXTURES = MyFixtures
 
   CanonicalFactory.SDT_FACTORIES += [MyIOSLidarSDTableFactory]
+  
+  # from psegs.datasets.adhoc_pixels import AdhocVideosSDTFactory
+  # CanonicalFactory.SDT_FACTORIES += [
+  #   AdhocVideosSDTFactory.create_factory_for_video(p)
+  #   for p in (
+  #     '/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/san-bruno-ridge-sunset-lidar-comparison-IMG_5652.MOV',
+  #     '/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/san-bruno-ridge-sunset-lidar-comparison-IMG_5654.MOV',
+  #     '/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/san-bruno-ridge-sunset-lidar-comparisonIMG_5653.MOV',
+  #     '/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/dubs-gym-bluetiful-subie-lidar-comparison.MOV',
+  #   )]
+
+  from pathlib import Path
+  from psegs.datasets.adhoc_pixels import AdhocImagePathsSDTFactory
+  CanonicalFactory.SDT_FACTORIES += [
+    AdhocImagePathsSDTFactory.create_factory_for_images(
+        images_dir=p,
+        dataset='pwais',
+        split='private',
+        segment_id=Path(p).name)
+    for p in (
+      '/outer_root/media/970-evo-plus-raid0/vids_to_hloc_cache/dubs-gym-bluetiful-subie-lidar-comparison.MOV/',
+      
+    )]
+
+  CanonicalFactory.SDT_FACTORIES += [
+    AdhocImagePathsSDTFactory.create_factory_for_images(
+        image_paths=sorted(
+          p for p in 
+          Path('/outer_root/media/970-evo-plus-raid0/lidarphone_lidar_scans/2021_10_12_13_53_29/').iterdir()
+          if 'frame_' in p.name),
+        dataset='pwais',
+        split='private',
+        segment_id='phoenix-dry-long-broken')
+  ]
+
+  # from psegs.table.sd_table_factory import ParquetSDTFactory
+  # CanonicalFactory.SDT_FACTORIES += [
+  #   ParquetSDTFactory.factory_for_sd_subdirs(
+  #     '/outer_root/media/970-evo-plus-raid0/hloc_out/')
+  # ]

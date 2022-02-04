@@ -527,7 +527,7 @@ def sample_to_html(
   elif isinstance(sample, table.StampedDatumTable):
     sd_df = sample.to_spark_df(spark=spark)
   elif hasattr(sample, '_jrdd'):
-    sdt = table.StampedDatumTable.from_datum_rdd(spark, sample)
+    sdt = table.StampedDatumTable.from_datum_rdd(sample, spark=spark)
     sd_df = sdt.to_spark_df(spark=spark)
   elif hasattr(sample, 'rdd'):
     # Probably is already a Spark Dataframe
@@ -881,7 +881,7 @@ def sample_to_html(
           sd.point_cloud = pc
           return sd
         sd_rdd = orig_sample_sd_df.rdd.map(_make_pc)
-        sdt = table.StampedDatumTable.from_datum_rdd(spark, sd_rdd)
+        sdt = table.StampedDatumTable.from_datum_rdd(sd_rdd, spark=spark)
         sample_sd_df = sdt.to_spark_df(spark=spark)
         sample_sd_df = sample_sd_df.persist()
       else:

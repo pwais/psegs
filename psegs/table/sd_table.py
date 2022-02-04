@@ -27,11 +27,14 @@ class StampedDatumTable(object):
   def __init__(self):
     self._sample = None
     self._spark_df = None
+    self._datum_rdd = None
+    self._spark = None
 
   @classmethod
-  def from_spark_df(cls, spark_df):
+  def from_spark_df(cls, spark_df, spark=None):
     sdt = cls()
     sdt._spark_df = spark_df
+    sdt._spark = spark
     return sdt
 
   @classmethod
@@ -41,23 +44,26 @@ class StampedDatumTable(object):
     return sdt
 
   @classmethod
-  def from_datum_rdd(self, spark, datum_rdd):
-    with Spark.sess(spark) as spark:
-      spark_df = self._sd_rdd_to_sd_df(spark, datum_rdd)
-      spark_df = spark_df.persist()
-      return self.from_spark_df(spark_df)
+  def from_datum_rdd(cls, datum_rdd, spark=None):
+    sdt = cls()
+    sdt._datum_rdd = datum_rdd
+    sdt._spark = spark
+    return sdt
 
 
   ## StampedDatumTable -> Datums
 
   def to_spark_df(self, spark=None):
+    spark = spark or self._spark
     if self._sample:
       with Spark.sess(spark) as spark:
-        datum_rdd = spark.sparkContext.parallelize(
-                      self._sample.datums, numSlices=len(self._sample.datums))
+        datum_rdd = spark.sparkContext.parallelize(self._sample.datums)
         self._spark_df = self._sd_rdd_to_sd_df(spark, datum_rdd)
     elif self._spark_df:
       return self._spark_df
+    elif self._datum_rdd:
+      with Spark.sess(spark) as spark:
+        return self._sd_rdd_to_sd_df(spark, self._datum_rdd)
     else:
       # Create an empty Spark DF
       with Spark.sess(spark) as spark:
@@ -70,11 +76,16 @@ class StampedDatumTable(object):
     elif self._spark_df:
       datum_rdd = self.datum_df_to_datum_rdd(self._spark_df)
       return Sample(datums=datum_rdd.collect())
+    elif self._datum_rdd:
+      return Sample(datums=self._datum_rdd.collect())
     else:
       return Sample()
 
   def to_datum_rdd(self, spark=None):
-    if self._sample:
+    if self._datum_rdd:
+      return self._datum_rdd
+    elif self._sample:
+      spark = spark or self._spark
       with Spark.sess(spark) as spark:
         return spark.sparkContext.parallelize(
                     self._sample.datums, numSlices=len(self._sample.datums))
@@ -99,22 +110,62 @@ class StampedDatumTable(object):
         URI(dataset=r.dataset, split=r.split, segment_id=r.segment_id)
         for r in uri_rows
       ]
+    elif self._datum_rdd:
+      uri_rdd = self.as_uri_rdd()
+      sseg_uri_rdd = uri_rdd.map(lambda uri: str(uri.to_segment_uri()))
+      distinct_ssegs = sseg_uri_rdd.distinct()
+      distinct_segs = distinct_ssegs.map(lambda s: URI.from_str(s))
+      return distinct_segs.collect()
     else:
       return []
 
   def select_from_uris(self, uris, spark=None):
-    pass
+    pass # TODO
 
 
-  @classmethod
-  def get_sample(cls, uri, spark=None):
-    with Spark.sess(spark) as spark:
-      datums = cls._get_segment_datum_rdd_or_df(spark, uri)
-      if hasattr(datums, 'rdd'):
-        datums = cls.datum_df_to_datum_rdd(datums)
-      return Sample(uri=uri, datums=datums.collect())
+  # @classmethod
+  # def get_sample(cls, uri, spark=None):
+  #   with Spark.sess(spark) as spark:
+  #     datums = cls._get_segment_datum_rdd_or_df(spark, uri)
+  #     if hasattr(datums, 'rdd'):
+  #       datums = cls.datum_df_to_datum_rdd(datums)
+  #     return Sample(uri=uri, datums=datums.collect())
 
-  
+  def get_datum_rdd_matching(
+          self,
+          only_topics=None,
+          only_types=None,
+          spark=None):
+    
+    if self._spark_df or self._sample:
+      sdf = self.to_spark_df(spark=spark)
+      if only_types:
+        for sd_type in only_types:
+          if sd_type in ('cuboids',):
+            sdf = sdf.where("ARRAY_SIZE(%s) > 0" % sd_type)
+          else:
+            sdf = sdf.where("%s IS NOT NULL" % sd_type)
+      if only_topics:
+        sdf = sdf.where(sdf['uri.topic'].isin(only_topics))
+    
+      datum_rdd = self.datum_df_to_datum_rdd(sdf)
+      return datum_rdd
+    else:
+      datum_rdd = self.to_datum_rdd(spark=spark)
+      def matches(sd):
+        matches_topics = (not only_topics or (sd.uri.topic in only_topics))
+        matches_types = True
+        for sd_type in only_types:
+          if not bool(getattr(sd, sd_type)):
+            matches_types = False
+            break
+        return matches_topics and matches_types
+      datum_rdd = datum_rdd.filter(matches)
+      return datum_rdd
+
+
+
+
 
   def as_uri_df(self, spark=None):
 
@@ -128,8 +179,17 @@ class StampedDatumTable(object):
     ]
     colnames += [c for c in self.PARTITION_KEYS]
       # Use the partition columns for faster filters
+    colnames += ['uri.__pyclass__']
     uri_df = df.select(colnames)
     return uri_df
+
+  def as_uri_rdd(self, spark=None):
+    if self._spark_df or self._sample:
+      uri_df = self.as_uri_df(spark=spark)
+      return uri_df.rdd.map(self.uri_from_row)
+    else:
+      datum_rdd = self.to_datum_rdd(spark=spark)
+      return datum_rdd.map(lambda sd: sd.uri)
 
 
   ## Viz
@@ -137,9 +197,11 @@ class StampedDatumTable(object):
   def to_rich_html(self, spark=None, **html_kwargs):
     """Create and return an HTML visualization with (small) vidoes and
     3D plots"""
-
+  
     from psegs.spark import Spark
     from psegs.util.plotting import sample_to_html
+
+    spark = spark or self._spark
     with Spark.sess(spark) as spark:
       return sample_to_html(
                 spark,
@@ -164,14 +226,15 @@ class StampedDatumTable(object):
       mode=mode,
     )
 
-    spark_df = self.to_spark_df(spark=spark)
-    spark_df = spark_df.persist()
+    spark_df = self.to_spark_df(spark=spark).persist()
     if partition:
       for k in self.PARTITION_KEYS:
         spark_df = spark_df.withColumn(k, spark_df['uri.' + k])
-      save_opts['partitionBy'] = self.PARTITION_KEYS
+      save_opts['partitionBy'] = self.PARTITION_KEYS      
+    
     if num_partitions > 0:
-      spark_df = spark_df.repartition(num_partitions)
+      spark_df = spark_df.repartition(num_partitions).persist()
+    
     spark_df.write.save(**save_opts)
     spark_df.unpersist()
 
@@ -194,6 +257,14 @@ class StampedDatumTable(object):
   def sd_from_row(cls, row):
     from oarphpy.spark import RowAdapter
     return RowAdapter.from_row(row)
+  
+  @classmethod
+  def uri_from_row(cls, row):
+    from oarphpy.spark import RowAdapter
+    if hasattr(row, 'uri'):
+      return RowAdapter.from_row(row.uri)
+    else:
+      return RowAdapter.from_row(row)
 
   @classmethod
   def table_schema(cls):
@@ -223,7 +294,7 @@ class StampedDatumTable(object):
   def diff_with(self, other_sdt, spark=None):
     this_df = self.to_spark_df(spark=spark)
     other_df = other_sdt.to_spark_df(spark=spark)
-    return self.find_diff(this_df, other_sdt)
+    return self.find_diff(this_df, other_df)
 
   @classmethod
   def find_diff(cls, sd_df1, sd_df2):

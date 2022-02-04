@@ -1,6 +1,7 @@
 attrs
 fasteners
 imageio
+imageio-ffmpeg
 mdv==1.7.4
 numpy
 oarphpy[spark]==0.1.0

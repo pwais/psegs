@@ -26,11 +26,22 @@ from psegs.table.sd_table_factory import StampedDatumTableFactory
 ###############################################################################
 ## StampedDatumTableFactory for an Video
 
-def load_video_frame(video_uri, frame_idx):
-  # Defined here for easier serializeation
+
+def read_frame(video_uri, frame_idx):
   import imageio
   r = imageio.get_reader(video_uri)
   return r.get_data(frame_idx)
+
+
+def lazy_load_cached_frame(video_uri, frame_idx, cache_path):
+  import imageio
+  from pathlib import Path
+  cache_path = Path(cache_path)
+  if not cache_path.exists():
+    im = read_frame(video_uri, frame_idx)
+    imageio.imwrite(cache_path, im, compress_level=1) # Fastest
+  return imageio.imread(cache_path)
+
 
 class AdhocVideosSDTFactory(StampedDatumTableFactory):
   """This `StampedDatumTableFactory` wraps a single video and exposes the
@@ -50,6 +61,8 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
   SEGMENT_ID = 'anon_segment'
   TOPIC = 'camera_video_adhoc'
 
+  ASSET_CACHE_DIR = None
+
   @classmethod
   def create_factory_for_video(
         cls,
@@ -59,6 +72,7 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
         topic='camera_video_adhoc',
         segment_id=None,
         start_timestamp_use='st_mtime',
+        asset_cache_dir='',
         limit=-1):
     """Create and return a `StampedDatumTableFactory` class instance
     for the given video.  We will read part of the video to assess
@@ -75,13 +89,15 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
     and then:
      * Use `create_sd_table()` to directly get a `StampedDatumTable` with your
         wrapped `CameraImage` instances.
-     * Use `to_image_dir_sd_table_factory()` to dump the video as images
-        to disk and create a `AdhocImagePathsSDTFactory` (see below).
      * Register the returned class to a PSegs `UnionFactory` as part of a
         larger collection of segments.
     """
   
     import imageio
+
+    F = cls.maybe_load_factory(asset_cache_dir=asset_cache_dir)
+    if F is not None:
+      return F
 
     if segment_id is None:
       from urllib.parse import urlparse
@@ -91,15 +107,19 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
       segment_id = fname
 
     r = imageio.get_reader(video_uri)
-    n_frames = r.get_length()
+    n_frames = r.get_meta_data()['nframes']
     if n_frames == float('inf'):
-      raise ValueError(
-        "Don't currently support infinite streams: %s" % video_uri)
+      # For some python / imageio versions, you have to use this API:
+      n_frames = r.count_frames()
+      if n_frames == float('inf'):
+        raise ValueError(
+          "Don't currently support infinite streams: %s %s" % (
+            r.get_meta_data(), video_uri))
     if limit > 0:
       n_frames = limit
     
     fps = r.get_meta_data()['fps']
-    h, w = load_video_frame(video_uri, 0).shape[:2]
+    h, w = r.get_data(0).shape[:2]
 
     if isinstance(start_timestamp_use, six.string_types):
       res = Path(video_uri).lstat()
@@ -120,12 +140,13 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
       SPLIT = split
       SEGMENT_ID = segment_id
       TOPIC = topic
-    
-    return MyAdhocVideosSDTFactory
 
-  @classmethod
-  def to_image_dir_sd_table_factory(cls, image_dest_dir):
-    assert False, 'todo'
+      ASSET_CACHE_DIR = Path(asset_cache_dir) if asset_cache_dir else None
+    
+    if asset_cache_dir:
+      MyAdhocVideosSDTFactory.maybe_save_factory()
+
+    return MyAdhocVideosSDTFactory
 
   @classmethod
   def get_segment_uri(cls):
@@ -150,12 +171,27 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
   def create_stamped_datum(cls, uri):
     video_uri = uri.extra['AdhocVideosSDTFactory.video_uri']
     frame_index = int(uri.extra['AdhocVideosSDTFactory.frame_index'])
+    
+    if cls.ASSET_CACHE_DIR is None:
+      image_factory = lambda: read_frame(video_uri, frame_index)
+    else:
+      frame_fname = '.'.join([uri.topic, str(uri.timestamp)])
+      frame_fname = frame_fname + '.png'
+      frames_dir = cls.ASSET_CACHE_DIR / 'frames'
+      if not frames_dir.exists():
+        frames_dir.mkdir(parents=True, exist_ok=True)
+      lazy_path = frames_dir / frame_fname
+      image_factory = lambda: lazy_load_cached_frame(
+                                  video_uri,
+                                  frame_index,
+                                  lazy_path)
+    
     ci = datum.CameraImage.create_world_frame_ci(
           sensor_name=uri.topic,
           width=cls.WIDTH,
           height=cls.HEIGHT,
           timestamp=uri.timestamp,
-          image_factory=lambda: load_video_frame(video_uri, frame_index),
+          image_factory=image_factory,
           extra=dict(uri.extra))
 
     return datum.StampedDatum(uri=uri, camera_image=ci)
@@ -167,6 +203,67 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
       sdt = cls.get_segment_sd_table(seg_uri, spark=spark)
       return sdt
 
+  @classmethod
+  def maybe_load_factory(cls, asset_cache_dir=''):
+    if not asset_cache_dir:
+      asset_cache_dir = cls.ASSET_CACHE_DIR
+    
+    if asset_cache_dir is None:
+      return None
+
+    asset_cache_dir = Path(asset_cache_dir)
+    table_factory_path = asset_cache_dir / 'psegs_AdhocVideosSDTFactory_df.pkl'
+
+    if not table_factory_path.exists():
+      return None
+    
+    import cloudpickle
+    with open(table_factory_path, 'rb') as f:
+      return cloudpickle.load(f)
+  
+  @classmethod
+  def maybe_save_factory(cls):
+    if cls.ASSET_CACHE_DIR is None:
+      return False
+    
+    cls.ASSET_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    table_factory_path = (
+      cls.ASSET_CACHE_DIR / 'psegs_AdhocVideosSDTFactory_df.pkl')
+    
+    import cloudpickle
+    with open(table_factory_path, 'wb') as f:
+      cloudpickle.dump(cls, f, protocol=3) # Support older python
+    return True
+
+  @classmethod
+  def maybe_build_cache(cls, spark=None):
+    if cls.ASSET_CACHE_DIR is None:
+      return False
+
+    util.log.info(f"Building cache for {cls.__name__} ...")
+    cls.maybe_save_factory()
+    with Spark.sess(spark) as spark:
+      sdt = cls.create_sd_table(spark=spark)
+      
+      datum_rdd = sdt.to_datum_rdd(spark=spark)
+
+      # Try to favor longer-lived python processes
+      from oarphpy.spark import cluster_cpu_count
+      n_cpus = cluster_cpu_count(spark)
+      datum_rdd = datum_rdd.repartition(n_cpus)
+
+      util.log.info(
+        f"... exploding video {cls.VIDEO_URI} into {cls.N_FRAMES} images ...")
+      def get_num_pixels(sd):
+        if sd.camera_image:
+          im = sd.camera_image.image
+          h, w = im.shape[:2]
+          return h * w
+        else:
+          return 0
+      total_pixels = datum_rdd.map(get_num_pixels).sum()
+      util.log.info(
+        f"... exploded {1e-9 * total_pixels} total Gigapixels.")
 
   ## StampedDatumTableFactory Impl
 
@@ -189,7 +286,7 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
 
     # Generate URIs ...
     uris = cls.get_image_uris()
-    uri_rdd = spark.sparkContext.parallelize(uris, numSlices=len(uris))
+    uri_rdd = spark.sparkContext.parallelize(uris)
     util.log.info(f"Creating datums for {len(uris)} images ...")
 
     datum_rdd = uri_rdd.map(cls.create_stamped_datum)
@@ -205,6 +302,24 @@ def load_image(path):
   # Defined at package-level for easier serialization
   import imageio
   return imageio.imread(path)
+
+
+def video_to_pngs(video_uri, out_dir, preserve_mtime=True):
+  import math
+  import imageio
+  from tqdm import tqdm
+
+  out_dir = Path(out_dir)
+  out_dir.mkdir(parents=True, exist_ok=True)
+
+  r = imageio.get_reader(video_uri)
+  n_frames = r.count_frames()
+  n_zfill = int(math.log10(n_frames)) + 1
+
+  for i in tqdm(range(n_frames)):
+    im = r.get_data(i)
+    dest = out_dir / (f'frame_%s.png' % str(i).zfill(n_zfill))
+    imageio.imwrite(dest, im, compress_level=1) # Fastest
 
 
 class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
@@ -240,7 +355,9 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
     OR a list of paths `image_paths`.
 
     If `timestamp_use` is not null, we will infer timestamps by stat-ing the
-    files.
+    files and using the given stat attribute.  We may induce "fake" timestamps
+    (off by a few nanoseconds) if many files have the same timestamp.  
+    Alternatively, you can provide a list of nanostamps `timestamp_use` to use.
 
     Use this factory-factory function to produce a factory for your images,
     and then:
@@ -272,7 +389,7 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
       image_paths = image_paths[:limit]
 
     image_timestamps = None
-    if timestamp_use is not None:
+    if isinstance(timestamp_use, six.string_types):
       def get_nanostamp(path):
         res = path.lstat()
         t_sec = getattr(res, timestamp_use)
@@ -281,6 +398,24 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
       image_timestamps = [
         get_nanostamp(p) for p in image_paths
       ]
+
+      # Ensure we don't induce any timestamp collisions.  All images are
+      # distinct, so they should have distinct timestamps.  If the mitigation
+      # below 
+      t_to_count = {}
+      distinct_t = []
+      for t in image_timestamps:
+        if t not in t_to_count:
+          distinct_t.append(t)
+          t_to_count[t] = 1
+        else:
+          distinct_t.append(t + t_to_count[t])
+            # Add a few nanos to make distinct
+          t_to_count[t] += 1
+      image_timestamps = distinct_t
+
+    elif timestamp_use is not None:
+      image_timestamps = list(timestamp_use)
 
     class MyAdhocImagePathsSDTFactory(cls):
       IMAGE_PATHS = image_paths
@@ -305,7 +440,7 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
     uris = []
     for i, p in enumerate(cls.IMAGE_PATHS):
       if cls.IMAGE_TIMESTAMPS is None:
-        t = i
+        t = i + 1
       else:
         t = cls.IMAGE_TIMESTAMPS[i]
 
@@ -368,9 +503,20 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
 
     # Generate URIs ...
     uris = cls.get_image_uris()
-    uri_rdd = spark.sparkContext.parallelize(uris, numSlices=len(uris))
+    uri_rdd = spark.sparkContext.parallelize(uris)
     util.log.info(f"Creating datums for {len(uris)} images ...")
 
     datum_rdd = uri_rdd.map(cls.create_stamped_datum)
 
     return [datum_rdd]
+
+
+if __name__ == '__main__':
+  F = AdhocVideosSDTFactory.create_factory_for_video(
+        '/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/dubs-gym-bluetiful-subie-lidar-comparison.MOV',
+        asset_cache_dir='/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/dubs-gym-bluetiful-subie-lidar-comparison.MOV_psegs_cache')
+  F.maybe_build_cache()
+
+  # video_to_pngs(
+  #   '/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/dubs-gym-bluetiful-subie-lidar-comparison.MOV',
+  #   '/outer_root/media/970-evo-plus-raid0/hloc_out/anon.anon.dubs-gym-bluetiful-subie-lidar-comparison.MOV/images/')

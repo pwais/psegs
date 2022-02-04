@@ -23,16 +23,30 @@ def test_AdhocImagePathsSDTFactory_create_factory_for_images():
   # Borrow the COLMAP test images
   IMAGES_DIR = testutil.test_fixtures_dir() / 'test_colmap' / 'images'
 
-
   F = ap.AdhocImagePathsSDTFactory.create_factory_for_images(
-            images_dir=IMAGES_DIR)
+            images_dir=IMAGES_DIR,
+            timestamp_use=None)
+              # Force sequential timestamps for reproducibility
 
   with testutil.LocalSpark.sess() as spark:
     sdt = F.create_sd_table()
     
-    sd_df_actual = sdt.to_spark_df()
-    sd_df_actual.show()
+    # Let's do a quick URI check, in part for the reader to see what we expect:
+    expected_uris = [
+      'psegs://dataset=anon&split=anon&segment_id=images&timestamp=1&topic=camera_adhoc&extra.AdhocImagePathsSDTFactory.image_path=/opt/psegs/test/fixtures/test_colmap/images/frame_00000.jpg',
+      'psegs://dataset=anon&split=anon&segment_id=images&timestamp=2&topic=camera_adhoc&extra.AdhocImagePathsSDTFactory.image_path=/opt/psegs/test/fixtures/test_colmap/images/frame_00003.jpg',
+      'psegs://dataset=anon&split=anon&segment_id=images&timestamp=3&topic=camera_adhoc&extra.AdhocImagePathsSDTFactory.image_path=/opt/psegs/test/fixtures/test_colmap/images/frame_00006.jpg',
+      'psegs://dataset=anon&split=anon&segment_id=images&timestamp=4&topic=camera_adhoc&extra.AdhocImagePathsSDTFactory.image_path=/opt/psegs/test/fixtures/test_colmap/images/frame_00009.jpg',
+      'psegs://dataset=anon&split=anon&segment_id=images&timestamp=5&topic=camera_adhoc&extra.AdhocImagePathsSDTFactory.image_path=/opt/psegs/test/fixtures/test_colmap/images/frame_00012.jpg',
+      'psegs://dataset=anon&split=anon&segment_id=images&timestamp=6&topic=camera_adhoc&extra.AdhocImagePathsSDTFactory.image_path=/opt/psegs/test/fixtures/test_colmap/images/frame_00015.jpg',
+      'psegs://dataset=anon&split=anon&segment_id=images&timestamp=7&topic=camera_adhoc&extra.AdhocImagePathsSDTFactory.image_path=/opt/psegs/test/fixtures/test_colmap/images/frame_00030.jpg',
+      'psegs://dataset=anon&split=anon&segment_id=images&timestamp=8&topic=camera_adhoc&extra.AdhocImagePathsSDTFactory.image_path=/opt/psegs/test/fixtures/test_colmap/images/frame_00033.jpg'
+    ]
+    actual_uris = sdt.as_uri_rdd().map(lambda x: str(x)).collect()
+    actual_uris.sort()
+    assert actual_uris == expected_uris
 
+    sd_df_actual = sdt.to_spark_df()
     testutil.check_stamped_datum_dfs_equal(
       spark,
       sd_df_actual,

@@ -126,6 +126,23 @@ def diff_of_pprint(v1, v2):
   return difftxt
 
 
+# TODO: make these work for classes... rowadapter will only do objects
+def save_rowized_pkl(obj, path):
+  import pickle
+  from oarphpy.spark import RowAdapter
+  row = RowAdapter.to_row(obj)
+  with open(path, 'wb') as f:
+    pickle.dump(row, f, protocol=3) # Support older python
+
+
+def load_rowized_pkl(path):
+  import pickle
+  from oarphpy.spark import RowAdapter
+  with open(path, 'rb') as f:
+    row = pickle.load(f)
+  return RowAdapter.from_row(row)
+
+
 # Stolen from oarphpy RowAdapter ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # def _get_classname_from_obj(o):
 #   # Based upon https://stackoverflow.com/a/2020083

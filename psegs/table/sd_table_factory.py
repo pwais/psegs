@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from psegs import util
 from psegs.datum import URI
 from psegs.table.sd_table import StampedDatumTable
 
@@ -38,7 +39,7 @@ class StampedDatumTableFactory(object):
       
       from pyspark import StorageLevel
       datum_rdd = datum_rdd.persist(StorageLevel.MEMORY_AND_DISK)
-      return StampedDatumTable.from_datum_rdd(spark, datum_rdd)
+      return StampedDatumTable.from_datum_rdd(datum_rdd, spark=spark)
 
   @classmethod
   def build_cache(cls, spark=None, only_segments=None, table_root=''):
@@ -311,3 +312,86 @@ class StampedDatumTableFactory(object):
     return sd_df.rdd.map(cls.from_row)
   
   
+class ParquetSDTFactory(StampedDatumTableFactory):
+  PQ_DIRS = []
+
+  @classmethod
+  def factory_for_sd_subdirs(cls, pq_base_path, sd_dir_name='stamped_datums'):
+    from pathlib import Path
+    pq_dirs = sorted(
+                p
+                for p in Path(pq_base_path).rglob('*')
+                if (p.is_dir and p.name == sd_dir_name))
+    
+    class MyPQSDTFactory(cls):
+      PQ_DIRS = pq_dirs
+
+    return MyPQSDTFactory
+
+  @classmethod
+  def read_spark_df(cls, spark=None):
+    from psegs.spark import Spark
+    with Spark.sess(spark) as spark:
+      df = None
+      for p in cls.PQ_DIRS:
+        p_df = spark.read.parquet(str(p))
+        df = p_df if df is None else df.union(p_df)
+      return df
+
+  @classmethod
+  def read_seg_uri_rdd(cls, spark=None):
+    df = cls.read_spark_df(spark=spark)
+    seg_col_df = df.select(
+                    df['uri.dataset'].alias('dataset'),
+                    df['uri.split'].alias('split'),
+                    df['uri.segment_id'].alias('segment_id'))
+    seg_col_df = seg_col_df.distinct()
+
+    def to_uri(row):
+      return URI(
+              dataset=row.dataset,
+              split=row.split,
+              segment_id=row.segment_id)
+    
+    uri_rdd = seg_col_df.rdd.map(to_uri)
+    return uri_rdd
+
+  ## StampedDatumTableFactory Impl
+
+  @classmethod
+  def _get_all_segment_uris(cls):
+    seg_uri_rdd = cls.read_seg_uri_rdd()
+    return sorted(seg_uri_rdd.collect())
+
+  @classmethod
+  def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
+    if existing_uri_df is not None:
+      util.log.info(
+        f"Note: resume mode unsupported, got existing_uri_df {existing_uri_df}")
+    
+    seg_uri_rdd = cls.read_seg_uri_rdd(spark=spark)
+    if only_segments:
+      def has_match(s):
+        return any(
+              URI.from_str(suri).soft_matches_segment_of(s)
+              for suri in only_segments)
+      seg_uri_rdd = seg_uri_rdd.filter(has_match)
+    segs_to_load = seg_uri_rdd.collect()
+
+    util.log.info(f"Creating datum RDDs for {len(segs_to_load)} segments ...")
+
+    union_df = cls.read_spark_df(spark=spark)
+    datum_rdds = []
+    for suri in segs_to_load:
+      seg_df = union_df.filter(
+                (union_df.dataset == suri.dataset) &
+                (union_df.split == suri.split) &
+                (union_df.segment_id == suri.segment_id))
+
+      from psegs.table.sd_table import StampedDatumTable
+      datum_rdd = StampedDatumTable.datum_df_to_datum_rdd(seg_df)
+      datum_rdds.append(datum_rdd)
+
+    util.log.info(f"... created datum RDDs.")
+
+    return datum_rdds
