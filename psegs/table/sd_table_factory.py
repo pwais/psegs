@@ -322,7 +322,7 @@ class ParquetSDTFactory(StampedDatumTableFactory):
                 p
                 for p in Path(pq_base_path).rglob('*')
                 if (p.is_dir and p.name == sd_dir_name))
-    
+
     class MyPQSDTFactory(cls):
       PQ_DIRS = pq_dirs
 

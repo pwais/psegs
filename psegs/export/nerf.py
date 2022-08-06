@@ -24,8 +24,11 @@ def export_sdt_to_blender_format(
       outdir,
       splits_to_write=('train', 'test', 'val'),
       resize_max_h=-1,
-      img_ext='png',
-      only_cameras=None):
+      img_ext='jpg',
+      only_cameras=None,
+      limit=-1,
+      include_file_extensions_in_keys=False,
+      use_relative_paths=True):
   """
   Given a `:class:`~psegs.table.StampedDatumTable` instance, export the 
   `CameraImage` images (and other metadata) to `outdir` in the "Blender format"
@@ -41,6 +44,13 @@ def export_sdt_to_blender_format(
       height in pixels.
     img_ext (str): Save images in this format.
     only_cameras (List[str]): Only export these camera topics.
+    limit (int): Sample this number of frames uniformly.
+    include_file_extensions_in_keys (bool): Standard NeRF datasets don't
+      include the image file extensions in `transforms_*.json` and all image
+      paths are assumed to end in '.png'.  Use this option to force-include
+      file extensions.
+    use_relative_paths (bool): Embed relative file paths in the exported
+      `transforms_*.json` files (some NeRF Impls *require* relative paths)
 
   References:
    * Original NeRF Blender files: https://github.com/bmild/nerf/issues/59
@@ -66,6 +76,19 @@ def export_sdt_to_blender_format(
                   only_types=['camera_image'],
                   only_topics=only_cameras)
   
+  def has_rgb(stamped_datum):
+    ci = stamped_datum.camera_image
+    return ci.has_rgb()
+  datum_rdd = datum_rdd.filter(has_rgb)
+
+  if limit >= 0:
+    n_total = datum_rdd.count()
+    frac = float(limit) / max(n_total, 1)
+    datum_rdd = datum_rdd.sample(
+                  fraction=frac,
+                  withReplacement=False,
+                  seed=1337)
+
   # Try to favor fewer, longer-lived python processes
   from oarphpy.spark import cluster_cpu_count
   from psegs.spark import Spark
@@ -82,8 +105,6 @@ def export_sdt_to_blender_format(
   def save_image(stamped_datum):
     import imageio
     ci = stamped_datum.camera_image
-    if not ci.has_rgb():
-      return False
     fname = (
       str(stamped_datum.uri.topic) + "." + 
       str(stamped_datum.uri.timestamp) + "." + img_ext)
@@ -95,42 +116,98 @@ def export_sdt_to_blender_format(
     frame['psegs_uri'] = str(stamped_datum.uri)
     frame['height'] = h
     frame['width'] = w
+    frame['psegs_rescaled'] = 1.0
     if resize_max_h >= 0 and h > resize_max_h:
       import cv2
-      th = resize_max_h
-      tw = (float(w) / h) * th
+      th = int(resize_max_h)
+      tw = int((float(w) / h) * th)
       image = cv2.resize(image, (tw, th))
       frame['height'] = th
       frame['width'] = tw
+      frame['psegs_rescaled'] = float(tw) / w
     
     imageio.imsave(dest, image)
     
     c2w = ci.ego_pose['ego', 'world']
     # TODO FIXME  should be camera frame? !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    # w2c = ci.ego_pose['world', 'ego']
+    
+    # import numpy as np
+    # opencv2opengl =  np.array([
+    #           [ 1.,   0.,   0., 0],
+    #           [ 0.,  -1.,   0., 0],
+    #           [ 0.,   0.,  -1., 0],
+    #           [ 0.,   0.,  0, 1],
+    #         ])
+    # transform_matrix = np.linalg.inv(
+    #   opencv2opengl @ w2c.get_transformation_matrix(homogeneous=True))
+
     transform_matrix = c2w.get_transformation_matrix(homogeneous=True)
     frame['transform_matrix'] = transform_matrix.tolist()
-    frame['file_path'] = str(dest).replace('.' + img_ext, '')
+
+    if include_file_extensions_in_keys:
+      frame['file_path'] = str(dest)
+    else:
+      frame['file_path'] = str(dest).replace('.' + img_ext, '')
         # NB: Dataset readers are supposed to append the .png suffix :S
+
+    if use_relative_paths:
+      frame['file_path'] = str(Path(frame['file_path']).relative_to(outdir))
 
     fov_h, fov_v = ci.get_fov()
     frame['camera_angle_x'] = fov_h
       # NB: Readers will compute somthing like:
       # focal = .5 * image_width / np.tan(.5 * camera_angle_x)
 
+    # Some readers accept all the intrinsics
+    # frame['camera_angle_y'] = fov_v
+    # print('hacks disable the distortion')
+    fx = ci.K[0, 0]
+    fy = ci.K[1, 1]
+    cx = ci.K[0, 2]
+    cy = ci.K[1, 2]
+    frame['fx'] = fx * frame['psegs_rescaled']
+    frame['fy'] = fy * frame['psegs_rescaled']
+    frame['cx'] = cx * frame['psegs_rescaled']
+    frame['cy'] = cy * frame['psegs_rescaled']
+    frame['w'] = ci.width
+    frame['h'] = ci.height
+
+    # if 'colmap.camera_params_raw_json' in ci.extra:
+    #   params_raw = ci.extra['colmap.camera_params_raw_json']
+      
+    #   # FMI https://github.com/colmap/colmap/blob/e180948665b03c4a12d45e2ca39a589f42fdbda6/src/base/camera_models.h#L235
+    #   if ci.extra.get('colmap.camera_model_name') in ('OPENCV', 'FULL_OPENCV'):
+    #     params = json.loads(params_raw)
+    #     k1, k2, p1, p2 = params[4:8] # FULL_OPENCV has more ...
+
+    #     frame['k1'] = k1
+    #     frame['k2'] = k2
+    #     frame['p1'] = p1
+    #     frame['p2'] = p2
+
     return frame
   
-  frames = datum_rdd.map(save_image).filter(lambda x: x).collect()
+  IMAGES_BASE_DIR.mkdir(parents=True, exist_ok=True)
+  frames = datum_rdd.map(save_image).collect()
+  frames = [f for f in frames if f]
+  frames = sorted(frames, key=lambda f: f['file_path'])
   util.log.info(f"... saved {len(frames)} input images frames ...")
-  
-  frames.sort(lambda f: f['file_path'])
 
-  camera_angle_x = frames[0]['camera_angle_x'] 
-    # This should be the same for all cameras
-  
   transforms_data = {
-    'camera_angle_x': camera_angle_x,
     'frames': frames,
   }
+
+  KEYS_TO_MAKE_GLOBAL = (
+    'camera_angle_x', 'camera_angle_y',
+    'cx', 'cy', 'w', 'h',
+    'k1', 'k2', 'p1', 'p2',
+  )
+  f0 = frames[0]
+  for k in KEYS_TO_MAKE_GLOBAL:
+    if k in f0:
+      transforms_data[k] = f0[k]    
 
   for split in splits_to_write:
     transforms_dest = outdir / f'transforms_{split}.json' 

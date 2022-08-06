@@ -17,6 +17,8 @@
 # This module helps convert COLMAP reconstructions to PSegs segments.
 # pycolmap is a soft dependency for this module
 # To enable: `pip3 install pycolmap>=0.1.0``
+
+from psegs import util
 try:
   import pycolmap
 except ImportError:
@@ -27,10 +29,10 @@ import copy
 import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from psegs import datum
-from psegs import util
 from psegs.table.sd_table import StampedDatumTable
 from psegs.table.sd_table_factory import StampedDatumTableFactory
 
@@ -119,6 +121,7 @@ def colmap_recon_create_camera_image(
     'colmap.camera_params_raw_json': json.dumps(list(camera.params)),
     'colmap.camera_model_name': camera.model_name,
   }
+  print('extra', extra)
 
   R = iinfo.rotation_matrix()
   T = iinfo.tvec
@@ -259,7 +262,11 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     return cls.PSEGS_ASSETS_DIR / 'npy_cached'
 
   @classmethod
-  def create_imgpath_to_uri_and_images(cls, sd_table, only_topics=None):
+  def create_imgpath_to_uri_and_images(
+          cls,
+          sd_table,
+          only_topics=None,
+          resize_image_max_height=-1):
     
     # Select the datums to export
     datum_rdd = sd_table.get_datum_rdd_matching(
@@ -286,6 +293,14 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
         str(stamped_datum.uri.timestamp) + ".png")
       dest = cls.COLMAP_IMAGES_DIR / fname
       image = ci.image
+
+      h, w = image.shape[:2]
+      if (resize_image_max_height >= 0 and h > resize_image_max_height):
+        scale = float(resize_image_max_height) / h
+        th = int(scale * h)
+        tw = int(scale * w)
+        image = cv2.resize(image, (tw, th))
+
       imageio.imsave(dest, image)
       return str(stamped_datum.uri), str(dest)
     

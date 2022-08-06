@@ -55,6 +55,8 @@ class Spark(spark.SessionFactory):
     'spark.executorEnv.LINES': '80',
       # These settings make the `mdv` python package happy when we use it in a
       # Spark executor that has no terminal
+    
+    'spark.local.dir': '/outer_root/media/optane800/spark_cache',
   }
 
 

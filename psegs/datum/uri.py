@@ -88,7 +88,7 @@ class URI(object):
   ## Core Selection
 
   dataset = attr.ib(default='', type='str')
-  """str: E.g. 'argoverse'"""
+  """str: E.g. 'kitti'"""
   
   split = attr.ib(default='', type='str')
   """str: E.g. 'train'"""

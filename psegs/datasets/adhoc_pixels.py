@@ -24,7 +24,7 @@ from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
 ###############################################################################
-## StampedDatumTableFactory for an Video
+## StampedDatumTableFactory for a Video
 
 
 def read_frame(video_uri, frame_idx):
@@ -249,7 +249,8 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
 
       # Try to favor longer-lived python processes
       from oarphpy.spark import cluster_cpu_count
-      n_cpus = cluster_cpu_count(spark)
+      n_cpus = min(cluster_cpu_count(spark), 8)
+      util.log.info('fixme too many cpus doesnt work with ffmpeg')
       datum_rdd = datum_rdd.repartition(n_cpus)
 
       util.log.info(
@@ -452,11 +453,11 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
   @classmethod
   def create_stamped_datum(cls, uri):
     img_path = Path(uri.extra['AdhocImagePathsSDTFactory.image_path'])
-    if img_path.suffix.lower == '.jpg':
+    if img_path.suffix.lower() == '.jpg':
       from oarphpy import util as oputil
-      with open(rbg_path, 'rb') as f:
+      with open(img_path, 'rb') as f:
         w, h = oputil.get_jpeg_size(f.read(1024))
-    elif img_path.suffix.lower == '.png':
+    elif img_path.suffix.lower() == '.png':
       from psegs.util import misc
       with open(img_path, 'rb') as f:
         w, h = misc.get_png_wh(f.read(1024))
@@ -513,8 +514,8 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
 
 if __name__ == '__main__':
   F = AdhocVideosSDTFactory.create_factory_for_video(
-        '/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/dubs-gym-bluetiful-subie-lidar-comparison.MOV',
-        asset_cache_dir='/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/dubs-gym-bluetiful-subie-lidar-comparison.MOV_psegs_cache')
+        '/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/lidar_hero10/image_capture_continuous/GX010018.MP4',
+        asset_cache_dir='/outer_root/media/970-evo-plus-raid0/iphone_vids_to_sfm/vids_to_sfm/lidar_hero10_winter_stinsin_GX010018.MP4_cache')
   F.maybe_build_cache()
 
   # video_to_pngs(

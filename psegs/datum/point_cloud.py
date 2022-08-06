@@ -542,7 +542,6 @@ class PointCloud(object):
 
     xyz = self.get_xyz_cloud()
     xyz = w2p.apply(xyz).T
-    print('xyz', xyz.shape)
     if xyz.shape[0] > max_num_points:
       idx = np.random.choice(
               np.arange(xyz.shape[0]), max_num_points)
