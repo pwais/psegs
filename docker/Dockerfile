@@ -7,10 +7,10 @@ RUN chmod a+rwx /etc/bash.bashrc
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install -r /tmp/requirements.txt
 
-# Pytorch3d
-RUN \
-  pip3 install torch==1.9.0+cu111 torchvision==0.9.2+cu111 torchaudio==0.8.2 && \
-  pip3 install pytorch3d==0.6.0 -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py38_cu111_pyt190/download.html
+# # Pytorch3d
+# RUN \
+#   pip3 install torch==1.9.0+cu111 torchvision==0.9.2+cu111 torchaudio==0.8.2 && \
+#   pip3 install pytorch3d==0.6.0 -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py38_cu111_pyt190/download.html
 
 RUN \
   apt-get update && \

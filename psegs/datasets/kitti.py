@@ -1,4 +1,4 @@
-# Copyright 2020 Maintainers of PSegs
+# Copyright 2023 Maintainers of PSegs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -1162,8 +1162,7 @@ class KITTISDTable(StampedDatumTableFactory):
       import zipfile
       path = cls.FIXTURES.zip_path(archive)
       cls._get_file_bytes_archives[archive] = zipfile.ZipFile(path)
-      
-    
+
     try:
       return cls._get_file_bytes_archives[archive].read(entryname)
     except Exception as e:
