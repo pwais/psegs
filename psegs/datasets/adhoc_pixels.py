@@ -91,6 +91,18 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
         wrapped `CameraImage` instances.
      * Register the returned class to a PSegs `UnionFactory` as part of a
         larger collection of segments.
+      
+
+
+    TODO:
+    for f in `ls /outer_root/media/mai-tank/vids_to_sfm_temp/` ; do echo $f ; \
+      mkdir -p /outer_root/media/970evo_2/vids_to_sfm_temp_expanded2/${f}_expanded ; \
+        cd /outer_root/media/970evo_2/vids_to_sfm_temp_expanded2/${f}_expanded && \
+          ffmpeg -i /outer_root/media/mai-tank/vids_to_sfm_temp/${f} -qscale:v 2 -framerate 5 -vf scale=-1:1024 ffmpeg_extracted_${f}_1024_%9d.jpg
+          cd - ; \
+       done
+
+
     """
   
     import imageio

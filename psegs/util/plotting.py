@@ -806,22 +806,25 @@ def sample_to_html(
 
         return row.uri.timestamp, image
 
-      iter_t_image = sample_sd_df.rdd.map(_to_t_debug_image).collect()
-      images = [
-        image
-        for t, image in sorted(iter_t_image, key=lambda ti: ti[0])
-      ]
-
-      # Global re-scale for depth debug coloring
-      if topic in depth_camera_topics:
-        im_min = min(i.min() for i in images)
-        im_max = min(i.max() for i in images)
+      if sample_sd_df.rdd.isEmpty():
+        html = "<i>No images to viz</i>"
+      else:
+        iter_t_image = sample_sd_df.rdd.map(_to_t_debug_image).collect()
         images = [
-          (255 * 
-            (i.astype('float') - im_min) / (im_max - im_min)).astype('uint8')
-          for i in images
+          image
+          for t, image in sorted(iter_t_image, key=lambda ti: ti[0])
         ]
-      html = images_to_html_video(images, fps=video_fps)
+
+        # Global re-scale for depth debug coloring
+        if topic in depth_camera_topics:
+          im_min = min(i.min() for i in images)
+          im_max = min(i.max() for i in images)
+          images = [
+            (255 * 
+              (i.astype('float') - im_min) / (im_max - im_min)).astype('uint8')
+            for i in images
+          ]
+        html = images_to_html_video(images, fps=video_fps)
       if topic in depth_camera_topics:
         footer = """
           <br/><i>Depth coloring with {period_meters}-meter hue period</i><br/>
