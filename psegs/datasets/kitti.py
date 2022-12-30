@@ -14,7 +14,6 @@
 
 import math
 import os
-import tempfile
 from collections import defaultdict
 from pathlib import Path
 
@@ -1064,7 +1063,6 @@ class KITTISDTable(StampedDatumTableFactory):
   @classmethod
   def _get_all_segment_uris(cls):
     import zipfile
-    from oarphpy import util as oputil
     
     uris = set()
     for archive_path in cls._get_all_archive_paths():
