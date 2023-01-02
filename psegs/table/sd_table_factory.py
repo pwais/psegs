@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
+import attr
 
 from psegs import util
 from psegs.datum import URI
@@ -39,49 +42,56 @@ class StampedDatumTableFactory(object):
       
       from pyspark import StorageLevel
       datum_rdd = datum_rdd.persist(StorageLevel.MEMORY_AND_DISK)
+
       return StampedDatumTable.from_datum_rdd(datum_rdd, spark=spark)
 
   @classmethod
-  def build_cache(cls, spark=None, only_segments=None, table_root=''):
+  def save_parquet(
+        cls,
+        dest_dir,
+        only_segments=None,
+        existing_uri_df=None,
+        auto_resume_incomplete=True,
+        spark=None):
+    
     from psegs import util
     from psegs.spark import Spark
     
-    if not table_root:
-      from psegs.conf import C
-      table_root = C.SD_TABLE_ROOT / 'stamped_datums'
+    dest_dir = Path(dest_dir)
 
-    with Spark.sess(spark) as spark:
-      existing_uri_df = None
-      if not util.missing_or_empty(cls.table_root()):
-        existing_uri_df = cls.as_uri_df(spark)
-        if only_segments:
-          seg_uris = [URI.from_str(s).to_segment_uri() for s in only_segments]
+    if auto_resume_incomplete and existing_uri_df is None and dest_dir.exists():
+      util.log.info(f"Attempting to resume from {dest_dir} ...")
 
-          existing_uri_df = existing_uri_df.filter(
-                              existing_uri_df.dataset.isin(
-                                [u.dataset for u in seg_uris]) &
-                              existing_uri_df.split.isin(
-                                [u.split for u in seg_uris]) &
-                              existing_uri_df.segment_id.isin(
-                                [u.segment_id for u in seg_uris]))
-
-      sd_rdds = cls._create_datum_rdds(
+      F = ParquetSDTFactory.factory_for_sd_subdirs(dest_dir)
+      existing_uri_df = F.read_uri_df(spark=spark)
+      
+      if existing_uri_df is not None:
+        util.log.info(
+          f"... found {existing_uri_df.count()} datums in {dest_dir} ...")
+      else:
+        util.log.info(f"... found no datum data in {dest_dir} ...")
+  
+    if only_segments:
+      only_segments = [URI.from_str(s).to_segment_uri() for s in only_segments]
+    
+    sd_rdds = cls._create_datum_rdds(
                         spark, 
                         existing_uri_df=existing_uri_df,
                         only_segments=only_segments)
-      class StampedDatumDFThunk(object):
-        def __init__(self, sd_rdd):
-          self.sd_rdd = sd_rdd
-        def __call__(self):
-          return cls._sd_rdd_to_sd_df(spark, self.sd_rdd)
-      df_thunks = [StampedDatumDFThunk(sd_rdd) for sd_rdd in sd_rdds]
-      Spark.save_df_thunks(
-        df_thunks,
-        path=str(table_root),
+
+    sd_tables = [
+      StampedDatumTable.from_datum_rdd(sd_rdd) for sd_rdd in sd_rdds
+    ]
+
+    from psegs.spark import save_sd_tables
+    save_sd_tables(
+      sd_tables,
+      spark=spark,
+      spark_save_opts=dict(
+        path=dest_dir / 'stamped_datums',
         format='parquet',
         partitionBy=cls.PARTITION_KEYS,
-        compression='lz4')
-
+        compression='zstd'))
 
   ## Subclass API - Datasets should provide ETL to lists of RDD[StampedDatum]
 
@@ -259,22 +269,22 @@ class StampedDatumTableFactory(object):
     """This method is FINAL! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"""
     return RowAdapter.from_row(row)
 
-  @classmethod
-  def as_uri_df(cls, spark):
-    if util.missing_or_empty(cls.table_root()):
-      return spark.sparkContext.parallelize([])
-    df = cls.as_df(spark)
+  # @classmethod
+  # def as_uri_df(cls, spark):
+  #   if util.missing_or_empty(cls.table_root()):
+  #     return spark.sparkContext.parallelize([])
+  #   df = cls.as_df(spark)
 
-    import attr
-    colnames = [
-      'uri.' + f.name
-      for f in attr.fields(URI)
-      if f.name not in cls.PARTITION_KEYS
-    ]
-    colnames += [c for c in cls.PARTITION_KEYS]
-      # Use the partition columns for faster filters
-    uri_df = df.select(colnames)
-    return uri_df
+  #   import attr
+  #   colnames = [
+  #     'uri.' + f.name
+  #     for f in attr.fields(URI)
+  #     if f.name not in cls.PARTITION_KEYS
+  #   ]
+  #   colnames += [c for c in cls.PARTITION_KEYS]
+  #     # Use the partition columns for faster filters
+  #   uri_df = df.select(colnames)
+  #   return uri_df
     # COLS = list(URI.__slots__)
     # uri_df = df.select(*COLS)
     # return uri_df
@@ -340,7 +350,11 @@ class ParquetSDTFactory(StampedDatumTableFactory):
 
   @classmethod
   def read_seg_uri_rdd(cls, spark=None):
+    print("TODO ?? uri_df = cls.as_uri_df(spark=spark)")
     df = cls.read_spark_df(spark=spark)
+    if df is None:
+      return None
+
     seg_col_df = df.select(
                     df['uri.dataset'].alias('dataset'),
                     df['uri.split'].alias('split'),
@@ -355,6 +369,49 @@ class ParquetSDTFactory(StampedDatumTableFactory):
     
     uri_rdd = seg_col_df.rdd.map(to_uri)
     return uri_rdd
+
+  @classmethod
+  def read_uri_df(cls, spark=None):
+    print("TODO move to superclass if possible? tho is generally expensive")
+    df = cls.read_spark_df(spark=spark)
+    if df is None:
+      return None
+
+    colnames = [
+      'uri.' + f.name
+      for f in attr.fields(URI)
+      if f.name not in cls.PARTITION_KEYS
+    ]
+    colnames += [c for c in cls.PARTITION_KEYS]
+      # Use the partition columns for faster filters
+    colnames += ['uri.__pyclass__']
+    uri_df = df.select(colnames)
+    return uri_df
+
+#     return uri_df
+
+# def as_uri_df(self, spark=None):
+    
+
+#   def as_uri_rdd(self, spark=None):
+#     if self._spark_df or self._sample:
+#       uri_df = self.as_uri_df(spark=spark)
+#       return uri_df.rdd.map(self.uri_from_row)
+#     else:
+#       datum_rdd = self.to_datum_rdd(spark=spark)
+#       return datum_rdd.map(lambda sd: sd.uri)
+
+
+#     df = cls.read_spark_df(spark=spark)
+#     if df.rdd.isEmpty():
+#       return None
+
+#     def uri_from_row(row):
+#       from oarphpy.spark import RowAdapter
+#       return RowAdapter.from_row(row.uri)
+    
+#     uri_rdd = df.select(df['uri']).rdd.map(uri_from_row)
+#     return uri_rdd
 
   ## StampedDatumTableFactory Impl
 

@@ -16,6 +16,8 @@ from psegs.datasets import kitti_sf
 
 from test import testutil
 
+def test_kitti_sf_build_export():
+  kitti_sf.KITTISF15SDTable.save_parquet('/tmp/yay_pq_test')
 
 def test_kitti_sf_stereo_3d_viz():
   testutil.skip_if_fixture_absent(kitti_sf.Fixtures.EXTERNAL_FIXTURES_ROOT)

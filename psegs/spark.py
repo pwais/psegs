@@ -59,34 +59,44 @@ class Spark(spark.SessionFactory):
     'spark.local.dir': '/outer_root/media/optane800/spark_cache',
   }
 
+def save_sd_tables(
+      sdts,
+      spark=None,
+      compute_df_sizes=True,
+      spark_save_opts=None):
+  
+  df_thunks = [lambda t: t.to_spark_df(spark=spark) for t in sdts]
+  return save_df_thunks(
+    df_thunks,
+    compute_df_sizes=compute_df_sizes,
+    spark_save_opts=spark_save_opts)
 
-  # PSegs Utilities
-
-  @staticmethod
-  def save_df_thunks(df_thunks, compute_df_sizes=True, **save_opts):
-    t = oputil.ThruputObserver(name='save_df_thunks', n_total=len(df_thunks))
-    util.log.info("Going to write in %s chunks ..." % len(df_thunks))
-    while len(df_thunks):
-      df_thunk = df_thunks.pop(0)
-      t.start_block()
-      df = df_thunk()
-      # df = df.persist()
-      # print('df size', df.count())
-      # df.show()
-      num_bytes = 0
-      if compute_df_sizes:
-        df = df.persist()
-        # def getsize(x):#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        #   y = oputil.get_size_of_deep(x)
-        #   print(x.uri.topic, y / (2 **20))
-        #   return y
-        # num_bytes = df.rdd.map(getsize).sum()
-        num_bytes = df.rdd.map(oputil.get_size_of_deep).sum()
-      df.write.save(mode='append', **save_opts)
-      df.unpersist()
-      
-      t.stop_block(n=1, num_bytes=num_bytes)
-      t.maybe_log_progress(every_n=1)
+def save_df_thunks(df_thunks, compute_df_sizes=True, spark_save_opts=None):
+  spark_save_opts = spark_save_opts or {}
+  
+  t = oputil.ThruputObserver(name='save_df_thunks', n_total=len(df_thunks))
+  util.log.info("Going to write in %s chunks ..." % len(df_thunks))
+  while len(df_thunks):
+    df_thunk = df_thunks.pop(0)
+    t.start_block()
+    df = df_thunk()
+    # df = df.persist()
+    # print('df size', df.count())
+    # df.show()
+    num_bytes = 0
+    if compute_df_sizes:
+      df = df.persist()
+      # def getsize(x):#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      #   y = oputil.get_size_of_deep(x)
+      #   print(x.uri.topic, y / (2 **20))
+      #   return y
+      # num_bytes = df.rdd.map(getsize).sum()
+      num_bytes = df.rdd.map(oputil.get_size_of_deep).sum()
+    df.write.save(mode='append', **spark_save_opts)
+    df.unpersist()
+    
+    t.stop_block(n=1, num_bytes=num_bytes)
+    t.maybe_log_progress(every_n=1)
 
 # Expose a NBSpark "subclass" configured for PSegs
 NBSpark = copy.deepcopy(spark.NBSpark)

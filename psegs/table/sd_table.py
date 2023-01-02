@@ -216,7 +216,7 @@ class StampedDatumTable(object):
         dest_dir,
         partition=True,
         mode='overwrite',
-        compression='snappy',
+        compression='zstd',
         spark=None,
         num_partitions=-1):
 
@@ -237,6 +237,7 @@ class StampedDatumTable(object):
     
     spark_df.write.save(**save_opts)
     spark_df.unpersist()
+  
 
 
   ## StampedDatum <-> Table Rows
