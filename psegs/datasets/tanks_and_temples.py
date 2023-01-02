@@ -79,57 +79,58 @@ class TanksAndTemplesSDTable(StampedDatumTableFactory):
 
   @classmethod
   def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
+    assert False, "TODO"
 
-    ## First build indices (saves several minutes per worker per chunk) ...
-    class SDBenchmarkToRawMapper(BenchmarkToRawMapper):
-      FIXTURES = cls.FIXTURES
-    SDBenchmarkToRawMapper.setup(spark=spark)
+    # ## First build indices (saves several minutes per worker per chunk) ...
+    # class SDBenchmarkToRawMapper(BenchmarkToRawMapper):
+    #   FIXTURES = cls.FIXTURES
+    # SDBenchmarkToRawMapper.setup(spark=spark)
 
-    ## ... now build a set of tasks to do ...
-    archive_paths = cls._get_all_archive_paths()
-    task_rdd = _rdd_of_all_archive_datafiles(spark, archive_paths)
-    task_rdd = task_rdd.cache()
-    util.log.info("Discovered %s tasks ..." % task_rdd.count())
+    # ## ... now build a set of tasks to do ...
+    # archive_paths = cls._get_all_archive_paths()
+    # task_rdd = _rdd_of_all_archive_datafiles(spark, archive_paths)
+    # task_rdd = task_rdd.cache()
+    # util.log.info("Discovered %s tasks ..." % task_rdd.count())
     
-    ## ... convert to URIs and filter those tasks if necessary ...
-    if existing_uri_df is not None:
-      # Since we keep track of the original archives and file names, we can
-      # just filter on those.  We'll collect them in this process b/c the
-      # maximal set of URIs is smaller than RAM.
-      def to_task(row):
-        return (row.extra.get('kitti.archive'),
-                row.extra.get('kitti.archive.file'))
-      skip_tasks = set(
-        existing_uri_df.select('extra').rdd.map(to_task).collect())
+    # ## ... convert to URIs and filter those tasks if necessary ...
+    # if existing_uri_df is not None:
+    #   # Since we keep track of the original archives and file names, we can
+    #   # just filter on those.  We'll collect them in this process b/c the
+    #   # maximal set of URIs is smaller than RAM.
+    #   def to_task(row):
+    #     return (row.extra.get('kitti.archive'),
+    #             row.extra.get('kitti.archive.file'))
+    #   skip_tasks = set(
+    #     existing_uri_df.select('extra').rdd.map(to_task).collect())
       
-      task_rdd = task_rdd.filter(lambda t: t not in skip_tasks)
-      util.log.info(
-        "Resume mode: have datums for %s datums; dropped %s tasks" % (
-          existing_uri_df.count(), len(skip_tasks)))
+    #   task_rdd = task_rdd.filter(lambda t: t not in skip_tasks)
+    #   util.log.info(
+    #     "Resume mode: have datums for %s datums; dropped %s tasks" % (
+    #       existing_uri_df.count(), len(skip_tasks)))
     
-    uri_rdd = task_rdd.map(lambda task: kitti_archive_file_to_uri(*task))
-    if only_segments:
-      util.log.info(
-        "Filtering to only %s segments" % len(only_segments))
-      uri_rdd = uri_rdd.filter(
-        lambda uri: any(
-          suri.soft_matches_segment(uri) for suri in only_segments))
+    # uri_rdd = task_rdd.map(lambda task: kitti_archive_file_to_uri(*task))
+    # if only_segments:
+    #   util.log.info(
+    #     "Filtering to only %s segments" % len(only_segments))
+    #   uri_rdd = uri_rdd.filter(
+    #     lambda uri: any(
+    #       suri.soft_matches_segment(uri) for suri in only_segments))
 
-    ## ... run tasks and create stamped datums.
-    # from oarphpy.spark import cluster_cpu_count
-    URIS_PER_CHUNK = os.cpu_count() * 64 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ make class member so can configure to RAM
-    uris = uri_rdd.collect()
-    util.log.info("... creating datums for %s URIs." % len(uris))
+    # ## ... run tasks and create stamped datums.
+    # # from oarphpy.spark import cluster_cpu_count
+    # URIS_PER_CHUNK = os.cpu_count() * 64 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ make class member so can configure to RAM
+    # uris = uri_rdd.collect()
+    # util.log.info("... creating datums for %s URIs." % len(uris))
 
-    datum_rdds = []
-    for chunk in oputil.ichunked(uris, URIS_PER_CHUNK):
-      chunk_uri_rdd = spark.sparkContext.parallelize(chunk)
-      datum_rdd = chunk_uri_rdd.flatMap(cls._iter_datums_from_uri)
-      datum_rdds.append(datum_rdd)
-      # if len(datum_rdds) >= 10:
-      #   break # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # datum_rdds = []
+    # for chunk in oputil.ichunked(uris, URIS_PER_CHUNK):
+    #   chunk_uri_rdd = spark.sparkContext.parallelize(chunk)
+    #   datum_rdd = chunk_uri_rdd.flatMap(cls._iter_datums_from_uri)
+    #   datum_rdds.append(datum_rdd)
+    #   # if len(datum_rdds) >= 10:
+    #   #   break # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    return datum_rdds
+    # return datum_rdds
   
   @classmethod
   def _get_all_archive_paths(cls):

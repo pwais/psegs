@@ -22,6 +22,7 @@ import numpy as np
 from psegs.datum.camera_image import CameraImage
 from psegs.datum.cuboid import Cuboid
 from psegs.datum.point_cloud import PointCloud
+from psegs.datum.matched_pair import MatchedPair
 from psegs.datum.transform import Transform
 from psegs.datum.uri import DatumSelection
 from psegs.datum.uri import URI
@@ -61,6 +62,9 @@ class StampedDatum(object):
 
   transform = attr.ib(type=Transform, default=None)
   """Transform: A transform such as ego pose; topic indicates semantics"""
+
+  matched_pair = attr.ib(type=MatchedPair, default=None)
+  """MatchedPair: A pair of images with pixel-to-pixel matches"""
 
 
 
@@ -242,11 +246,19 @@ CAMERAIMAGE_PROTO = CameraImage(
   extra={'key': 'value'},
 )
 
+MATCHED_PAIR_PROTO = MatchedPair(
+  matches_array=np.ones((10, 4), dtype=np.float32),
+  img1=CAMERAIMAGE_PROTO,
+  img2=CAMERAIMAGE_PROTO,
+  extra={'key': 'value'},
+)
+
 STAMPED_DATUM_PROTO = StampedDatum(
   uri=URI_PROTO,
   camera_image=CAMERAIMAGE_PROTO,
   point_cloud=POINTCLOUD_PROTO,
   cuboids=[CUBOID_PROTO],
   transform=TRANSFORM_PROTO,
+  matched_pair=MATCHED_PAIR_PROTO,
 )
 

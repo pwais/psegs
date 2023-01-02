@@ -24,6 +24,7 @@ from psegs.datum.stamped_datum import URI_PROTO
 from psegs.datum.stamped_datum import TRANSFORM_PROTO
 from psegs.datum.stamped_datum import POINTCLOUD_PROTO
 from psegs.datum.stamped_datum import CAMERAIMAGE_PROTO
+from psegs.datum.stamped_datum import MATCHED_PAIR_PROTO
 from psegs.datum.stamped_datum import STAMPED_DATUM_PROTO
 from psegs.datum.transform import Transform
 from psegs.datum.uri import URI

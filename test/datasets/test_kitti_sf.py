@@ -31,7 +31,7 @@ def test_kitti_sf_stereo_3d_viz():
     cam_to_cam_path = (
       base_dir / f'training/calib_cam_to_cam/{frame.replace("_10", "")}.txt')
     
-    K_2, K_3, baseline, T_00, T_01, P_2, P_3 = kitti_sf.kittisf15_load_K_baseline(open(cam_to_cam_path, 'r').read())
+    K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = kitti_sf.kittisf15_load_calib(open(cam_to_cam_path, 'r').read())
 
     uv_2_uv_3_depth = kitti_sf.kittisf15_to_stereo_matches(disp, baseline, K_2)
 

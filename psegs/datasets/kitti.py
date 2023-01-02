@@ -457,9 +457,6 @@ class Calibration(object):
 
   """
 
-
-  # pykitti 
-
   ### Camera Intrinsics (Rectified)
 
   # NB: We ignore the grey cameras (numbered 0 and 1) because the Benchmarks
@@ -622,7 +619,6 @@ class Calibration(object):
     self.velo_to_cam_2_rect.src_frame = 'ego' # For KITTI, lidar is ego
     self.velo_to_cam_2_rect.dest_frame = 'camera|left'
 
-    
     RT_right_color = datum.Transform(translation=self.T3)
     self.velo_to_cam_3_rect = RT_right_color @ vel_to_cam_left_grey
 

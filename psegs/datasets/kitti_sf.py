@@ -56,7 +56,25 @@ class Fixtures(object):
     print('todo')
 
 
-  ### Testing #################################################################
+  @classmethod
+  def get_all_train_test_frame_ids(cls):
+    import zipfile
+    entries = zipfile.ZipFile(cls.zip_path('data_scene_flow.zip')).namelist()
+    
+    def get_frame_id(path):
+      return Path(path).name.split('.')[0]
+    
+    train_frame_ids = [
+      get_frame_id(p) for p in entries if 'training/image_2' in p
+    ]
+    test_frame_ids = [
+      get_frame_id(p) for p in entries if 'testing/image_2' in p
+    ]
+    return train_frame_ids, test_frame_ids
+
+
+
+  ### Unit Test Support #######################################################
 
   TEST_FIXTURES_ROOT = Path('/tmp/psegs_kitti_sf_test_fixtures')
 
@@ -123,6 +141,7 @@ def kittisf15_load_flow(path):
   flow[invalid_idx, 1] = 0
   return flow[:, :, :2]
 
+
 def kittisf15_load_disp(disp_data):
   import imageio
   
@@ -137,9 +156,13 @@ def kittisf15_load_disp(disp_data):
   disp = img.astype('float32') / 256.
   return disp
 
-def kittisf15_load_K_baseline(cam_to_cam_str):
+
+def kittisf15_load_calib(cam_to_cam_str):
   import numpy as np
   
+  # TODO: See psegs.datasets.kitti.Calibration -- we want to migrate to that
+  # data structure eventually.
+
   # Notes from KITTI Raw Devkit: https://github.com/pratikac/kitti/blob/eba7ba0f36917f72055060e9e59f344b72456cb9/readme.raw.txt#L169
   # calib_cam_to_cam.txt: Camera-to-camera calibration
   # --------------------------------------------------
@@ -180,17 +203,23 @@ def kittisf15_load_K_baseline(cam_to_cam_str):
 
   K2_line = None
   K3_line = None
-  T_00_line = None
-  T_01_line = None
+  R_02_line = None
+  R_03_line = None
+  T_02_line = None
+  T_03_line = None
   for l in cam_to_cam_str.split('\n'):
     if 'P_rect_02' in l:
       K2_line = l
     if 'P_rect_03' in l:
       K3_line = l
     if 'T_02' in l:
-      T_00_line = l
+      T_02_line = l
     if 'T_03' in l:
-      T_01_line = l
+      T_03_line = l
+    if 'R_02' in l:
+      R_02_line = l
+    if 'R_03' in l:
+      R_03_line = l
   
   assert K2_line
   params = K2_line.split('P_rect_02: ')[-1]
@@ -204,25 +233,34 @@ def kittisf15_load_K_baseline(cam_to_cam_str):
   P_3 = np.array(params).reshape([3, 4])
   K_3 = P_3[:3, :3]
 
-  assert T_00_line
-  assert T_01_line
-  params = T_00_line.split('T_02: ')[-1]
+  assert R_02_line
+  assert R_03_line
+  params = R_02_line.split('R_02: ')[-1]
   params = [float(tok.strip()) for tok in params.split(' ') if tok]
-  T_00 = np.array(params)
-  params = T_01_line.split('T_03: ')[-1]
+  R_02 = np.array(params)
+  params = R_03_line.split('R_03: ')[-1]
   params = [float(tok.strip()) for tok in params.split(' ') if tok]
-  T_01 = np.array(params)
+  R_03 = np.array(params)
+
+  assert T_02_line
+  assert T_03_line
+  params = T_02_line.split('T_02: ')[-1]
+  params = [float(tok.strip()) for tok in params.split(' ') if tok]
+  T_02 = np.array(params)
+  params = T_03_line.split('T_03: ')[-1]
+  params = [float(tok.strip()) for tok in params.split(' ') if tok]
+  T_03 = np.array(params)
   
   # Baseline appears to be in meters, resulting images will have depth to
   # about 78 meters
 
-  baseline = np.linalg.norm(T_00 - T_01)
+  baseline = np.linalg.norm(T_02 - T_03)
   
   # Seems calibration is in mm, if we use this baseline then resulting
   # images have depth of ~56,000 (millimeters?)
   # baseline = np.linalg.norm(P_3[:, 3] - P_2[:, 3])
   
-  return K_2, K_3, baseline, T_00, T_01, P_2, P_3
+  return K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3
 
 def kittisf15_to_stereo_matches(disp, baseline, K_2):
   fx = K_2[0, 0]
@@ -328,14 +366,92 @@ def kittisf15_to_stereo_matches(disp, baseline, K_2):
 ###############################################################################
 ### StampedDatumTableFactory Impl
 
-class KITTISDTable(StampedDatumTableFactory):
+class KITTISF15SDTable(StampedDatumTableFactory):
   
   FIXTURES = Fixtures
 
+  # The dataset has about 400 total frames; tune here to control memory usage
+  FRAMES_PER_PARTITION = 50
   
   ## Public API
 
+  @classmethod
+  def _get_all_segment_uris(cls):
+    # In KITTI SF15, there are no sequences, so we make every scene flow
+    # example a distinct segment
+    train_ids, test_ids = cls.FIXTURES.get_all_train_test_frame_ids()
+
+    train_segs = [
+      datum.URI(
+            dataset='kitti-sf15',
+            split='train',
+            segment_id=frame_id,
+            extra={
+              'kitti_sf15.frame_id': frame_id,
+            })
+      for frame_id in train_ids
+    ]
+
+    test_segs = [
+      datum.URI(
+            dataset='kitti-sf15',
+            split='test',
+            segment_id=frame_id,
+            extra={
+              'kitti_sf15.frame_id': frame_id,
+            })
+      for frame_id in test_ids
+    ]
+    
+    return train_segs + test_segs
+
+  @classmethod
+  def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
+
+    ## For KITTI SF15, each frame ID becomes a segment / task ...
+    seg_uris_to_build = cls._get_all_segment_uris()
+    util.log.info(f"Discovered {len(seg_uris_to_build)} segments ...")
+    
+    ## ... skip any segments we already have ...
+    if existing_uri_df is not None:
+      def get_frame_id(row):
+        return row.extra.get('kitti_sf15.frame_id')
+      skip_frame_ids = set(
+        existing_uri_df.select('extra').rdd.map(get_frame_id).collect())
+      seg_uris_to_build = [
+        suri for suri in seg_uris_to_build
+        if suri.extra['kitti_sf15.frame_id'] not in skip_frame_ids
+      ]
+      util.log.info(
+        f"Resume mode: have datums for {len(skip_frame_ids)} frames; "
+        "reduced to f{len(seg_uris_to_build)} tasks")
+    
+    if only_segments:
+      util.log.info(
+        "Filtering to only %s segments" % len(only_segments))
+      seg_uris_to_build = [
+        uri for uri in seg_uris_to_build
+        if any(suri.soft_matches_segment(uri) for suri in only_segments)
+      ]
+
+    ## ... now run tasks and create stamped datums.
+    util.log.info(
+      f"... creating datums for f{len(seg_uris_to_build)} segments.")
+    datum_rdds = []
+    for chunk in oputil.ichunked(seg_uris_to_build, cls.FRAMES_PER_PARTITION):
+      chunk_uri_rdd = spark.sparkContext.parallelize(chunk)
+      datum_rdd = chunk_uri_rdd.flatMap(cls._create_datums_for_segement_uri)
+      datum_rdds.append(datum_rdd)
+
+    return datum_rdds
+
+
   ## Datum Construction Support
+
+  @classmethod
+  def _create_datums_for_segement_uri(cls, seg_uri):
+    # TODO: add scene flow datums, camera image datums as optional, etc
+    return [cls._create_matched_pair(seg_uri)]
 
   @classmethod
   def _get_file_bytes(cls, uri=None, archive=None, entryname=None):
@@ -360,6 +476,16 @@ class KITTISDTable(StampedDatumTableFactory):
         raise Exception((e, archive, uri))
 
   @classmethod
+  def _get_calib(cls, uri):
+    frame_id = uri.extra['kitti_sf15.frame_id']
+    calib_uri = copy.deepcopy(uri)
+    calib_uri.extra['kitti_sf15.archive.path'] = (
+      f'training/calib_cam_to_cam/{frame_id.replace("_10", "")}.txt')
+    calib_uri.extra['kitti_sf15.archive'] = 'data_scene_flow_calib.zip'
+    cam_to_cam_str = cls._get_file_bytes(uri=calib_uri)
+    calib = kittisf15_load_calib(cam_to_cam_str)
+
+  @classmethod
   def _create_camera_image(cls, uri):
     from psegs.util import misc
 
@@ -371,17 +497,29 @@ class KITTISDTable(StampedDatumTableFactory):
       im_bytes = cls._get_file_bytes(uri=uri)
       return imageio.imread(bytearray(im_bytes))
 
-    ego_pose = cls._get_ego_pose(uri)
+    calib = cls._get_calib(uri)
+    K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
 
-    calib = cls._get_calibration(uri)
-    K = calib.K2
-    ego_to_sensor = calib.velo_to_cam_2_rect
-    if 'right' in uri.topic:
-      K = calib.K3
-      ego_to_sensor = calib.velo_to_cam_3_rect
+    if uri.topic == 'camera|left':
+      K = K_2
+      ego_to_sensor = datum.Transform(
+                  dest_frame='ego', # for KITTI SF15, left camera is ego
+                  src_frame='camera|left')
+    elif uri.topic == 'camera|right':
+      K = K_3
+      ego_to_sensor = datum.Transform(
+                  rotation=todo,
+                  translation=todo,
+                  dest_frame='ego', # for KITTI SF15, left camera is ego
+                  src_frame='camera|right')
+    else:
+      raise ValueError(uri.topic)
 
-    extra = mapper.get_extra(uri)
-
+    # for KITTI SF15, left camera is ego
+    ego_pose = datum.Transform(
+                  src_frame='ego',
+                  dest_frame=ego_to_sensor.src_frame)
+    extra = uri.extra
     ci = datum.CameraImage(
           sensor_name=uri.topic,
           image_factory=lambda: _get_image(uri),
@@ -392,7 +530,7 @@ class KITTISDTable(StampedDatumTableFactory):
           K=K,
           ego_to_sensor=ego_to_sensor,
           extra=extra)
-    return datum.StampedDatum(uri=uri, camera_image=ci)
+    return ci
   
   @classmethod
   def _create_matched_pair(cls, uri):
@@ -407,12 +545,8 @@ class KITTISDTable(StampedDatumTableFactory):
       disp_bytes = cls._get_file_bytes(uri=disp_uri)
       disp = kittisf15_load_disp(disp_bytes)
       
-      calib_uri = copy.deepcopy(uri)
-      calib_uri.extra['kitti_sf15.archive.path'] = (
-        f'training/calib_cam_to_cam/{frame_id.replace("_10", "")}.txt')
-      disp_uri.extra['kitti_sf15.archive'] = 'data_scene_flow_calib.zip'
-      cam_to_cam_str = cls._get_file_bytes(uri=calib_uri)
-      K_2, K_3, baseline, T_00, T_01, P_2, P_3 = kittisf15_load_K_baseline(cam_to_cam_str)
+      calib = cls._get_calib(uri)
+      K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
       
       uv_2_uv_3_depth = kittisf15_to_stereo_matches(disp, baseline, K_2)
       return uv_2_uv_3_depth
@@ -439,10 +573,11 @@ class KITTISDTable(StampedDatumTableFactory):
                 matches_factory=lambda: _get_matches(uri),
                 matches_colnames=['x1', 'y1', 'x2', 'y2', 'depth_meters'],
                 extra=uri.extra)
-    return mp
-
-
-
+    
+    sd_uri = copy.deepcopy(uri)
+    sd_uri.topic = 'camera|matches'
+    
+    return datum.StampedDatum(uri=sd_uri, matched_pair=mp)
 
 
 
@@ -460,6 +595,8 @@ class DSUtil(IDatasetUtil):
 
   @classmethod
   def emplace(cls):
+    import os
+
     cls.FIXTURES.maybe_emplace_psegs_kitti_sf_ext()
 
     if not cls.FIXTURES.ROOT.exists():
