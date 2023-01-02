@@ -54,6 +54,7 @@ def test_kitti_sf_stereo_3d_viz():
     scene.add_geometry(pc_tmesh_uvd)
     b = trimesh.exchange.gltf.export_glb(scene)
     with open('/opt/psegs/debug.glb', 'wb') as f:
+      print('debug.glb')
       f.write(b)
     
     import cv2
@@ -66,19 +67,33 @@ def test_kitti_sf_stereo_3d_viz():
     # P_3[:, 3] = T_01
     uv_2 = uv_2_uv_3_depth[:, 0:2][uv_2_uv_3_depth[:, -1] > 0]
     uv_3 = uv_2_uv_3_depth[:, 2:4][uv_2_uv_3_depth[:, -1] > 0]
+    
     xyzh = cv2.triangulatePoints(P_2, P_3, uv_2.T, uv_3.T)
     xyz = xyzh.T.copy()
+    # xyz = xyz[:, :3] / xyz[:, (-1,)]
     xyz = xyz[:, :3] / xyz[:, (-1,)]
     # xyz = xyz[:, :3]
     # xyz = cv2.convertPointsFromHomogeneous(xyzh.T)
     
-    pc_tmesh_xyz = trimesh.points.PointCloud(vertices=xyz.squeeze(), colors=np.zeros_like(xyz))
+    pc_tmesh_xyz = trimesh.points.PointCloud(vertices=xyz.squeeze(), colors=.3 * np.ones_like(xyz))
     scene = trimesh.Scene()
     scene.add_geometry(pc_tmesh_xyz)
     b = trimesh.exchange.gltf.export_glb(scene)
     with open('/opt/psegs/debug.xyz.glb', 'wb') as f:
+      print('debug.xyz.glb')
       f.write(b)
-    breakpoint()
+    
+    
+    scene = trimesh.Scene()
+    scene.add_geometry(pc_tmesh_uvd)
+    scene.add_geometry(pc_tmesh_xyz)
+    b = trimesh.exchange.gltf.export_glb(scene)
+    with open('/opt/psegs/debug.comp.glb', 'wb') as f:
+      print('debug.xyz.glb')
+      f.write(b)
+    
+    
+    # breakpoint()
     assert False
 
 

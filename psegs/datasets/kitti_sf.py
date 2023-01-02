@@ -137,6 +137,44 @@ def kittisf15_load_disp(disp_data):
 def kittisf15_load_K_baseline(cam_to_cam_str):
   import numpy as np
   
+  # Notes from KITTI Raw Devkit: https://github.com/pratikac/kitti/blob/eba7ba0f36917f72055060e9e59f344b72456cb9/readme.raw.txt#L169
+  # calib_cam_to_cam.txt: Camera-to-camera calibration
+  # --------------------------------------------------
+  #   - S_xx: 1x2 size of image xx before rectification
+  #   - K_xx: 3x3 calibration matrix of camera xx before rectification
+  #   - D_xx: 1x5 distortion vector of camera xx before rectification
+  #   - R_xx: 3x3 rotation matrix of camera xx (extrinsic)
+  #   - T_xx: 3x1 translation vector of camera xx (extrinsic)
+  #   - S_rect_xx: 1x2 size of image xx after rectification
+  #   - R_rect_xx: 3x3 rectifying rotation to make image planes co-planar
+  #   - P_rect_xx: 3x4 projection matrix after rectification
+  # Note: When using this dataset you will most likely need to access only
+  # P_rect_xx, as this matrix is valid for the rectified image sequences.
+  #
+  # And: https://github.com/pratikac/kitti/blob/eba7ba0f36917f72055060e9e59f344b72456cb9/readme.raw.txt#L206
+  # example transformations
+  # -----------------------
+  # As the transformations sometimes confuse people, here we give a short
+  # example how points in the velodyne coordinate system can be transformed
+  # into the camera left coordinate system.
+  #
+  # In order to transform a homogeneous point X = [x y z 1]' from the velodyne
+  # coordinate system to a homogeneous point Y = [u v 1]' on image plane of
+  # camera xx, the following transformation has to be applied:
+  # Y = P_rect_xx * R_rect_00 * (R|T)_velo_to_cam * X
+  #
+  # To transform a point X from GPS/IMU coordinates to the image plane:
+  # Y = P_rect_xx * R_rect_00 * (R|T)_velo_to_cam * (R|T)_imu_to_velo * X
+  #
+  # The matrices are:
+  # - P_rect_xx (3x4):         rectfied cam 0 coordinates -> image plane
+  # - R_rect_00 (4x4):         cam 0 coordinates -> rectified cam 0 coord.
+  # - (R|T)_velo_to_cam (4x4): velodyne coordinates -> cam 0 coordinates
+  # - (R|T)_imu_to_velo (4x4): imu coordinates -> velodyne coordinates
+  #
+  # Note that the (4x4) matrices above are padded with zeros and:
+  # R_rect_00(4,4) = (R|T)_velo_to_cam(4,4) = (R|T)_imu_to_velo(4,4) = 1.
+
   K2_line = None
   K3_line = None
   T_00_line = None
@@ -171,8 +209,16 @@ def kittisf15_load_K_baseline(cam_to_cam_str):
   params = T_01_line.split('T_03: ')[-1]
   params = [float(tok.strip()) for tok in params.split(' ') if tok]
   T_01 = np.array(params)
+  
+  # Baseline appears to be in meters, resulting images will have depth to
+  # about 78 meters
+
   baseline = np.linalg.norm(T_00 - T_01)
-  breakpoint()
+  
+  # Seems calibration is in mm, if we use this baseline then resulting
+  # images have depth of ~56,000 (millimeters?)
+  # baseline = np.linalg.norm(P_3[:, 3] - P_2[:, 3])
+  
   return K_2, K_3, baseline, T_00, T_01, P_2, P_3
 
 def kittisf15_to_stereo_matches(disp, baseline, K_2):
