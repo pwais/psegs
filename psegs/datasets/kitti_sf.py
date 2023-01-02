@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from pathlib import Path
 
 import numpy as np
 from oarphpy import util as oputil
 
+from psegs import datum
 from psegs import util
 from psegs.conf import C
 from psegs.datasets.idsutil import IDatasetUtil
+from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
 """
@@ -243,6 +246,8 @@ def kittisf15_to_stereo_matches(disp, baseline, K_2):
   uv_2_uv_3_depth = np.hstack([uvd_2[:, :2], uv_3, uvd_2[:, (-1,)]])
   return uv_2_uv_3_depth
 
+
+
 # def kittisf15_load_sflow(flow, K, baseline, disp0_path, disp1_path):
 #   fx = K[0, 0]
   
@@ -320,7 +325,121 @@ def kittisf15_to_stereo_matches(disp, baseline, K_2):
 #               uvdviz_im2=uvdviz_im2)
 
 
+###############################################################################
+### StampedDatumTableFactory Impl
 
+class KITTISDTable(StampedDatumTableFactory):
+  
+  FIXTURES = Fixtures
+
+  
+  ## Public API
+
+  ## Datum Construction Support
+
+  @classmethod
+  def _get_file_bytes(cls, uri=None, archive=None, entryname=None):
+    """Read bytes for the file referred to by `uri`"""
+
+    if uri is not None:
+      archive = uri.extra['kitti_sf15.archive']
+      entryname = uri.extra['kitti_sf15.archive.path']
+    assert archive and entryname
+
+    # Cache the Zipfiles for faster loading
+    if not hasattr(cls, '_get_file_bytes_archives'):
+      cls._get_file_bytes_archives = {}
+    if archive not in cls._get_file_bytes_archives:
+      import zipfile
+      path = cls.FIXTURES.zip_path(archive)
+      cls._get_file_bytes_archives[archive] = zipfile.ZipFile(path)
+
+    try:
+      return cls._get_file_bytes_archives[archive].read(entryname)
+    except Exception as e:
+        raise Exception((e, archive, uri))
+
+  @classmethod
+  def _create_camera_image(cls, uri):
+    from psegs.util import misc
+
+    image_png = cls._get_file_bytes(uri=uri)
+    width, height = misc.get_png_wh(image_png)
+
+    def _get_image(uri):
+      import imageio
+      im_bytes = cls._get_file_bytes(uri=uri)
+      return imageio.imread(bytearray(im_bytes))
+
+    ego_pose = cls._get_ego_pose(uri)
+
+    calib = cls._get_calibration(uri)
+    K = calib.K2
+    ego_to_sensor = calib.velo_to_cam_2_rect
+    if 'right' in uri.topic:
+      K = calib.K3
+      ego_to_sensor = calib.velo_to_cam_3_rect
+
+    extra = mapper.get_extra(uri)
+
+    ci = datum.CameraImage(
+          sensor_name=uri.topic,
+          image_factory=lambda: _get_image(uri),
+          width=width,
+          height=height,
+          timestamp=uri.timestamp,
+          ego_pose=ego_pose,
+          K=K,
+          ego_to_sensor=ego_to_sensor,
+          extra=extra)
+    return datum.StampedDatum(uri=uri, camera_image=ci)
+  
+  @classmethod
+  def _create_matched_pair(cls, uri):
+
+    def _get_matches(base_uri):
+      frame_id = base_uri.extra['kitti_sf15.frame_id']
+
+      disp_uri = copy.deepcopy(uri)
+      disp_uri.extra['kitti_sf15.archive.path'] = (
+        f'training/disp_occ_0/{frame_id}.png')
+      disp_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
+      disp_bytes = cls._get_file_bytes(uri=disp_uri)
+      disp = kittisf15_load_disp(disp_bytes)
+      
+      calib_uri = copy.deepcopy(uri)
+      calib_uri.extra['kitti_sf15.archive.path'] = (
+        f'training/calib_cam_to_cam/{frame_id.replace("_10", "")}.txt')
+      disp_uri.extra['kitti_sf15.archive'] = 'data_scene_flow_calib.zip'
+      cam_to_cam_str = cls._get_file_bytes(uri=calib_uri)
+      K_2, K_3, baseline, T_00, T_01, P_2, P_3 = kittisf15_load_K_baseline(cam_to_cam_str)
+      
+      uv_2_uv_3_depth = kittisf15_to_stereo_matches(disp, baseline, K_2)
+      return uv_2_uv_3_depth
+
+    frame_id = uri.extra['kitti_sf15.frame_id']
+
+    img1_uri = copy.deepcopy(uri)
+    img1_uri.topic = 'camera|left'
+    img1_uri.extra['kitti_sf15.archive.path'] = (
+        f'training/image_2/{frame_id}.png')
+    img1_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
+    
+    img2_uri = copy.deepcopy(uri)
+    img2_uri.topic = 'camera|right'
+    img2_uri.extra['kitti_sf15.archive.path'] = (
+        f'training/image_3/{frame_id}.png')
+    img2_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
+
+    mp = datum.MatchedPair(
+                matcher_name='kitti_gt',
+                timestamp=uri.timestamp,
+                img1=cls._create_camera_image(img1_uri),
+                img2=cls._create_camera_image(img2_uri),
+                matches_factory=lambda: _get_matches(uri),
+                matches_colnames=['x1', 'y1', 'x2', 'y2', 'depth_meters'],
+                extra=uri.extra)
+    return mp
 
 
 

@@ -1286,12 +1286,13 @@ class KITTISDTable(StampedDatumTableFactory):
     image_png = cls._get_file_bytes(uri=uri)
     width, height = misc.get_png_wh(image_png)
 
+    def _get_image(uri):
+      import imageio
+      im_bytes = cls._get_file_bytes(uri=uri)
+      return imageio.imread(bytearray(im_bytes))
+
     mapper = cls._get_bench2raw_mapper()
     mapper.fill_timestamp(uri)
-
-    # timestamp = int(int(uri.extra['kitti.frame']) * 1e8)
-    # # TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
-    # uri.timestamp = timestamp
 
     ego_pose = cls._get_ego_pose(uri)
 
@@ -1306,7 +1307,8 @@ class KITTISDTable(StampedDatumTableFactory):
 
     ci = datum.CameraImage(
           sensor_name=uri.topic,
-          image_png=bytearray(image_png),
+          image_factory=_get_image,
+          # image_png=bytearray(image_png),
           width=width,
           height=height,
           timestamp=uri.timestamp,

@@ -93,7 +93,7 @@ def test_kitti_sf_stereo_3d_viz():
       f.write(b)
     
     
-    # breakpoint()
+    breakpoint()
     assert False
 
 
