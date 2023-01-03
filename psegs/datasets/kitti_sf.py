@@ -511,16 +511,20 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     calib = cls._get_calib(uri)
     K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
 
+    print("TODO correct kitti RT")
+
     if uri.topic == 'camera|left':
       K = K_2
       ego_to_sensor = datum.Transform(
+                  # rotation=todo,
+                  # translation=todo,
                   dest_frame='ego', # for KITTI SF15, left camera is ego
                   src_frame='camera|left')
     elif uri.topic == 'camera|right':
       K = K_3
       ego_to_sensor = datum.Transform(
-                  rotation=todo,
-                  translation=todo,
+                  # rotation=todo,
+                  # translation=todo,
                   dest_frame='ego', # for KITTI SF15, left camera is ego
                   src_frame='camera|right')
     else:

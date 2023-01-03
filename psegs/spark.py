@@ -73,6 +73,9 @@ def save_sd_tables(
 
 def save_df_thunks(df_thunks, compute_df_sizes=True, spark_save_opts=None):
   spark_save_opts = spark_save_opts or {}
+  if 'path' in spark_save_opts:
+    # JRDD bridge below requires string
+    spark_save_opts['path'] = str(spark_save_opts['path'])
   
   t = oputil.ThruputObserver(name='save_df_thunks', n_total=len(df_thunks))
   util.log.info("Going to write in %s chunks ..." % len(df_thunks))
