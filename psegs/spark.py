@@ -65,7 +65,7 @@ def save_sd_tables(
       compute_df_sizes=True,
       spark_save_opts=None):
   
-  df_thunks = [lambda t: t.to_spark_df(spark=spark) for t in sdts]
+  df_thunks = [lambda: t.to_spark_df(spark=spark) for t in sdts]
   return save_df_thunks(
     df_thunks,
     compute_df_sizes=compute_df_sizes,

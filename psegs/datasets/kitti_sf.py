@@ -65,11 +65,17 @@ class Fixtures(object):
       return Path(path).name.split('.')[0]
     
     train_frame_ids = [
-      get_frame_id(p) for p in entries if 'training/image_2' in p
+      get_frame_id(p)
+      for p in entries
+      if ('training/image_2' in p and '.png' in p)
     ]
+
     test_frame_ids = [
-      get_frame_id(p) for p in entries if 'testing/image_2' in p
+      get_frame_id(p)
+      for p in entries
+      if ('training/image_2' in p and '.png' in p)
     ]
+
     return train_frame_ids, test_frame_ids
 
 
@@ -436,7 +442,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
 
     ## ... now run tasks and create stamped datums.
     util.log.info(
-      f"... creating datums for f{len(seg_uris_to_build)} segments.")
+      f"... creating datums for {len(seg_uris_to_build)} segments.")
     datum_rdds = []
     for chunk in oputil.ichunked(seg_uris_to_build, cls.FRAMES_PER_PARTITION):
       chunk_uri_rdd = spark.sparkContext.parallelize(chunk)
@@ -478,12 +484,17 @@ class KITTISF15SDTable(StampedDatumTableFactory):
   @classmethod
   def _get_calib(cls, uri):
     frame_id = uri.extra['kitti_sf15.frame_id']
+    ksplit = uri.split + 'ing'
+    calib_key = frame_id.replace("_10", "").replace("_11", "")
+    
     calib_uri = copy.deepcopy(uri)
     calib_uri.extra['kitti_sf15.archive.path'] = (
-      f'training/calib_cam_to_cam/{frame_id.replace("_10", "")}.txt')
+      f'{ksplit}/calib_cam_to_cam/{calib_key}.txt')
     calib_uri.extra['kitti_sf15.archive'] = 'data_scene_flow_calib.zip'
     cam_to_cam_str = cls._get_file_bytes(uri=calib_uri)
+    cam_to_cam_str = cam_to_cam_str.decode('utf-8')
     calib = kittisf15_load_calib(cam_to_cam_str)
+    return calib
 
   @classmethod
   def _create_camera_image(cls, uri):
@@ -539,8 +550,9 @@ class KITTISF15SDTable(StampedDatumTableFactory):
       frame_id = base_uri.extra['kitti_sf15.frame_id']
 
       disp_uri = copy.deepcopy(uri)
+      ksplit = uri.split + 'ing'
       disp_uri.extra['kitti_sf15.archive.path'] = (
-        f'training/disp_occ_0/{frame_id}.png')
+        f'{ksplit}/disp_occ_0/{frame_id}.png')
       disp_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
       disp_bytes = cls._get_file_bytes(uri=disp_uri)
       disp = kittisf15_load_disp(disp_bytes)
@@ -552,17 +564,18 @@ class KITTISF15SDTable(StampedDatumTableFactory):
       return uv_2_uv_3_depth
 
     frame_id = uri.extra['kitti_sf15.frame_id']
+    ksplit = uri.split + 'ing'
 
     img1_uri = copy.deepcopy(uri)
     img1_uri.topic = 'camera|left'
     img1_uri.extra['kitti_sf15.archive.path'] = (
-        f'training/image_2/{frame_id}.png')
+        f'{ksplit}/image_2/{frame_id}.png')
     img1_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
     
     img2_uri = copy.deepcopy(uri)
     img2_uri.topic = 'camera|right'
     img2_uri.extra['kitti_sf15.archive.path'] = (
-        f'training/image_3/{frame_id}.png')
+        f'{ksplit}/image_3/{frame_id}.png')
     img2_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
 
     mp = datum.MatchedPair(

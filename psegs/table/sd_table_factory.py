@@ -59,39 +59,39 @@ class StampedDatumTableFactory(object):
     
     dest_dir = Path(dest_dir)
 
-    if auto_resume_incomplete and existing_uri_df is None and dest_dir.exists():
-      util.log.info(f"Attempting to resume from {dest_dir} ...")
+    with Spark.sess(spark) as spark:
+      if auto_resume_incomplete and existing_uri_df is None and dest_dir.exists():
+        util.log.info(f"Attempting to resume from {dest_dir} ...")
 
-      F = ParquetSDTFactory.factory_for_sd_subdirs(dest_dir)
-      existing_uri_df = F.read_uri_df(spark=spark)
-      
-      if existing_uri_df is not None:
-        util.log.info(
-          f"... found {existing_uri_df.count()} datums in {dest_dir} ...")
-      else:
-        util.log.info(f"... found no datum data in {dest_dir} ...")
-  
-    if only_segments:
-      only_segments = [URI.from_str(s).to_segment_uri() for s in only_segments]
+        F = ParquetSDTFactory.factory_for_sd_subdirs(dest_dir)
+        existing_uri_df = F.read_uri_df(spark=spark)
+        
+        if existing_uri_df is not None:
+          util.log.info(
+            f"... found {existing_uri_df.count()} datums in {dest_dir} ...")
+        else:
+          util.log.info(f"... found no datum data in {dest_dir} ...")
     
-    sd_rdds = cls._create_datum_rdds(
-                        spark, 
-                        existing_uri_df=existing_uri_df,
-                        only_segments=only_segments)
+      if only_segments:
+        only_segments = [URI.from_str(s).to_segment_uri() for s in only_segments]
+    
+      sd_rdds = cls._create_datum_rdds(
+                            spark, 
+                            existing_uri_df=existing_uri_df,
+                            only_segments=only_segments)
+      sd_tables = [
+        StampedDatumTable.from_datum_rdd(sd_rdd) for sd_rdd in sd_rdds
+      ]
 
-    sd_tables = [
-      StampedDatumTable.from_datum_rdd(sd_rdd) for sd_rdd in sd_rdds
-    ]
-
-    from psegs.spark import save_sd_tables
-    save_sd_tables(
-      sd_tables,
-      spark=spark,
-      spark_save_opts=dict(
-        path=dest_dir / 'stamped_datums',
-        format='parquet',
-        partitionBy=cls.PARTITION_KEYS,
-        compression='zstd'))
+      from psegs.spark import save_sd_tables
+      save_sd_tables(
+        sd_tables,
+        spark=spark,
+        spark_save_opts=dict(
+          path=dest_dir / 'stamped_datums',
+          format='parquet',
+          partitionBy=cls.PARTITION_KEYS,
+          compression='zstd'))
 
   ## Subclass API - Datasets should provide ETL to lists of RDD[StampedDatum]
 
