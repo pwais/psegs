@@ -120,6 +120,7 @@ class StampedDatumTable(object):
       return []
 
   def select_from_uris(self, uris, spark=None):
+    print('todo')
     pass # TODO
 
 

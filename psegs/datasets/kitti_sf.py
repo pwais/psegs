@@ -67,13 +67,13 @@ class Fixtures(object):
     train_frame_ids = [
       get_frame_id(p)
       for p in entries
-      if ('training/image_2' in p and '.png' in p)
+      if ('training/image_2' in p and '.png' in p and '_10' in p)
     ]
 
     test_frame_ids = [
       get_frame_id(p)
       for p in entries
-      if ('training/image_2' in p and '.png' in p)
+      if ('testing/image_2' in p and '.png' in p and '_10' in p)
     ]
 
     return train_frame_ids, test_frame_ids
@@ -408,7 +408,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
             })
       for frame_id in test_ids
     ]
-    
+
     return train_segs + test_segs
 
   @classmethod
@@ -420,21 +420,20 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     
     ## ... skip any segments we already have ...
     if existing_uri_df is not None:
-      def get_frame_id(row):
-        return row.extra.get('kitti_sf15.frame_id')
+      def get_frame_id(v):
+        return v.split + v.extra.get('kitti_sf15.frame_id')
       skip_frame_ids = set(
-        existing_uri_df.select('extra').rdd.map(get_frame_id).collect())
+        existing_uri_df.rdd.map(get_frame_id).collect())
       seg_uris_to_build = [
         suri for suri in seg_uris_to_build
-        if suri.extra['kitti_sf15.frame_id'] not in skip_frame_ids
+        if get_frame_id(suri) not in skip_frame_ids
       ]
       util.log.info(
         f"Resume mode: have datums for {len(skip_frame_ids)} frames; "
-        "reduced to f{len(seg_uris_to_build)} tasks")
+        f"reduced to {len(seg_uris_to_build)} tasks")
     
     if only_segments:
-      util.log.info(
-        "Filtering to only %s segments" % len(only_segments))
+      util.log.info(f"Filtering to only {len(only_segments)} segments")
       seg_uris_to_build = [
         uri for uri in seg_uris_to_build
         if any(suri.soft_matches_segment(uri) for suri in only_segments)
@@ -448,7 +447,6 @@ class KITTISF15SDTable(StampedDatumTableFactory):
       chunk_uri_rdd = spark.sparkContext.parallelize(chunk)
       datum_rdd = chunk_uri_rdd.flatMap(cls._create_datums_for_segement_uri)
       datum_rdds.append(datum_rdd)
-
     return datum_rdds
 
 
@@ -503,10 +501,11 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     image_png = cls._get_file_bytes(uri=uri)
     width, height = misc.get_png_wh(image_png)
 
-    def _get_image(uri):
+    def _get_image(uri=None):
+      import io
       import imageio
       im_bytes = cls._get_file_bytes(uri=uri)
-      return imageio.imread(bytearray(im_bytes))
+      return imageio.imread(io.BytesIO(im_bytes))
 
     calib = cls._get_calib(uri)
     K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
@@ -537,7 +536,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     extra = uri.extra
     ci = datum.CameraImage(
           sensor_name=uri.topic,
-          image_factory=lambda: _get_image(uri),
+          image_factory=lambda: _get_image(uri=uri),
           width=width,
           height=height,
           timestamp=uri.timestamp,
@@ -551,6 +550,10 @@ class KITTISF15SDTable(StampedDatumTableFactory):
   def _create_matched_pair(cls, uri):
 
     def _get_matches(base_uri):
+      if base_uri.split == 'test':
+        # Test dataset has no provided labels
+        return np.zeros((0, 5), dtype=np.float32)
+
       frame_id = base_uri.extra['kitti_sf15.frame_id']
 
       disp_uri = copy.deepcopy(uri)
@@ -565,6 +568,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
       K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
       
       uv_2_uv_3_depth = kittisf15_to_stereo_matches(disp, baseline, K_2)
+      uv_2_uv_3_depth = uv_2_uv_3_depth[uv_2_uv_3_depth[:, -1] > 0]
       return uv_2_uv_3_depth
 
     frame_id = uri.extra['kitti_sf15.frame_id']
@@ -593,7 +597,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     
     sd_uri = copy.deepcopy(uri)
     sd_uri.topic = 'camera|matches'
-    
+
     return datum.StampedDatum(uri=sd_uri, matched_pair=mp)
 
 

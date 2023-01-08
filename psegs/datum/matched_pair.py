@@ -20,6 +20,8 @@ import numpy as np
 from oarphpy.spark import CloudpickeledCallable
 
 from psegs.datum.camera_image import CameraImage
+from psegs.util import plotting as pspl
+
 
 @attr.s(slots=True, eq=False, weakref_slot=False)
 class MatchedPair(object):
@@ -58,7 +60,19 @@ class MatchedPair(object):
   extra = attr.ib(default={}, type=typing.Dict[str, str])
   """Dict[str, str]: A map for adhoc extra context"""
 
+  def get_matches(self):
+    if self.matches_array is not None:
+      return self.matches_array
+    elif self.matches_factory != CloudpickeledCallable.empty():
+      return self.matches_factory()
+    else:
+      raise ValueError("No matches data!")
+
   def to_point_cloud(self):
     print('todo')
 
-    
+  def get_debug_line_image(self):
+    return pspl.create_matches_debug_line_image(
+              self.img1.image,
+              self.img2.image,
+              self.get_matches())

@@ -19,6 +19,15 @@ from test import testutil
 def test_kitti_sf_build_export():
   kitti_sf.KITTISF15SDTable.save_parquet('/tmp/yay_pq_test')
 
+def test_kitti_sf_table_viz():
+  from psegs.table.sd_table_factory import ParquetSDTFactory
+  F = ParquetSDTFactory.factory_for_sd_subdirs('/tmp/yay_pq_test')
+  T = F.create_as_single_table()
+  x = T.to_rich_html()
+  open('/opt/psegs/debug.html', 'w').write(x)
+  print()
+
+
 def test_kitti_sf_stereo_3d_viz():
   testutil.skip_if_fixture_absent(kitti_sf.Fixtures.EXTERNAL_FIXTURES_ROOT)
 

@@ -32,12 +32,12 @@ class StampedDatumTableFactory(object):
     return [URI.from_str(u) for u in cls._get_all_segment_uris()]
 
   @classmethod
-  def get_segment_sd_table(cls, segment_uri, spark=None):
+  def get_segment_sd_table(cls, segment_uris=[], spark=None):
     from psegs.spark import Spark
     with Spark.sess(spark) as spark:
       datum_rdds = cls._create_datum_rdds(
                         spark, 
-                        only_segments=[segment_uri])
+                        only_segments=segment_uris)
       datum_rdd = spark.sparkContext.union(datum_rdds)
       
       from pyspark import StorageLevel
@@ -92,6 +92,13 @@ class StampedDatumTableFactory(object):
           format='parquet',
           partitionBy=cls.PARTITION_KEYS,
           compression='zstd'))
+  
+  # @classmethod
+  # def load_parquet(
+  #       cls,
+  #       stamped_datums_root,
+  #       spark=None):
+    
 
   ## Subclass API - Datasets should provide ETL to lists of RDD[StampedDatum]
 
@@ -347,6 +354,10 @@ class ParquetSDTFactory(StampedDatumTableFactory):
         p_df = spark.read.parquet(str(p))
         df = p_df if df is None else df.union(p_df)
       return df
+
+  @classmethod
+  def create_as_single_table(cls, spark=None):
+    return StampedDatumTable.from_spark_df(cls.read_spark_df(spark=spark))
 
   @classmethod
   def read_seg_uri_rdd(cls, spark=None):

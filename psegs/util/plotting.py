@@ -453,6 +453,36 @@ def get_ortho_debug_image(
   return img
 
 
+def create_matches_debug_line_image(
+      img1,
+      img2,
+      xyxy,
+      max_matches=1000,
+      line_color=(0, 255, 0),
+      thickness=1,
+      alpha=0.5):
+  
+  import cv2
+
+  debug = np.concatenate([img1, img2], axis=1) # TODO support different sizes
+
+  xyxy = np.array(xyxy).copy()
+  assert len(xyxy.shape) >= 2, xyxy.shape
+  assert xyxy.shape[1] >= 4, xyxy.shape
+  if xyxy.shape[0] > max_matches and max_matches >= 0:
+    idx = np.random.choice(xyxy.shape[0], max_matches, replace=False)
+    xyxy = xyxy[idx]
+
+  overlay = debug.copy()
+  for xyxy_i in xyxy:
+    x1, y1, x2, y2 = xyxy_i[:4].astype(int)
+    x2 += img1.shape[1]
+    cv2.line(overlay, (x1, y1), (x2, y2), line_color, thickness=thickness)
+  
+  debug = cv2.addWeighted(overlay, alpha, debug, 1 - alpha, 0)
+  return debug
+
+
 def images_to_html_video(images=[], fps=4, play_on_hover=True):
   """Given a sequence of HWC numpy images, create and return an HTML video
   
@@ -514,7 +544,8 @@ def sample_to_html(
         include_cloud_viz=True,
         clouds_n_clouds=50,
         clouds_n_pts_per_plot=50000,
-        cloud_include_cam_poses=True):
+        cloud_include_cam_poses=True,
+        matches_n_examples=10):
   
   from psegs import datum
   from psegs import table
@@ -547,9 +578,13 @@ def sample_to_html(
   def _get_table_html(sql):
     res = spark.sql(sql)
     pdf = res.toPandas()
-    util.log.info('\n%s\n' % str(pdf))
-    pdf.style.set_precision(2)
-    pdf.style.hide_index()
+    util.log.info('Table: \n%s\n' % str(pdf))
+    try:
+      pdf.style.set_precision(2)
+      pdf.style.hide_index()
+    except ValueError:
+      pass
+
     css = """
         <style type="text/css" >
           table {
@@ -585,7 +620,7 @@ def sample_to_html(
           }
         </style>
     """
-    return css + pdf.style.render() # Pandas succint "to HTML" with nice style
+    return css + pdf.to_html()#pdf.style.render() # Pandas succint "to HTML" with nice style
 
   ## Summary ###############################################################
   html = _get_table_html("""
@@ -612,6 +647,18 @@ def sample_to_html(
               )
       """)
   reports.append({'section': 'Sample', 'html': html})
+
+  html = _get_table_html("""
+          SELECT 
+            FIRST(uri.dataset) AS dataset,
+            FIRST(uri.split) AS dataset,
+            FIRST(uri.segment_id) AS segment_id,
+            COUNT(*) n
+          FROM sd_df
+          GROUP BY uri.dataset, uri.split, uri.segment_id
+          ORDER BY uri.dataset, uri.split, uri.segment_id
+      """)
+  reports.append({'section': 'Dataset Details', 'html': html})
 
 
   ## CameraImages ##########################################################
@@ -733,6 +780,52 @@ def sample_to_html(
           ORDER BY topic
       """)
   reports.append({'section': 'Cuboids', 'html': html})
+
+  ## Matches ###############################################################
+  html = _get_table_html("""
+          SELECT 
+            topic,
+            n,
+            (n / (1e-9 * duration_ns)) AS Hz,
+            1e-9 * duration_ns AS duration_sec,
+            matches_colnames,
+            img1_width,
+            img1_height,
+            img2_width,
+            img2_height,
+            uncompressed_MBytes,
+            uncompressed_MBytes / (1e-9 * duration_ns) AS uncompressed_MBps,
+            FROM_UNIXTIME(start * 1e-9) AS start,
+            FROM_UNIXTIME(end * 1e-9) AS end
+
+          FROM 
+              (
+                  SELECT
+                      FIRST(uri.topic) AS topic,
+                      MIN(uri.timestamp) AS start,
+                      MAX(uri.timestamp) AS end,
+                      MAX(uri.timestamp) - MIN(uri.timestamp) AS duration_ns,
+                      FIRST(matched_pair.matches_colnames) AS matches_colnames,
+                      FIRST(matched_pair.img1.width) AS img1_width,
+                      FIRST(matched_pair.img1.height) AS img1_height,
+                      FIRST(matched_pair.img2.width) AS img2_width,
+                      FIRST(matched_pair.img2.height) AS img2_height,
+                      1e-6 * (
+                        FIRST(
+                          matched_pair.img1.width * matched_pair.img1.height * 3)
+                          +
+                        FIRST(
+                          matched_pair.img2.width * matched_pair.img2.height * 3)
+                      )
+                             AS uncompressed_MBytes,
+                      COUNT(*) AS n
+                  FROM sd_df
+                  WHERE matched_pair IS NOT NULL
+                  GROUP BY uri.topic
+              )
+          ORDER BY topic
+      """)
+  reports.append({'section': 'MatchedPairs', 'html': html})
 
   # Find depth topics for later
   rows = spark.sql("""
@@ -981,7 +1074,35 @@ def sample_to_html(
     section_html = ''.join(_to_section_html(i) for i in topic_htmls)
     reports.append({'section': 'Point Clouds', 'html': section_html})
 
+  ## Matches ###############################################################
+  if matches_n_examples > 0:
+    sample_sd_df = spark.sql("""
+                        SELECT *
+                        FROM sd_df
+                        WHERE matched_pair IS NOT NULL
+                        ORDER BY RAND(1337)
+                        LIMIT {matches_n_examples}
+                    """.format(matches_n_examples=matches_n_examples))
+    sample_sd_df = sample_sd_df.repartition('uri.timestamp')
+
+    util.log.info(
+      "... rendering MatchedPair viz for %s pairs ..." % sample_sd_df.count())
+
+    def _row_to_debug_image(row):
+      sd = table.StampedDatumTable.sd_from_row(row)
+      mp = sd.matched_pair
+      debug = mp.get_debug_line_image()
       
+      from oarphpy.plotting import img_to_img_tag
+      debug_img_html = img_to_img_tag(debug, format='jpg')
+
+      html = "<b>%s</b></br>%s<br/><br/>" % (sd.uri, debug_img_html)
+      return html
+    mp_htmls = sample_sd_df.rdd.map(_row_to_debug_image).collect()
+
+    section_html = ''.join(mp_htmls)
+    reports.append({'section': 'MatchedPair Viz', 'html': section_html})
+
   ## Generate full report!
   util.log.info(
     "... have reports %s ..." % ([i['section'] for i in reports],))
