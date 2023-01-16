@@ -67,7 +67,7 @@ class StampedDatumTable(object):
     else:
       # Create an empty Spark DF
       with Spark.sess(spark) as spark:
-        self._spark_df = self._sd_rdd_to_sd_df(spark, [])
+        self._spark_df = spark.createDataFrame([], schema=self.table_schema())
         return self._spark_df
 
   def to_sample(self):

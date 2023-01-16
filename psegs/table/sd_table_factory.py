@@ -334,11 +334,13 @@ class ParquetSDTFactory(StampedDatumTableFactory):
 
   @classmethod
   def factory_for_sd_subdirs(cls, pq_base_path, sd_dir_name='stamped_datums'):
-    from pathlib import Path
+    import os
+    from glob import glob # NB: does follow symlinks, Path is broken
     pq_dirs = sorted(
                 p
-                for p in Path(pq_base_path).rglob('*')
-                if (p.is_dir and p.name == sd_dir_name))
+                for p in glob(os.path.join(pq_base_path, '*'), recursive=True)
+                if (os.path.isdir(p) and os.path.basename(p) == sd_dir_name))
+    util.log.info(f"Found StampedDatumTable parquet data: {pq_dirs}")
 
     class MyPQSDTFactory(cls):
       PQ_DIRS = pq_dirs
