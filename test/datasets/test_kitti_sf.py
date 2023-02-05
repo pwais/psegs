@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from psegs import datum
 from psegs.datasets import kitti_sf
 
 from test import testutil
@@ -27,6 +28,28 @@ def test_kitti_sf_table_viz():
   open('/opt/psegs/debug.html', 'w').write(x)
   print()
 
+
+def test_kitti_sf_create_matched_pair():
+  testutil.skip_if_fixture_absent(kitti_sf.Fixtures.EXTERNAL_FIXTURES_ROOT)
+
+  uri = datum.URI.from_str(
+    'psegs://split=train&extra.kitti_sf15.frame_id=000016_10')
+  sd = kitti_sf.KITTISF15SDTable._create_matched_pair(uri)
+  mp = sd.matched_pair
+
+  pc = mp.get_point_cloud_in_world_frame()
+
+  xyz = pc.cloud[:, :3]
+
+  import trimesh
+  import numpy as np
+  pc_tmesh_xyz = trimesh.points.PointCloud(vertices=xyz.squeeze(), colors=.3 * np.ones_like(xyz))
+  scene = trimesh.Scene()
+  scene.add_geometry(pc_tmesh_xyz)
+  b = trimesh.exchange.gltf.export_glb(scene)
+  with open('/opt/psegs/debug.mp.glb', 'wb') as f:
+    print('debug.xyz.mp.glb')
+    f.write(b)
 
 def test_kitti_sf_stereo_3d_viz():
   testutil.skip_if_fixture_absent(kitti_sf.Fixtures.EXTERNAL_FIXTURES_ROOT)
@@ -86,6 +109,10 @@ def test_kitti_sf_stereo_3d_viz():
     # xyz = xyz[:, :3]
     # xyz = cv2.convertPointsFromHomogeneous(xyzh.T)
     
+
+
+
+
     pc_tmesh_xyz = trimesh.points.PointCloud(vertices=xyz.squeeze(), colors=.3 * np.ones_like(xyz))
     scene = trimesh.Scene()
     scene.add_geometry(pc_tmesh_xyz)

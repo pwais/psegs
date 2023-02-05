@@ -86,7 +86,7 @@ class Fixtures(object):
 
   EXTERNAL_FIXTURES_ROOT = C.EXTERNAL_TEST_FIXTURES_ROOT / 'kitti_sf'
 
-  STEREO_TEST_FRAMES= ('000016_10', '000024_10', '000177_10')
+  STEREO_TEST_FRAMES = ('000016_10', '000024_10', '000177_10')
 
   @classmethod
   def stereo_fixture_dir(cls):
@@ -510,20 +510,34 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     calib = cls._get_calib(uri)
     K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
 
-    print("TODO correct kitti RT")
-
     if uri.topic == 'camera|left':
       K = K_2
+
+      # Hack: assume the system in in camera_left frame. Validate that now.
+      K_diff = K - P_2[:3, :3]
+      assert K_diff.sum() == 0, "Did calib change?"
+      rotation = np.eye(3)
+      translation = np.zeros(3)
+      
       ego_to_sensor = datum.Transform(
-                  # rotation=todo,
-                  # translation=todo,
+                  rotation=rotation,
+                  translation=translation,
                   dest_frame='ego', # for KITTI SF15, left camera is ego
                   src_frame='camera|left')
     elif uri.topic == 'camera|right':
       K = K_3
+
+      # Hack: assume the system in in camera_left frame. Validate that now.
+      K_diff = K - P_3[:3, :3]
+      assert K_diff.sum() == 0, f"Did calib change? {K_diff}"
+      R_diff = P_3[:, :3] - P_2[:, :3]
+      assert R_diff.sum() == 0, f"Did calib change? {R_diff}"
+      rotation = np.eye(3)
+      translation = P_3[:, 3:] - P_2[:, 3:]
+
       ego_to_sensor = datum.Transform(
-                  # rotation=todo,
-                  # translation=todo,
+                  rotation=rotation,
+                  translation=translation,
                   dest_frame='ego', # for KITTI SF15, left camera is ego
                   src_frame='camera|right')
     else:
@@ -592,7 +606,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
                 img1=cls._create_camera_image(img1_uri),
                 img2=cls._create_camera_image(img2_uri),
                 matches_factory=lambda: _get_matches(uri),
-                matches_colnames=['x1', 'y1', 'x2', 'y2', 'depth_meters'],
+                matches_colnames=['x1', 'y1', 'x2', 'y2', 'depth_meters_left'],
                 extra=uri.extra)
     
     sd_uri = copy.deepcopy(uri)

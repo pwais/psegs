@@ -206,6 +206,19 @@ class CameraImage(object):
         return depth
     return None
 
+  def get_P(self, from_world=True):
+    if from_world:
+      RT_w2e = self.ego_pose.get_transformation_matrix(homogeneous=True)
+    else:
+      RT_w2e = np.eye(4)
+    
+    RT_e2c = self.ego_to_sensor.get_transformation_matrix(homogeneous=True)
+    K_h = np.eye(4)
+    K_h[:3, :3] = self.K
+    P_h = K_h @ RT_e2c @ RT_w2e
+    P = P_h[:3, :4]
+    return P
+
   def has_rgb(self):
     missing = set(['r', 'g', 'b']) - set(self.channel_names)
     return not missing

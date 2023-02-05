@@ -94,6 +94,9 @@ class DockerEnv(object):
   def push_as_latest(cls):
     image = cls.full_image_name()
     latest = image.split(':')[0]
+    toks = image.split(':')
+    toks[-1] = 'latest'
+    latest = ':'.join(toks)
     run_cmd('docker tag ' + image + ' ' + latest)
     run_cmd('docker push ' + latest)
     run_cmd('docker push ' + image)

@@ -20,6 +20,7 @@ import numpy as np
 from oarphpy.spark import CloudpickeledCallable
 
 from psegs.datum.camera_image import CameraImage
+from psegs.datum.point_cloud import PointCloud
 from psegs.util import plotting as pspl
 
 
@@ -68,11 +69,60 @@ class MatchedPair(object):
     else:
       raise ValueError("No matches data!")
 
-  def to_point_cloud(self):
-    print('todo')
+  def get_col_idx(self, colname):
+    for i in range(len(self.matches_colnames)):
+      if self.matches_colnames[i] == colname:
+        return i
+    raise ValueError(
+      "Colname %s not found in %s" % (colname, self.matches_colnames))
+
+  def get_x1y1x2y2_axes(self):
+    return [
+      self.get_col_idx('x1'),
+      self.get_col_idx('y1'),
+      self.get_col_idx('x2'),
+      self.get_col_idx('y2'),
+    ]
+  
+  def get_other_axes(self):
+    x1y1x2y2c = set(['x1', 'y1', 'x2', 'y2'])
+    all_c = set(self.matches_colnames)
+    other_names = sorted(list(all_c - x1y1x2y2c))
+    other_idx = [self.get_col_idx(n) for n in other_names]
+    return other_names, other_idx
+
+  def get_x1y1x2y2(self):
+    matches = self.get_matches()
+    x1y1x2y2 = matches[:, self.get_x1y1x2y2_axes()]
+    return x1y1x2y2
 
   def get_debug_line_image(self):
     return pspl.create_matches_debug_line_image(
               self.img1.image,
               self.img2.image,
               self.get_matches())
+
+  def get_point_cloud_in_world_frame(self):
+
+    import cv2
+
+    P_1 = self.img1.get_P()
+    P_2 = self.img2.get_P()
+    matches = self.get_matches()
+
+    x1c, y1c, x2c, y2c = self.get_x1y1x2y2_axes()
+    other_names, other_idx = self.get_other_axes()
+    uv_1 = matches[:, [x1c, y1c]]
+    uv_2 = matches[:, [x2c, y2c]]
+
+    xyzh = cv2.triangulatePoints(P_1, P_2, uv_1.T, uv_2.T)
+    xyz = xyzh.T.copy()
+    xyz = xyz[:, :3] / xyz[:, (-1,)]
+
+    other_vals = matches[:, other_idx]
+    cloud = np.hstack([xyz, other_vals])
+    return PointCloud(
+              sensor_name=self.matcher_name,
+              timestamp=self.timestamp,
+              cloud=cloud,
+              cloud_colnames = ['x', 'y', 'z'] + other_names)

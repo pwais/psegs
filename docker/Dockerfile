@@ -1,4 +1,4 @@
-FROM oarphpy/full:0.1.0
+FROM oarphpy/full:0.1.1
 
 ## Include banner
 COPY docker/bashrc /etc/bash.bashrc

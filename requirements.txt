@@ -1,4 +1,6 @@
-attrs
+# Better cloudpickle support
+attrs>=21.4.0
+
 fasteners
 imageio
 imageio-ffmpeg
