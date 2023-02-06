@@ -21,6 +21,7 @@ from oarphpy.spark import CloudpickeledCallable
 
 from psegs.datum.camera_image import CameraImage
 from psegs.datum.point_cloud import PointCloud
+from psegs.datum.transform import Transform
 from psegs.util import plotting as pspl
 
 
@@ -123,6 +124,10 @@ class MatchedPair(object):
     cloud = np.hstack([xyz, other_vals])
     return PointCloud(
               sensor_name=self.matcher_name,
+              ego_to_sensor=Transform(
+                src_frame='ego', dest_frame=self.matcher_name),
+              ego_pose=Transform(
+                src_frame='world', dest_frame='ego'),
               timestamp=self.timestamp,
               cloud=cloud,
               cloud_colnames = ['x', 'y', 'z'] + other_names)

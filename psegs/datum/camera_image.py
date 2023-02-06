@@ -208,11 +208,13 @@ class CameraImage(object):
 
   def get_P(self, from_world=True):
     if from_world:
-      RT_w2e = self.ego_pose.get_transformation_matrix(homogeneous=True)
+      xform = self.ego_pose['world', 'ego']
+      RT_w2e = xform.get_transformation_matrix(homogeneous=True)
     else:
       RT_w2e = np.eye(4)
     
-    RT_e2c = self.ego_to_sensor.get_transformation_matrix(homogeneous=True)
+    xform = self.ego_to_sensor['ego', self.sensor_name]
+    RT_e2c = xform.get_transformation_matrix(homogeneous=True)
     K_h = np.eye(4)
     K_h[:3, :3] = self.K
     P_h = K_h @ RT_e2c @ RT_w2e
@@ -1241,19 +1243,18 @@ class CameraImage(object):
     T_world_from_ego = self.ego_pose['ego', 'world']
     w2c = T_world_from_ego @ T_ego_from_sensor
     w2c = w2c.get_transformation_matrix(homogeneous=True)
-    
+
     meshes = []
 
     # Create camera marker
     fov_h, fov_v = self.get_fov()
     fov_h_deg = fov_h * 180. / math.pi
     fov_v_deg = fov_v * 180. / math.pi
-
     cam = trimesh.creation.camera_marker(
                   trimesh.scene.Camera(
                       fov=(fov_h_deg, fov_v_deg)),
                   marker_height=frustum_meters) # Actually also frustum depth
-    cam[1].colors = [[.5, .5, .5, 1.]] * 5
+    # cam[1].colors = [[.5, .5, .5, 1.]] * 5
       # Actually frustum color
 
     for m in cam:
@@ -1279,11 +1280,19 @@ class CameraImage(object):
       imageio.imwrite(buf, debug, format='jpg', quality=75)
       buf.seek(0)
       pil_img = Image.open(buf)
-      thumb_material = trimesh.visual.material.PBRMaterial(
-                    baseColorTexture=pil_img.copy(),
-                    baseColorFactor=[255, 255, 255, int(255 * thumb_alpha)],
-                    alphaMode="BLEND",
-                    alphaCutoff=0.01)
+      # thumb_material = trimesh.visual.material.PBRMaterial(
+      #               baseColorTexture=pil_img.copy(),
+      #               baseColorFactor=[1.0, 1.0, 1.0, thumb_alpha],
+      #               alphaMode="BLEND",
+      #               doubleSided=True,
+      #               alphaCutoff=0.01)
+      thumb_material = trimesh.visual.material.SimpleMaterial(
+                    image=pil_img.copy(),
+                    # baseColorFactor=[1.0, 1.0, 1.0, thumb_alpha],
+                    # alphaMode="BLEND",
+                    doubleSided=True)
+                    # ,
+                    # alphaCutoff=0.01)
       
       # Create thumnail mesh
       thumb_h = thumb_height_meters
@@ -1293,6 +1302,7 @@ class CameraImage(object):
       thumb_mesh = trimesh.creation.box(
                       extents=[thumb_w, thumb_h, thumb_thickness_meters],
                       transform=thumb_RT)
+      thumb_mesh.visual.face_colors = (1., 1., 1.)
 
       thumb_mesh.visual.material = thumb_material
       thumb_mesh.visual.uv = np.zeros((len(thumb_mesh.vertices), 2))

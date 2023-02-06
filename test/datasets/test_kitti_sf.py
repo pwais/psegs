@@ -18,7 +18,7 @@ from psegs.datasets import kitti_sf
 from test import testutil
 
 def test_kitti_sf_build_export():
-  kitti_sf.KITTISF15SDTable.save_parquet('/tmp/yay_pq_test')
+  kitti_sf.KITTISF15SDTableTrainOnly.save_parquet('/tmp/yay_pq_test')
 
 def test_kitti_sf_table_viz():
   from psegs.table.sd_table_factory import ParquetSDTFactory
@@ -40,6 +40,7 @@ def test_kitti_sf_create_matched_pair():
   pc = mp.get_point_cloud_in_world_frame()
 
   xyz = pc.cloud[:, :3]
+  breakpoint()
 
   import trimesh
   import numpy as np
@@ -108,7 +109,7 @@ def test_kitti_sf_stereo_3d_viz():
     xyz = xyz[:, :3] / xyz[:, (-1,)]
     # xyz = xyz[:, :3]
     # xyz = cv2.convertPointsFromHomogeneous(xyzh.T)
-    
+    breakpoint()
 
 
 
