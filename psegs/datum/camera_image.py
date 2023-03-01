@@ -111,6 +111,8 @@ class CameraImage(object):
   K = attr.ib(type=np.ndarray, default=np.eye(3, 3))
   """numpy.ndarray: The 3x3 intrinsic calibration camera matrix"""
 
+  # TODO add distortion including fisheye
+
   channel_names = attr.ib(default=['r', 'g', 'b'])
   """List[str]: Semantic names for the channels (or dimensions / attributes)
   of the image. By default, the `image` member uses `imageio` to read an
@@ -148,8 +150,11 @@ class CameraImage(object):
   def __eq__(self, other):
     return misc.attrs_eq(self, other)
 
-  def get_world_to_cam(self):
-    return self.ego_pose['world', self.sensor_name]
+  def get_world_to_sensor(self):
+    return (
+      self.ego_to_sensor[self.sensor_name, 'ego'] @ 
+      self.ego_pose['ego', 'world']
+    )
 
   @classmethod
   def create_world_frame_ci(cls, sensor_name='', **kwargs):

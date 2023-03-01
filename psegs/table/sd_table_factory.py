@@ -33,6 +33,7 @@ class StampedDatumTableFactory(object):
 
   @classmethod
   def get_segment_sd_table(cls, segment_uris=[], spark=None):
+    # TODO get sd table for segments...
     from psegs.spark import Spark
     with Spark.sess(spark) as spark:
       datum_rdds = cls._create_datum_rdds(

@@ -116,9 +116,12 @@ class MatchedPair(object):
     uv_1 = matches[:, [x1c, y1c]]
     uv_2 = matches[:, [x2c, y2c]]
 
-    xyzh = cv2.triangulatePoints(P_1, P_2, uv_1.T, uv_2.T)
-    xyz = xyzh.T.copy()
-    xyz = xyz[:, :3] / xyz[:, (-1,)]
+    if uv_1.shape[0] > 0:
+      xyzh = cv2.triangulatePoints(P_1, P_2, uv_1.T, uv_2.T)
+      xyz = xyzh.T.copy()
+      xyz = xyz[:, :3] / xyz[:, (-1,)]
+    else:
+      xyz = np.zeros((0, 3), dtype=np.float64)
 
     other_vals = matches[:, other_idx]
     cloud = np.hstack([xyz, other_vals])

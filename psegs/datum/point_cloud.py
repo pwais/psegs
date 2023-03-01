@@ -530,7 +530,8 @@ class PointCloud(object):
   def to_trimeshes_world_frame(
           self,
           period_meters=1.,
-          max_num_points=100_000):
+          max_num_points=100_000,
+          colors=None):
 
     import trimesh
     from psegs.util.plotting import rgb_for_distance
@@ -547,13 +548,14 @@ class PointCloud(object):
               np.arange(xyz.shape[0]), max_num_points)
       xyz = xyz[idx, :]
     
-    colors = rgb_for_distance(
-                np.linalg.norm(xyz, axis=1),
-                period_meters=period_meters)
-    colors = np.clip(colors, 0, 255).astype('uint8')
+    if colors is None:
+      colors = rgb_for_distance(
+                  np.linalg.norm(xyz, axis=1),
+                  period_meters=period_meters)
+      colors = np.clip(colors, 0, 255).astype('uint8')
     pc_tmesh = trimesh.points.PointCloud(
-                vertices=xyz,
-                colors=colors)
+                vertices=xyz if len(xyz) else np.array([[0., 0., 0.]]),  # TODO fixme trimesh wont GLTF empty array?????
+                colors=colors if len(colors) else None)
     
     return [pc_tmesh]
       

@@ -142,7 +142,9 @@ def colmap_recon_create_camera_image(
     xyz_world = np.array(
       [ptid_to_info[p2d.point3D_id].xyz for p2d in p2ds]
     )
-    z = (iinfo.rotation_matrix() @ xyz_world.T)[-1] + iinfo.tvec[-1]
+    xyz_in_camera = (iinfo.rotation_matrix() @ xyz_world.T) + iinfo.tvec
+    z = np.linalg.norm(xyz_in_camera)
+    breakpoint()
     uv = np.array([p2d.xy for p2d in p2ds])
     errors = np.array(
       [ptid_to_info[p2d.point3D_id].error for p2d in p2ds]
@@ -462,27 +464,22 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     seg_uri = cls.get_segment_uri()
     if not seg_uri:
       return None
-    return cls.get_segment_sd_table(seg_uri, spark=spark)
+    return cls.get_segment_sd_table([seg_uri], spark=spark)
 
   @classmethod
   def create_sd_table_for_reconstruction(
         cls,
-        spark,
         colmap_recon_dir,
         colmap_input_images_dir,
         psegs_assets_dir,
-        use_np_assets=True,
-        force_recompute_np_assets=False):
+        spark=None):
     
     class MyCOLMAP_SDTFactory(cls):
       COLMAP_RECON_DIR = Path(colmap_recon_dir)
       COLMAP_IMAGES_DIR = Path(colmap_input_images_dir)
       PSEGS_ASSETS_DIR = Path(psegs_assets_dir)
     
-    return MyCOLMAP_SDTFactory.get_reconstruction_sd_table(
-              use_np_assets=use_np_assets,
-              force_recompute_np_assets=force_recompute_np_assets,
-              spark=spark)
+    return MyCOLMAP_SDTFactory.get_reconstruction_sd_table(spark=spark)
       
 
   ## StampedDatumTableFactory Impl
