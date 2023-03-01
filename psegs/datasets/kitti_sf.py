@@ -86,7 +86,7 @@ class Fixtures(object):
 
   EXTERNAL_FIXTURES_ROOT = C.EXTERNAL_TEST_FIXTURES_ROOT / 'kitti_sf'
 
-  STEREO_TEST_FRAMES= ('000016_10', '000024_10', '000177_10')
+  STEREO_TEST_FRAMES = ('000016_10', '000024_10', '000177_10')
 
   @classmethod
   def stereo_fixture_dir(cls):
@@ -131,6 +131,7 @@ def kittisf15_load_flow(path):
   # Based upon https://github.com/liruoteng/OpticalFlowToolkit/blob/master/lib/flowlib.py#L559
   import png
   import numpy as np
+
   flow_object = png.Reader(filename=path)
   flow_direct = flow_object.asDirect()
   flow_data = list(flow_direct[2])
@@ -378,7 +379,9 @@ class KITTISF15SDTable(StampedDatumTableFactory):
 
   # The dataset has about 400 total frames; tune here to control memory usage
   FRAMES_PER_PARTITION = 50
-  
+
+  SPLITS = ('train', 'test')
+
   ## Public API
 
   @classmethod
@@ -387,29 +390,33 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     # example a distinct segment
     train_ids, test_ids = cls.FIXTURES.get_all_train_test_frame_ids()
 
-    train_segs = [
-      datum.URI(
-            dataset='kitti-sf15',
-            split='train',
-            segment_id=frame_id,
-            extra={
-              'kitti_sf15.frame_id': frame_id,
-            })
-      for frame_id in train_ids
-    ]
+    segs = []
 
-    test_segs = [
-      datum.URI(
-            dataset='kitti-sf15',
-            split='test',
-            segment_id=frame_id,
-            extra={
-              'kitti_sf15.frame_id': frame_id,
-            })
-      for frame_id in test_ids
-    ]
+    if 'train' in cls.SPLITS:
+      segs += [
+        datum.URI(
+              dataset='kitti-sf15',
+              split='train',
+              segment_id=frame_id,
+              extra={
+                'kitti_sf15.frame_id': frame_id,
+              })
+        for frame_id in train_ids
+      ]
 
-    return train_segs + test_segs
+    if 'test' in cls.SPLITS:
+      segs += [
+        datum.URI(
+              dataset='kitti-sf15',
+              split='test',
+              segment_id=frame_id,
+              extra={
+                'kitti_sf15.frame_id': frame_id,
+              })
+        for frame_id in test_ids
+      ]
+
+    return segs
 
   @classmethod
   def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
@@ -510,29 +517,41 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     calib = cls._get_calib(uri)
     K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
 
-    print("TODO correct kitti RT")
-
     if uri.topic == 'camera|left':
       K = K_2
+
+      # Hack: assume the system in in camera_left frame. Validate that now.
+      K_diff = K - P_2[:3, :3]
+      assert K_diff.sum() == 0, "Did calib change?"
+      rotation = np.eye(3)
+      translation = np.zeros(3)
+      
       ego_to_sensor = datum.Transform(
-                  # rotation=todo,
-                  # translation=todo,
-                  dest_frame='ego', # for KITTI SF15, left camera is ego
-                  src_frame='camera|left')
+                  rotation=rotation,
+                  translation=translation,
+                  src_frame='ego',
+                  dest_frame='camera|left')
     elif uri.topic == 'camera|right':
       K = K_3
+
+      # Hack: assume the system in in camera_left frame. Validate that now.
+      K_diff = K - P_3[:3, :3]
+      assert K_diff.sum() == 0, f"Did calib change? {K_diff}"
+      R_diff = P_3[:, :3] - P_2[:, :3]
+      assert R_diff.sum() == 0, f"Did calib change? {R_diff}"
+      RT = np.linalg.inv(K) @ P_3
+      rotation = RT[:3, :3]
+      translation = RT[:3, 3:]
       ego_to_sensor = datum.Transform(
-                  # rotation=todo,
-                  # translation=todo,
-                  dest_frame='ego', # for KITTI SF15, left camera is ego
-                  src_frame='camera|right')
+                  rotation=rotation,
+                  translation=translation,
+                  src_frame='ego',
+                  dest_frame='camera|right')
     else:
       raise ValueError(uri.topic)
 
     # for KITTI SF15, left camera is ego
-    ego_pose = datum.Transform(
-                  src_frame='ego',
-                  dest_frame=ego_to_sensor.src_frame)
+    ego_pose = datum.Transform(src_frame='world', dest_frame='ego')
     extra = uri.extra
     ci = datum.CameraImage(
           sensor_name=uri.topic,
@@ -592,7 +611,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
                 img1=cls._create_camera_image(img1_uri),
                 img2=cls._create_camera_image(img2_uri),
                 matches_factory=lambda: _get_matches(uri),
-                matches_colnames=['x1', 'y1', 'x2', 'y2', 'depth_meters'],
+                matches_colnames=['x1', 'y1', 'x2', 'y2', 'depth_meters_left'],
                 extra=uri.extra)
     
     sd_uri = copy.deepcopy(uri)
@@ -600,6 +619,9 @@ class KITTISF15SDTable(StampedDatumTableFactory):
 
     return datum.StampedDatum(uri=sd_uri, matched_pair=mp)
 
+
+class KITTISF15SDTableTrainOnly(KITTISF15SDTable):
+  SPLITS = ('train',)
 
 
 

@@ -212,7 +212,10 @@ def rgb_for_distance(d_meters, period_meters=10.):
   # out-of-phase with the HSV color wheel (ensures distinct colors across
   # depths)
   COLOR_STEP = 0.5 + 1. / 12
-  max_bucket = int(np.ceil(d_meters.max() / period_meters))
+  if len(d_meters):
+    max_bucket = int(np.ceil(d_meters.max() / period_meters))
+  else:
+    max_bucket = 1
   bucket_to_hsv = [
     (base_h + (bucket * COLOR_STEP % 1.0), base_s, base_v)
     for bucket in range(max_bucket + 2)

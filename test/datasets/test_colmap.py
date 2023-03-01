@@ -28,10 +28,10 @@ def test_colmap_create_sd_table_for_reconstruction():
 
   with testutil.LocalSpark.sess() as spark:
     sdt = COLMAP_SDTFactory.create_sd_table_for_reconstruction(
-              spark,
               FIXTURES_DIR / 'sparse' / '0',
               FIXTURES_DIR / 'images',
-              PSEGS_ASSET_DIR)
+              PSEGS_ASSET_DIR,
+              spark=spark)
     
     sd_df_actual = sdt.to_spark_df()
     
