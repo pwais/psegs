@@ -462,6 +462,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
   @classmethod
   def _create_datums_for_segement_uri(cls, seg_uri):
     # TODO: add scene flow datums, camera image datums as optional, etc
+    print('todo add ci and dci')
     return [cls._create_matched_pair(seg_uri)]
 
   @classmethod

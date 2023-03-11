@@ -203,13 +203,19 @@ class CameraImage(object):
     fov_v = 2. * math.atan(.5 * self.height / f_y)
     return fov_h, fov_v
 
-  def get_depth(self):
+  def get_chan(self, channel_name):
     for i, c in enumerate(self.channel_names):
-      if c == 'depth':
+      if c == channel_name:
         full_img = self.image
         depth = full_img[:, :, i]
         return depth
     return None
+
+  def has_depth(self):
+    return 'depth' in self.channel_names
+
+  def get_depth(self):
+    return self.get_chan('depth')
 
   def get_P(self, from_world=True):
     if from_world:

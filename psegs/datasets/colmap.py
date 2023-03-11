@@ -121,7 +121,6 @@ def colmap_recon_create_camera_image(
     'colmap.camera_params_raw_json': json.dumps(list(camera.params)),
     'colmap.camera_model_name': camera.model_name,
   }
-  print('extra', extra)
 
   R = iinfo.rotation_matrix()
   T = iinfo.tvec
@@ -136,32 +135,66 @@ def colmap_recon_create_camera_image(
                   # COLMAP provides world-to-camera transforms
 
   if create_depth_image:
-    
     ptid_to_info = recon.points3D
     p2ds = iinfo.get_valid_points2D()
-    xyz_world = np.array(
-      [ptid_to_info[p2d.point3D_id].xyz for p2d in p2ds]
-    )
-    xyz_in_camera = (iinfo.rotation_matrix() @ xyz_world.T) + iinfo.tvec
-    z = np.linalg.norm(xyz_in_camera)
-    breakpoint()
-    uv = np.array([p2d.xy for p2d in p2ds])
-    errors = np.array(
-      [ptid_to_info[p2d.point3D_id].error for p2d in p2ds]
-    )
-    n_visible = np.array(
-      [ptid_to_info[p2d.point3D_id].track.length() for p2d in p2ds]
-    )
+
+    # FIXME pycolmap `p2ds` segfaults in list comprehensions in python 3.10
+    xyz_world = []
+    errors = []
+    n_visible = []
+    uv = []
+    for i in range(len(p2ds)):
+      p2d = p2ds[i]
+      xyz_world.append(ptid_to_info[p2d.point3D_id].xyz)
+      errors.append(ptid_to_info[p2d.point3D_id].error)
+      n_visible.append(ptid_to_info[p2d.point3D_id].track.length())
+      uv.append(p2d.xy)
+    xyz_world = np.array(xyz_world)
+    errors = np.array(errors)
+    n_visible = np.array(n_visible)
+    uv = np.array(uv)
     
-    dev = np.zeros((h, w, 3), dtype=np.float32)
-    channel_names = ['depth', 'colmap_err', 'num_views_visible']
+
+    # for i in range(len(p2ds)):
+    #   print(([p2d.point3D_id for p2d in p2ds[:i]], i))
+    # breakpoint()
+    # print([p2d.point3D_id for p2d in p2ds])
+    # xyz_world = np.array(
+    #   [ptid_to_info[p2d.point3D_id].xyz for p2d in p2ds]
+    # )
+    
+    xyz_in_camera = (iinfo.rotation_matrix() @ xyz_world.T).T + iinfo.tvec
+    dist = np.linalg.norm(xyz_in_camera, axis=-1)
+    # uv = np.array([p2d.xy for p2d in p2ds])
+    # errors = np.array(
+    #   [ptid_to_info[p2d.point3D_id].error for p2d in p2ds]
+    # )
+    # n_visible = np.array(
+    #   [ptid_to_info[p2d.point3D_id].track.length() for p2d in p2ds]
+    # )
+        
+    # Sometimes COLMAP includes points that are outside the image...
+    # TODO where do these come from? should not be due to distortion
+    idx = np.where(
+        (uv[:, 0] >= 0) &
+        (uv[:, 0] < w) &
+        (uv[:, 1] >= 0) &
+        (uv[:, 1] < h)
+    )
+    dist = dist[idx]
+    errors = errors[idx]
+    n_visible = n_visible[idx]
+    uv = uv[idx]
+
     uu, vv = uv[:, 0].astype(int), uv[:, 1].astype(int)
       # TODO: bilinear interpolation ? 
       # the triangulation is already pretty noisy tho
 
-    dev[vv, uu, 0] = z
+    dev = np.zeros((h, w, 3), dtype=np.float32)
+    dev[vv, uu, 0] = dist
     dev[vv, uu, 1] = errors
     dev[vv, uu, 2] = n_visible
+    channel_names = ['depth', 'colmap_err', 'num_views_visible']
 
     image_factory = lambda: dev
 
@@ -421,6 +454,10 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
               sensor_name=uri.topic,
               timestamp=uri.timestamp,
               create_depth_image=True)
+
+    ci_uri = copy.deepcopy(uri)
+    ci_uri.topic = ci_uri.topic.replace(cls.DCI_RECON_TOPIC_SUFFIX, '')
+    dci.extra['psegs.depth.rgb_uri'] = str(ci_uri)
 
     if cls.USE_NP_CACHED_ASSETS:
       depth_npy_fname = f"{uri.topic}_{uri.timestamp}_depth.npy"

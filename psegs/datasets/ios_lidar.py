@@ -41,6 +41,7 @@
 #     parse 3DScannerApp output:
 #     https://docs.ros.org/en/api/rtabmap/html/CameraImages_8cpp_source.html
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -519,6 +520,10 @@ def threeDScannerApp_create_stamped_datum(uri):
             frame_json_path,
             sensor_name=uri.topic,
             timestamp=uri.timestamp)
+    if 'depth' in uri.topic:
+      ci_uri = copy.deepcopy(uri)
+      ci_uri.topic = ci_uri.topic.replace('|depth', '')
+      ci.extra['psegs.depth.rgb_uri'] = str(ci_uri)
     return datum.StampedDatum(uri=uri, camera_image=ci)
   elif uri.topic.startswith('lidar|mesh'):
     scan_dir = Path(uri.extra['threeDScannerApp.scan_dir'])
