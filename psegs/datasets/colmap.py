@@ -139,39 +139,39 @@ def colmap_recon_create_camera_image(
     p2ds = iinfo.get_valid_points2D()
 
     # FIXME pycolmap `p2ds` segfaults in list comprehensions in python 3.10
-    xyz_world = []
-    errors = []
-    n_visible = []
-    uv = []
-    for i in range(len(p2ds)):
-      p2d = p2ds[i]
-      xyz_world.append(ptid_to_info[p2d.point3D_id].xyz)
-      errors.append(ptid_to_info[p2d.point3D_id].error)
-      n_visible.append(ptid_to_info[p2d.point3D_id].track.length())
-      uv.append(p2d.xy)
-    xyz_world = np.array(xyz_world)
-    errors = np.array(errors)
-    n_visible = np.array(n_visible)
-    uv = np.array(uv)
+    # xyz_world = []
+    # errors = []
+    # n_visible = []
+    # uv = []
+    # for i in range(len(p2ds)):
+    #   p2d = p2ds[i]
+    #   xyz_world.append(ptid_to_info[p2d.point3D_id].xyz)
+    #   errors.append(ptid_to_info[p2d.point3D_id].error)
+    #   n_visible.append(ptid_to_info[p2d.point3D_id].track.length())
+    #   uv.append(p2d.xy)
+    # xyz_world = np.array(xyz_world)
+    # errors = np.array(errors)
+    # n_visible = np.array(n_visible)
+    # uv = np.array(uv)
     
 
     # for i in range(len(p2ds)):
     #   print(([p2d.point3D_id for p2d in p2ds[:i]], i))
     # breakpoint()
     # print([p2d.point3D_id for p2d in p2ds])
-    # xyz_world = np.array(
-    #   [ptid_to_info[p2d.point3D_id].xyz for p2d in p2ds]
-    # )
+    xyz_world = np.array(
+      [ptid_to_info[p2d.point3D_id].xyz for p2d in p2ds]
+    )
     
     xyz_in_camera = (iinfo.rotation_matrix() @ xyz_world.T).T + iinfo.tvec
     dist = np.linalg.norm(xyz_in_camera, axis=-1)
-    # uv = np.array([p2d.xy for p2d in p2ds])
-    # errors = np.array(
-    #   [ptid_to_info[p2d.point3D_id].error for p2d in p2ds]
-    # )
-    # n_visible = np.array(
-    #   [ptid_to_info[p2d.point3D_id].track.length() for p2d in p2ds]
-    # )
+    uv = np.array([p2d.xy for p2d in p2ds])
+    errors = np.array(
+      [ptid_to_info[p2d.point3D_id].error for p2d in p2ds]
+    )
+    n_visible = np.array(
+      [ptid_to_info[p2d.point3D_id].track.length() for p2d in p2ds]
+    )
         
     # Sometimes COLMAP includes points that are outside the image...
     # TODO where do these come from? should not be due to distortion

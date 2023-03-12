@@ -80,6 +80,8 @@ RUN \
   git clone --recursive https://github.com/colmap/pycolmap.git && \
   cd pycolmap && \
   git checkout 401f82658cdad1e8b657c77381863f9e261c7c3c && \
+  echo "Hack: build with debug symbols else segfaults on list comps python 3.10" && \
+  sed -i -e "s/cfg = 'Debug'/cfg = 'RelWithDebInfo' # /g" setup.py && \
   pip3 install -v -e .
 
 COPY requirements.txt /tmp/requirements.txt

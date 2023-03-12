@@ -146,12 +146,11 @@ def _save_depth_image(
   downscales = downscales or []
   for dfactor in downscales:
     d_sz = (int(tw / dfactor), int(th / dfactor))
-    depth_downscaled = cv2.resize(
-      depth, d_sz, interpolation=cv2.INTER_NEAREST)
+    depth_downscaled = cv2.resize(depth, d_sz, interpolation=cv2.INTER_NEAREST)
 
     d_base_dir = outdir / f'depths_{dfactor}'
     d_dest = d_base_dir / fname
-    cv2.imwrite(d_dest, depth_downscaled)
+    cv2.imwrite(str(d_dest), depth_downscaled)
     frame[f'psegs_depth_downscales_{dfactor}_fpath'] = str(d_dest)
 
   return frame
@@ -252,15 +251,15 @@ def export_sdt_to_nerfstudio_format(
     
     def to_sd_frame(stamped_datum):
       dci = stamped_datum.camera_image
-      if dci.has_depth() and 'psegs.depth.rgb_uri' in stamped_datum.uri.extra:
-        rgb_uri = stamped_datum.uri.extra['psegs.depth.rgb_uri']
+      if dci.has_depth() and 'psegs.depth.rgb_uri' in dci.extra:
+        rgb_uri = dci.extra['psegs.depth.rgb_uri']
         frame = psegs_uri_to_frame[rgb_uri]
         return (stamped_datum, frame)
       return None
     
-    sd_frame_rdd = datum_dci_rdd.map(to_sd_frame).cache()
-    sd_frame_rdd = sd_frame_rdd.filter(lambda v: v is not None)
-    util.log.info(f"Selected {datum_dci_rdd.count()} depth images ...")
+    sd_frame_rdd = datum_dci_rdd.map(to_sd_frame)
+    sd_frame_rdd = sd_frame_rdd.filter(lambda v: v is not None).cache()
+    util.log.info(f"Selected {sd_frame_rdd.count()} depth images ...")
 
     depth_outdir = outdir / 'depth'
     for dfactor in downscales:
@@ -276,8 +275,7 @@ def export_sdt_to_nerfstudio_format(
                                       resize_max_h,
                                       mm_depth_type,
                                       mm_depth_scale)
-    
-    frames = datum_dci_rdd.map(save_dci).collect()
+    frames = sd_frame_rdd.map(save_dci).collect()
       # NB: this implicity overwrites `frames` to only include frames that
       # have *both* RGB and Depth.  Nerfstudio wants this 1-to-1 parity at
       # time of writing.
@@ -317,13 +315,16 @@ if __name__ == '__main__':
   #   T,
   #   '/outer_root/media/mai-tank/ns-test-root')
   
+  # import faulthandler
+  # faulthandler.enable()
+
   spath = Path('/outer_root/media/mai-tank/hloc_out_mrskylake/pwais.private.moms-strawberrys-comp')
 
   from psegs.datasets.colmap import COLMAP_SDTFactory
   sdt = COLMAP_SDTFactory.create_sd_table_for_reconstruction(
               spath/'sfm_out/sfm_superpoint+superglue/',
               spath/'images/',
-              '/outer_root/media/mai-tank/ns-test-root/tastpsegs')
+              '/outer_root/media/mai-tank/ns-test-root/tastpsegs-w-depth')
   export_sdt_to_nerfstudio_format(
     sdt,
-    '/outer_root/media/mai-tank/ns-test-root')
+    '/outer_root/media/mai-tank/ns-test-root/w-depth')
