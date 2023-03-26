@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import textwrap
-import mdv
+import rich
 
 
 def is_ipython():
@@ -57,10 +57,14 @@ class IDatasetUtil(object):
     txt = textwrap.dedent(txt)
 
     if is_ipython():
-      from IPython.display import display, Markdown
-      display(Markdown(txt))
+      from IPython.display import display
+      from IPython.display import Markdown as IPython_Markdown
+      display(IPython_Markdown(txt))
     else:
-      print()
-      print(mdv.main(txt, cols=80))
-      print()
+      from rich.console import Console
+      from rich.markdown import Markdown as rich_Markdown
+      c = Console()
+      c.print()
+      c.print(rich_Markdown(txt), soft_wrap=True, width=80)
+      c.print()
 

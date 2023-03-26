@@ -50,13 +50,7 @@ class Spark(spark.SessionFactory):
 
     'spark.port.maxRetries': '256',
       # Allow lots of Spark drivers on a single machine (e.g. a dev machine)
-    
-    'spark.executorEnv.COLUMNS': '80',
-    'spark.executorEnv.LINES': '80',
-      # These settings make the `mdv` python package happy when we use it in a
-      # Spark executor that has no terminal
-    
-    'spark.local.dir': '/outer_root/media/optane800/spark_cache',
+
   }
 
 def save_sd_tables(
