@@ -35,7 +35,7 @@ class UnionFactory(StampedDatumTableFactory):
   @classmethod
   def get_segment_sd_table(cls, segment_uri, spark=None):
     F = cls._get_factory_for_seg_uri(segment_uri)
-    return F.get_segment_sd_table(segment_uri, spark=spark)
+    return F.get_segment_sd_table(segment_uris=[segment_uri], spark=spark)
 
   @classmethod
   def build_cache(cls, spark=None, only_segments=None, table_root=''):

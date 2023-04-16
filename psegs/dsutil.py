@@ -25,8 +25,6 @@ DS_TO_UTIL_IMPL = {
 }
 
 def run(dataset):
-  nuscenes.NuscDSUtil.show_md("hi i am *markdown* text")
-
   assert dataset in DS_TO_UTIL_IMPL, (
     "Unknown dataset %s, choices: %s" % (
       dataset, sorted(DS_TO_UTIL_IMPL.keys())))

@@ -67,6 +67,7 @@ def _save_image(
     imageio.imwrite(i_dest, image_downscaled)
     frame[f'psegs_downscales_{dfactor}_fpath'] = str(i_dest)
 
+  # prev version
   T_c2w = ci.get_world_to_sensor()#.get_inverse() DEBUG THIS
   c2w = T_c2w.get_transformation_matrix(homogeneous=True)
   
@@ -262,6 +263,7 @@ def export_sdt_to_nerfstudio_format(
     util.log.info(f"Selected {sd_frame_rdd.count()} depth images ...")
 
     depth_outdir = outdir / 'depth'
+    depth_outdir.mkdir(parents=True, exist_ok=True)
     for dfactor in downscales:
       d_base_dir = outdir / f'depths_{dfactor}'
       d_base_dir.mkdir(parents=True, exist_ok=True)

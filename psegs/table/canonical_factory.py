@@ -20,12 +20,13 @@ from psegs.table.union_factory import UnionFactory
 
 
 class CanonicalFactory(UnionFactory):
-  SDT_FACTORIES = [
-    IOSLidarSDTFactory,
-  ]
+  # SDT_FACTORIES = [
+  #   IOSLidarSDTFactory,
+  # ]
+  SDT_FACTORIES = []
 
 
-if True:
+if False:
   # For now we'll just wire in our own data in Psegs.
   # User libraries and/or notebooks should set this up
   # in their own code after importing psegs but before 

@@ -123,7 +123,7 @@ def get_partition_path(v):
   if not isinstance(v, URI):
     raise ValueError("Don't know what to do with %s" % (v,))
   
-  return get_partition_paths([v])
+  return get_partition_paths([v])[0]
 
 
 def get_segment_tables_for_uris(seg_uris, spark=None):
