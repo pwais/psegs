@@ -14,7 +14,9 @@
 
 
 import itertools
+import six
 
+from psegs import datum
 from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
@@ -48,14 +50,17 @@ class UnionFactory(StampedDatumTableFactory):
       for F_idx, F in enumerate(cls.SDT_FACTORIES):
         seg_uris = F.get_all_segment_uris()
         for seg_uri in seg_uris:
-          seguri_to_factoryidx[str(seg_uri)] = F_idx
+          seguri_to_factoryidx[str(seg_uri.to_segment_uri())] = F_idx
       cls._seguri_to_factoryidx_cache = seguri_to_factoryidx
     return cls._seguri_to_factoryidx_cache
   
   @classmethod
   def _get_factory_for_seg_uri(cls, seg_uri):
-    seg_uri = str(seg_uri)
-    F_idx = cls._seguri_to_factoryidx().get(seg_uri)
+    # Normalize input: need to strictly match segment_uri components
+    seg_uri = datum.URI.from_str(seg_uri).to_segment_uri()
+    
+    seg_uri_key = str(seg_uri.to_segment_uri())
+    F_idx = cls._seguri_to_factoryidx().get(seg_uri_key)
     if F_idx is None:
       raise NoKnowStampedDatumTableFactory(seg_uri)
     else:

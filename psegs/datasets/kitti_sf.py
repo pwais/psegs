@@ -443,7 +443,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
       util.log.info(f"Filtering to only {len(only_segments)} segments")
       seg_uris_to_build = [
         uri for uri in seg_uris_to_build
-        if any(suri.soft_matches_segment(uri) for suri in only_segments)
+        if any(suri.soft_matches_segment_of(uri) for suri in only_segments)
       ]
 
     ## ... now run tasks and create stamped datums.
@@ -647,8 +647,7 @@ class DSUtil(IDatasetUtil):
       zips = '\n        '.join('  * %s' % fname for fname in cls.all_zips())
       cls.show_md("""
         Due to KITTI license constraints, you need to manually accept the KITTI
-        license to obtain the download URLs for the
-        [Stereo / Scene Flow](https://www.cvlibs.net/datasets/kitti/eval_scene_flow.php?benchmark=stereo)
+        license to obtain the download URLs for the *Stereo / Scene Flow*[1]
         zip files.  But once you have the URL, it's easy to write a short bash
         loop with `wget` to fetch them in parallel.
 
@@ -659,6 +658,8 @@ class DSUtil(IDatasetUtil):
 
         Once you've downloaded the archives, we'll need the path to where
         you put them.  Enter that below, or exit this program.
+
+        [1] https://www.cvlibs.net/datasets/kitti/eval_scene_flow.php?benchmark=stereo
 
       """ % (zips,))
       kitti_sf_root = input(
@@ -673,13 +674,6 @@ class DSUtil(IDatasetUtil):
 
       cls.show_md("Symlink: \n%s <- %s" % (kitti_sf_root, cls.FIXTURES.ROOT))
       os.symlink(kitti_sf_root, cls.FIXTURES.ROOT)
-
-      # Make symlink read-only
-      import stat
-      os.chmod(
-        kitti_sf_root,
-        stat.S_IREAD|stat.S_IRGRP|stat.S_IROTH,
-        follow_symlinks=False)
 
     cls.show_md("Validating KITTI SF 2015 archives ...")
     zips_needed = set(cls.all_zips())

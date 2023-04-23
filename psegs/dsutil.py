@@ -14,11 +14,13 @@
 
 from psegs.datasets import nuscenes
 from psegs.datasets import kitti
+from psegs.datasets import kitti_sf
 from psegs.datasets import ios_lidar
 from psegs.datasets import tanks_and_temples
 
 DS_TO_UTIL_IMPL = {
   'kitti': kitti.DSUtil,
+  'kitti_sceneflow': kitti_sf.DSUtil,
   'nuscenes': nuscenes.NuscDSUtil,
   'ios_lidar': ios_lidar.DSUtil,
   'tanks_and_temples': tanks_and_temples.DSUtil,

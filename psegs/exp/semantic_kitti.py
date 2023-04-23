@@ -193,7 +193,7 @@ class SemanticKITTISDTable(StampedDatumTableFactory):
       seg_uris = [
         uri for uri in seg_uris
         if any(
-          suri.soft_matches_segment(uri) for suri in only_segments)
+          suri.soft_matches_segment_of(uri) for suri in only_segments)
       ]
     
     SK_SEQ_TO_NSCANS = cls.FIXTURES.get_seq_to_nscans()

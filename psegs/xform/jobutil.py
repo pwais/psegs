@@ -117,7 +117,7 @@ def get_partition_path(v):
   if (not isinstance(v, URI)) and hasattr(v, '__iter__'):
     vs = [vv for vv in v]
     assert len(vs) == 1, \
-      "Wanted exactly one partition path, but have %s" % (v,)
+      "Wanted exactly one value, but have %s" % (v,)
     v = vs[0]
 
   if not isinstance(v, URI):
