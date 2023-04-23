@@ -157,7 +157,7 @@ class StampedDatumTable(object):
         matches_topics = (not only_topics or (sd.uri.topic in only_topics))
         matches_types = True
         for sd_type in only_types:
-          if not bool(getattr(sd, sd_type)):
+          if not bool(getattr(sd, sd_type, False)):
             matches_types = False
             break
         return matches_topics and matches_types

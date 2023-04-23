@@ -382,6 +382,16 @@ class KITTISF15SDTable(StampedDatumTableFactory):
 
   SPLITS = ('train', 'test')
 
+  # Table will include MatchedPair datums
+  INCLUDE_MPS = True
+
+  # Table will include CameraImage datums, induced from MatchedPair datums
+  INCLUDE_CIS = True
+  
+  # # TODO: Include Depth CameraImage datums, induced from MatchedPair datums
+  # INCLUDE_DCIS = True
+
+
   ## Public API
 
   @classmethod
@@ -461,9 +471,23 @@ class KITTISF15SDTable(StampedDatumTableFactory):
 
   @classmethod
   def _create_datums_for_segement_uri(cls, seg_uri):
-    # TODO: add scene flow datums, camera image datums as optional, etc
-    print('todo add ci and dci')
-    return [cls._create_matched_pair(seg_uri)]
+    datums = []
+    mp = None
+    if cls.INCLUDE_MPS:
+      mp_datum = cls._create_matched_pair(seg_uri)
+      mp = mp_datum.matched_pair
+      datums += [mp]
+    if cls.INCLUDE_CIS:
+      img1_uri = datum.URI.from_str(mp.extra['kitti_sf15.img1_uri'])
+      img1_ci = cls._create_camera_image(img1_uri)
+      img1_sd = datum.StampedDatum(uri=img1_uri, camera_image=img1_ci)
+      datums += [img1_sd]
+      
+      img2_uri = datum.URI.from_str(mp.extra['kitti_sf15.img2_uri'])
+      img2_ci = cls._create_camera_image(img2_uri)
+      img2_sd = datum.StampedDatum(uri=img2_uri, camera_image=img2_ci)
+      datums += [img2_sd]
+    return datums
 
   @classmethod
   def _get_file_bytes(cls, uri=None, archive=None, entryname=None):
@@ -606,6 +630,10 @@ class KITTISF15SDTable(StampedDatumTableFactory):
         f'{ksplit}/image_3/{frame_id}.png')
     img2_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
 
+    extra = copy.deepcopy(uri.extra)
+    extra['kitti_sf15.img1_uri'] = str(img1_uri)
+    extra['kitti_sf15.img2_uri'] = str(img2_uri)
+
     mp = datum.MatchedPair(
                 matcher_name='kitti_gt',
                 timestamp=uri.timestamp,
@@ -613,7 +641,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
                 img2=cls._create_camera_image(img2_uri),
                 matches_factory=lambda: _get_matches(uri),
                 matches_colnames=['x1', 'y1', 'x2', 'y2', 'depth_meters_left'],
-                extra=uri.extra)
+                extra=extra)
     
     sd_uri = copy.deepcopy(uri)
     sd_uri.topic = 'camera|matches'

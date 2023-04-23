@@ -222,7 +222,7 @@ def export_sdt_to_nerfstudio_format(
   datum_rdd = datum_rdd.repartition(n_cpus).cache()
 
   if datum_rdd.count() == 0:
-    util.log.info(f"Nothing to export for {outdir}!")
+    util.log.info(f"Nothing to export for {outdir} !")
     return
   
   util.log.info(f"Selected {datum_rdd.count()} input images ...")
