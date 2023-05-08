@@ -256,6 +256,11 @@ def export_sdt_to_nerfstudio_format(
         rgb_uri = dci.extra['psegs.depth.rgb_uri']
         frame = psegs_uri_to_frame[rgb_uri]
         return (stamped_datum, frame)
+      
+      if dci.has_depth() and 'psegs.depth.rgb_uri' not in dci.extra:
+        util.log.warning(
+          f"WARN: Found depth image that has no `psegs.depth.rgb_uri` key: "
+          f"{str(stamped_datum.uri)}")
       return None
     
     sd_frame_rdd = datum_dci_rdd.map(to_sd_frame)

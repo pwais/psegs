@@ -165,9 +165,6 @@ class StampedDatumTable(object):
       return datum_rdd
 
 
-
-
-
   def as_uri_df(self, spark=None):
 
     df = self.to_spark_df(spark=spark)
@@ -191,6 +188,31 @@ class StampedDatumTable(object):
     else:
       datum_rdd = self.to_datum_rdd(spark=spark)
       return datum_rdd.map(lambda sd: sd.uri)
+
+
+  def get_start_end_time_ns(self, spark=None):
+    if self._sample:
+
+      ts = [sd.uri.timestamp for sd in self._sample.datums] or [None]
+      return min(ts), max(ts)
+    
+    elif self._spark_df:
+      
+      uri_df = self.as_uri_df()
+
+      from pyspark.sql import functions as F
+      min_max_df = uri_df.select(F.min('timestamp'), F.max('timestamp'))
+      start_time_ns, end_time_ns = min_max_df.collect()[0]
+      return start_time_ns, end_time_ns
+
+    elif self._datum_rdd:
+
+      uri_rdd = self.as_uri_rdd()
+      ts = uri_rdd.map(lambda uri: uri.timestamp).collect() or [None]
+      return min(ts), max(ts)
+    
+    else:
+      return None, None
 
 
   ## Viz

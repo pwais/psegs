@@ -1,4 +1,4 @@
-# Copyright 2022 Maintainers of PSegs
+# Copyright 2023 Maintainers of PSegs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -160,6 +160,44 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
 
     return MyAdhocVideosSDTFactory
 
+
+  @classmethod
+  def create_factories_for_videos(
+        cls,
+        root_search_dir,
+        video_extensions=('.mov', '.mp4'),
+        spark=None,
+        **create_factory_kwargs):
+
+    from oarphpy.util.misc import is_stupid_mac_file
+
+    root_search_dir = Path(root_search_dir)
+    video_paths = [
+      p
+      for p in root_search_dir.rglob('**/*')
+      if (
+        not p.is_dir() and
+        not is_stupid_mac_file(p) and
+        any(p.name.lower().endswith(ext) for ext in video_extensions)
+
+        and '2250' in p.name
+      )
+    ]
+
+    with Spark.sess(spark) as spark:
+      util.log.info(
+        f"AdhocVideosSDTFactory: Creating factories for "
+        f"{len(video_paths)} videos ...")
+      path_rdd = spark.sparkContext.parallelize(
+                        video_paths, numSlices=len(video_paths))
+      def create_factory(p):
+        return cls.create_factory_for_video(p, **create_factory_kwargs)
+      factory_rdd = path_rdd.map(create_factory)
+
+      sdt_factories = factory_rdd.collect()
+      util.log.info("... done.")
+    return sdt_factories
+
   @classmethod
   def get_segment_uri(cls):
     return datum.URI(
@@ -290,7 +328,7 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
       util.log.info(
         f"Note: resume mode unsupported, got existing_uri_df {existing_uri_df}")
     
-    if only_segments is not None:
+    if only_segments:
       has_match = any(
               suri.soft_matches_segment_of(cls.get_segment_uri())
               for suri in only_segments)
@@ -300,7 +338,7 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
     # Generate URIs ...
     uris = cls.get_image_uris()
     uri_rdd = spark.sparkContext.parallelize(uris)
-    util.log.info(f"Creating datums for {len(uris)} images ...")
+    util.log.info(f"Creating datums for {len(uris)} frames ...")
 
     datum_rdd = uri_rdd.map(cls.create_stamped_datum)
 
@@ -465,10 +503,19 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
   @classmethod
   def create_stamped_datum(cls, uri):
     img_path = Path(uri.extra['AdhocImagePathsSDTFactory.image_path'])
-    if img_path.suffix.lower() == '.jpg':
+    if img_path.suffix.lower() in ('.jpg', '.jpeg'):
       from oarphpy import util as oputil
-      with open(img_path, 'rb') as f:
-        w, h = oputil.get_jpeg_size(f.read(1024))
+      try:
+        with open(img_path, 'rb') as f:
+          w, h = oputil.get_jpeg_size(f.read(1024))
+      except ValueError:
+        # Read entire image as fallback (slow)
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = 1e12
+
+        import imageio
+        w, h = imageio.imread(img_path).shape[:2]
+
     elif img_path.suffix.lower() == '.png':
       from psegs.util import misc
       with open(img_path, 'rb') as f:
@@ -507,7 +554,7 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
       util.log.info(
         f"Note: resume mode unsupported, got existing_uri_df {existing_uri_df}")
     
-    if only_segments is not None:
+    if only_segments:
       has_match = any(
               suri.soft_matches_segment_of(cls.get_segment_uri())
               for suri in only_segments)
@@ -520,8 +567,20 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
     util.log.info(f"Creating datums for {len(uris)} images ...")
 
     datum_rdd = uri_rdd.map(cls.create_stamped_datum)
-
     return [datum_rdd]
+
+
+###############################################################################
+## Adhoc Directory Tree -> UnionFactory of Adhoc{ImagePaths,Video}SDTFactories
+
+"""
+video file -> segment
+directory of images -> assume want sub-segment
+
+future: directory of images for dedicated segment (e.g. camera after iphone)
+
+"""
+
 
 
 if __name__ == '__main__':

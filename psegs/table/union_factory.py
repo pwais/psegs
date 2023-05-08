@@ -1,4 +1,4 @@
-# Copyright 2022 Maintainers of PSegs
+# Copyright 2023 Maintainers of PSegs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,6 @@
 
 
 import itertools
-import six
 
 from psegs import datum
 from psegs.table.sd_table_factory import StampedDatumTableFactory
@@ -25,6 +24,8 @@ class NoKnowStampedDatumTableFactory(Exception):
 
 
 class UnionFactory(StampedDatumTableFactory):
+  """Induce a union over a list of `StampedDatumTableFactory`s, with amortized
+  O(1) lookup of factory by segment URI."""
 
   SDT_FACTORIES = []
 
@@ -37,11 +38,11 @@ class UnionFactory(StampedDatumTableFactory):
   @classmethod
   def get_segment_sd_table(cls, segment_uri, spark=None):
     F = cls._get_factory_for_seg_uri(segment_uri)
-    return F.get_segment_sd_table(segment_uris=[segment_uri], spark=spark)
+    return F.get_segment_sd_table(segment_uri=segment_uri, spark=spark)
 
-  @classmethod
-  def build_cache(cls, spark=None, only_segments=None, table_root=''):
-    raise NotImplementedError # TODO
+  # @classmethod
+  # def build_cache(cls, spark=None, only_segments=None, table_root=''):
+  #   raise NotImplementedError # TODO
 
   @classmethod
   def _seguri_to_factoryidx(cls):
@@ -56,12 +57,11 @@ class UnionFactory(StampedDatumTableFactory):
   
   @classmethod
   def _get_factory_for_seg_uri(cls, seg_uri):
-    # Normalize input: need to strictly match segment_uri components
-    seg_uri = datum.URI.from_str(seg_uri).to_segment_uri()
-    
+    seg_uri = datum.URI.from_str(seg_uri)    
     seg_uri_key = str(seg_uri.to_segment_uri())
     F_idx = cls._seguri_to_factoryidx().get(seg_uri_key)
     if F_idx is None:
       raise NoKnowStampedDatumTableFactory(seg_uri)
     else:
       return cls.SDT_FACTORIES[F_idx]
+

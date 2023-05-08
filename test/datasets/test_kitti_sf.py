@@ -52,6 +52,7 @@ def test_kitti_sf_create_matched_pair():
     print('debug.xyz.mp.glb')
     f.write(b)
 
+
 def test_kitti_sf_stereo_3d_viz():
   testutil.skip_if_fixture_absent(kitti_sf.Fixtures.EXTERNAL_FIXTURES_ROOT)
 

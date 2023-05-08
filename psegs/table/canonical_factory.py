@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
+from psegs import util
 # from psegs.datasets.kitti import KITTISDTable
 # from psegs.datasets.kitti_360 import KITTI360SDTable
 from psegs.datasets.ios_lidar import IOSLidarSDTFactory
@@ -20,10 +23,52 @@ from psegs.table.union_factory import UnionFactory
 
 
 class CanonicalFactory(UnionFactory):
-  # SDT_FACTORIES = [
-  #   IOSLidarSDTFactory,
-  # ]
+  
+  # The canonical factory is empty unless configured and init-ed!
   SDT_FACTORIES = []
+
+  @classmethod
+  def init_from_environ(cls):
+
+    if 'PSEGS_CANON_FACTORY_PQ_SD_SUBDIRS' in os.environ:
+      sd_subdirs = os.environ['PSEGS_CANON_FACTORY_PQ_SD_SUBDIRS']
+      sd_subdirs = sd_subdirs.split(':')
+      util.log.info(f"PSegs Global Parquet Stamped Datum Roots: {sd_subdirs}")
+      
+      from psegs.table.sd_table_factory import ParquetSDTFactory
+      cls.SDT_FACTORIES += [
+        ParquetSDTFactory.factory_for_sd_subdirs(d)
+        for d in sd_subdirs
+      ]
+
+
+    if 'PSEGS_CANON_FACTORY_IOS_LIDAR_DATA_ROOTS' in os.environ:
+      dir_roots = os.environ['PSEGS_CANON_FACTORY_IOS_LIDAR_DATA_ROOTS']
+      dir_roots = dir_roots.split(':')
+      util.log.info(f"PSegs Global IOS Lidar Data Roots: {dir_roots}")
+      
+      dataset = os.environ.get(
+        'PSEGS_CANON_FACTORY_IOS_LIDAR_DATASET',
+        'anon_canon_factory_ios_lidar_dataset')
+      split = os.environ.get(
+        'PSEGS_CANON_FACTORY_IOS_LIDAR_SPLIT',
+        'anon_canon_factory_ios_lidar_split')
+
+      from psegs.datasets.ios_lidar import Fixtures as IOS_Fixtures
+      for dir_root in dir_roots:
+        class MyFixtures(IOS_Fixtures):
+          DATASET = dataset
+          SPLIT = split
+          @classmethod
+          def threeDScannerApp_data_root(cls):
+            from pathlib import Path
+            return Path(dir_root)
+
+        class MyIOSLidarSDTableFactory(IOSLidarSDTFactory):
+          FIXTURES = MyFixtures
+
+        CanonicalFactory.SDT_FACTORIES += [MyIOSLidarSDTableFactory]
+
 
 
 if False:

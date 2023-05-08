@@ -17,3 +17,4 @@ from psegs.xform.jobutil import get_matching_seg_uris
 from psegs.xform.jobutil import get_partition_path
 from psegs.xform.jobutil import get_partition_paths
 from psegs.xform.jobutil import get_segment_tables_for_uris
+from psegs.xform.jobutil import run_standard_actions

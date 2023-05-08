@@ -39,14 +39,11 @@ def configure_arg_parser(parser=None):
     parser = argparse.ArgumentParser(
                       description="Default PSegs segxform job",
                       formatter_class=argparse.RawDescriptionHelpFormatter)
+  
+  # Pick your data
   segex_sel_group = parser.add_argument_group(
                         "PSegs Selection",
                         "Select the data to process")
-  segex_env_group = parser.add_argument_group(
-                        "PSegs Environment",
-                        "Configure where PSegs looks for assets")
-
-  # Pick your data
   segex_sel_group.add_argument(
     '--segment-id', default='',
     help='Select only this segment. Use --dataset and/or --split if you need '
@@ -62,16 +59,43 @@ def configure_arg_parser(parser=None):
     help='Restrict to only this split')
 
   # Configure PSegs environment fixtures
+  segex_env_group = parser.add_argument_group(
+                        "PSegs Environment",
+                        "Configure where PSegs looks for assets")
   segex_env_group.add_argument(
     '--ps-root', default=DEFAULT_DATA_ROOT,
     help='Use this as the PSegs root (where PSegs code and data '
          'fixtures live) [default %(default)s]')
 
+  # Standard Actions
+  segex_act_group = parser.add_argument_group(
+                        "PSegs Standard Actions",
+                        "Script actions powered by PSegs XForm")
+  segex_act_group.add_argument(
+    '--list-and-exit', default=False, action='store_true',
+    help='Just list available `source` segments to stdout and exit')
+
   return parser
+
+
+def run_standard_actions(args):
+
+  if args.list_and_exit:
+    import pprint
+    from psegs.table.canonical_factory import CanonicalFactory
+    CanonicalFactory.init_from_environ()
+    seg_uris = CanonicalFactory.get_all_segment_uris()
+    seg_uris = sorted(str(suri) for suri in seg_uris)
+    pprint.pprint(f"Available segments: {len(seg_uris)}")
+    pprint.pprint(seg_uris)
+    return True
+  
+  return False
 
 
 def get_matching_seg_uris(args):
   from psegs.table.canonical_factory import CanonicalFactory
+  CanonicalFactory.init_from_environ()
   seg_uris = CanonicalFactory.get_all_segment_uris()
 
   if args.segment_id:

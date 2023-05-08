@@ -742,8 +742,6 @@ def threeDScannerApp_convert_raw_to_sync_rgbd(
 
 
 
-
-
 ###############################################################################
 ### iOS Lidar Fixtures & Other Constants
 
@@ -860,7 +858,7 @@ class IOSLidarSDTFactory(StampedDatumTableFactory):
     seg_uris = cls.FIXTURES.get_all_seg_uris()
     if only_segments:
       util.log.info(
-        "Filtering to only %s segments" % len(only_segments))
+        f"IOSLidarSDTFactory Filtering to only {len(only_segments)} segments")
       seg_uris = [
           u for u in seg_uris
           if any(
@@ -893,8 +891,9 @@ class IOSLidarSDTFactory(StampedDatumTableFactory):
     URIS_PER_CHUNK = os.cpu_count() * 128
     uris = uri_rdd.collect()
     assert len(uris) > 0, \
-      "Broken scan(s) ? No URIS for segments %s" % (seg_uris,)
-    util.log.info("... creating datums for %s URIs." % len(uris))
+      f"Broken scan(s) ? No URIS for segments {seg_uris}"
+    util.log.info(
+      f"... IOSLidarSDTFactory creating datums for {len(uris)} URIs.")
 
     datum_rdds = []
     for chunk in oputil.ichunked(uris, URIS_PER_CHUNK):

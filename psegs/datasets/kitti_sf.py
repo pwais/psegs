@@ -388,8 +388,8 @@ class KITTISF15SDTable(StampedDatumTableFactory):
   # Table will include CameraImage datums, induced from MatchedPair datums
   INCLUDE_CIS = True
   
-  # # TODO: Include Depth CameraImage datums, induced from MatchedPair datums
-  # INCLUDE_DCIS = True
+  # Table will include depth CameraImage datums, induced from MatchedPair datums
+  INCLUDE_DCIS = True
 
 
   ## Public API
@@ -477,6 +477,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
       mp_datum = cls._create_matched_pair(seg_uri)
       mp = mp_datum.matched_pair
       datums += [mp]
+    
     if cls.INCLUDE_CIS:
       img1_uri = datum.URI.from_str(mp.extra['kitti_sf15.img1_uri'])
       img1_ci = cls._create_camera_image(img1_uri)
@@ -487,6 +488,18 @@ class KITTISF15SDTable(StampedDatumTableFactory):
       img2_ci = cls._create_camera_image(img2_uri)
       img2_sd = datum.StampedDatum(uri=img2_uri, camera_image=img2_ci)
       datums += [img2_sd]
+    
+    if cls.INCLUDE_DCIS:
+      img1_uri = datum.URI.from_str(mp.extra['kitti_sf15.img1_uri'])
+      img1_ci = cls._create_camera_image(img1_uri, create_depth_image=True)
+      img1_sd = datum.StampedDatum(uri=img1_uri, camera_image=img1_ci)
+      datums += [img1_sd]
+      
+      img2_uri = datum.URI.from_str(mp.extra['kitti_sf15.img2_uri'])
+      img2_ci = cls._create_camera_image(img2_uri, create_depth_image=True)
+      img2_sd = datum.StampedDatum(uri=img2_uri, camera_image=img2_ci)
+      datums += [img2_sd]
+
     return datums
 
   @classmethod
@@ -527,17 +540,12 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     return calib
 
   @classmethod
-  def _create_camera_image(cls, uri):
+  def _create_camera_image(cls, uri, create_depth_image=False):
     from psegs.util import misc
 
     image_png = cls._get_file_bytes(uri=uri)
     width, height = misc.get_png_wh(image_png)
-
-    def _get_image(uri=None):
-      import io
-      import imageio
-      im_bytes = cls._get_file_bytes(uri=uri)
-      return imageio.imread(io.BytesIO(im_bytes))
+    extra = copy.deepcopy(uri.extra)
 
     calib = cls._get_calib(uri)
     K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
@@ -575,12 +583,43 @@ class KITTISF15SDTable(StampedDatumTableFactory):
     else:
       raise ValueError(uri.topic)
 
+    if create_depth_image:
+      def _get_depth_image(uri=None, h=1, w=1):
+        assert uri is not None
+        uv_2_uv_3_depth = cls._get_uv_2_uv_3_depth(uri)
+        if uri.topic == 'camera|left':
+          uv_depth = uv_2_uv_3_depth[:, (0, 1, -1)]
+        elif uri.topic == 'camera|right':
+          uv_depth = uv_2_uv_3_depth[:, (2, 3, -1)]
+        else:
+          raise ValueError('depth image' + str(uri.topic))
+      
+        print('todo check depth~~~~~~is correct? is euclidean or is z-depth~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        depth_image = np.zeros((h, w, 1), dtype=np.float32)
+        uu, vv = uv_depth[:, 0].astype(int), uv_depth[:, 1].astype(int)
+        depth_image[vv, uu, 0] = uv_depth[:, -1]
+        return depth_image
+
+      image_factory = lambda: _get_depth_image(uri=uri, h=height, w=width)
+      channel_names = ['depth']
+      extra['psegs.depth.rgb_uri'] = str(uri)
+      sensor_name = uri.topic + '|depth'
+    else:
+      def _get_image(uri=None):
+        import io
+        import imageio
+        im_bytes = cls._get_file_bytes(uri=uri)
+        return imageio.imread(io.BytesIO(im_bytes))
+      sensor_name = uri.topic
+      image_factory = lambda: _get_image(uri=uri)
+      channel_names = ['r', 'g', 'b']
+
     # for KITTI SF15, left camera is ego
     ego_pose = datum.Transform(src_frame='world', dest_frame='ego')
-    extra = uri.extra
     ci = datum.CameraImage(
-          sensor_name=uri.topic,
-          image_factory=lambda: _get_image(uri=uri),
+          sensor_name=sensor_name,
+          image_factory=image_factory,
+          channel_names=channel_names,
           width=width,
           height=height,
           timestamp=uri.timestamp,
@@ -592,29 +631,6 @@ class KITTISF15SDTable(StampedDatumTableFactory):
   
   @classmethod
   def _create_matched_pair(cls, uri):
-
-    def _get_matches(base_uri):
-      if base_uri.split == 'test':
-        # Test dataset has no provided labels
-        return np.zeros((0, 5), dtype=np.float32)
-
-      frame_id = base_uri.extra['kitti_sf15.frame_id']
-
-      disp_uri = copy.deepcopy(uri)
-      ksplit = uri.split + 'ing'
-      disp_uri.extra['kitti_sf15.archive.path'] = (
-        f'{ksplit}/disp_occ_0/{frame_id}.png')
-      disp_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
-      disp_bytes = cls._get_file_bytes(uri=disp_uri)
-      disp = kittisf15_load_disp(disp_bytes)
-      
-      calib = cls._get_calib(uri)
-      K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
-      
-      uv_2_uv_3_depth = kittisf15_to_stereo_matches(disp, baseline, K_2)
-      uv_2_uv_3_depth = uv_2_uv_3_depth[uv_2_uv_3_depth[:, -1] > 0]
-      return uv_2_uv_3_depth
-
     frame_id = uri.extra['kitti_sf15.frame_id']
     ksplit = uri.split + 'ing'
 
@@ -639,7 +655,7 @@ class KITTISF15SDTable(StampedDatumTableFactory):
                 timestamp=uri.timestamp,
                 img1=cls._create_camera_image(img1_uri),
                 img2=cls._create_camera_image(img2_uri),
-                matches_factory=lambda: _get_matches(uri),
+                matches_factory=lambda: cls.uv_2_uv_3_depth(uri),
                 matches_colnames=['x1', 'y1', 'x2', 'y2', 'depth_meters_left'],
                 extra=extra)
     
@@ -648,6 +664,28 @@ class KITTISF15SDTable(StampedDatumTableFactory):
 
     return datum.StampedDatum(uri=sd_uri, matched_pair=mp)
 
+  @classmethod
+  def _get_uv_2_uv_3_depth(cls, uri):
+      if uri.split == 'test':
+        # Test dataset has no provided labels
+        return np.zeros((0, 5), dtype=np.float32)
+
+      frame_id = uri.extra['kitti_sf15.frame_id']
+
+      disp_uri = copy.deepcopy(uri)
+      ksplit = uri.split + 'ing'
+      disp_uri.extra['kitti_sf15.archive.path'] = (
+        f'{ksplit}/disp_occ_0/{frame_id}.png')
+      disp_uri.extra['kitti_sf15.archive'] = 'data_scene_flow.zip'
+      disp_bytes = cls._get_file_bytes(uri=disp_uri)
+      disp = kittisf15_load_disp(disp_bytes)
+      
+      calib = cls._get_calib(uri)
+      K_2, K_3, baseline, R_02, T_02, R_03, T_03, P_2, P_3 = calib
+      
+      uv_2_uv_3_depth = kittisf15_to_stereo_matches(disp, baseline, K_2)
+      uv_2_uv_3_depth = uv_2_uv_3_depth[uv_2_uv_3_depth[:, -1] > 0]
+      return uv_2_uv_3_depth
 
 class KITTISF15SDTableTrainOnly(KITTISF15SDTable):
   SPLITS = ('train',)

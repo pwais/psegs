@@ -32,16 +32,20 @@ class StampedDatumTableFactory(object):
     return [URI.from_str(u) for u in cls._get_all_segment_uris()]
 
   @classmethod
-  def get_segment_sd_table(cls, segment_uris=[], spark=None):
+  def get_segment_sd_table(cls, segment_uri=None, segment_uris=None, spark=None):
     # TODO get sd table for segments...
     from psegs.spark import Spark
-    segment_uris = [URI.from_str(s) for s in segment_uris]
+
+    if segment_uri is not None:
+      segment_uris = [segment_uri]
+    segment_uris = [URI.from_str(s) for s in (segment_uris or [])]
+    
     with Spark.sess(spark) as spark:
       datum_rdds = cls._create_datum_rdds(
                         spark, 
                         only_segments=segment_uris)
       datum_rdd = spark.sparkContext.union(datum_rdds)
-      
+
       from pyspark import StorageLevel
       datum_rdd = datum_rdd.persist(StorageLevel.MEMORY_AND_DISK)
 

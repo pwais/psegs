@@ -1,6 +1,7 @@
 # Better cloudpickle support
 attrs>=21.4.0
 
+better_exceptions
 fasteners
 imageio
 imageio-ffmpeg
@@ -20,6 +21,7 @@ six>=1.14.0
 sphinx-autoapi
 tabulate
 threadpoolctl
+tqdm
 trimesh
 xmltodict
 
