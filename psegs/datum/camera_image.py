@@ -12,6 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+
+
+
+
+"""
+
+TODOs
+
+ * try center crop of wide lenses
+
+video{start,end}datum with (start, end) [will work with time range segjoin?]
+and ffmpeg explode
+
+
+
+
+
+
+
+
+
+
+"""
+
 import copy
 import math
 import typing
@@ -102,7 +127,7 @@ class CameraImage(object):
   nanoseconds."""
 
   ego_pose = attr.ib(type=Transform, default=Transform())
-  """Transform: From world to ego / robot frame at the cuboid's `timestamp`"""
+  """Transform: From world to ego / robot frame at the image's `timestamp`"""
 
   ego_to_sensor = attr.ib(type=Transform, default=Transform())
   """Transform: From ego / robot frame to the camera frame (typically a static
@@ -111,7 +136,12 @@ class CameraImage(object):
   K = attr.ib(type=np.ndarray, default=np.eye(3, 3))
   """numpy.ndarray: The 3x3 intrinsic calibration camera matrix"""
 
-  # TODO add distortion including fisheye
+  distortion_model = attr.ib(type=str, default="")
+  """str: Optional distortion model, e.g. OPENCV"""
+
+  distortion_kv = attr.ib(default={}, type=typing.Dict[str, float])
+  """Dict[str, float]: A map of distortion parameter name -> distortion paramte
+  value.  E.g. for OPENCV there might be entries for k1, k2, p1, p2."""
 
   channel_names = attr.ib(default=['r', 'g', 'b'])
   """List[str]: Semantic names for the channels (or dimensions / attributes)
@@ -123,29 +153,6 @@ class CameraImage(object):
   extra = attr.ib(default={}, type=typing.Dict[str, str])
   """Dict[str, str]: A map for adhoc extra context"""
 
-  # __slots__ = ( ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  #   'camera_name',            # type: string
-  #   'image_jpeg',             # type: bytearray
-  #   'height',                 # type: int
-  #   'width',                  # type: int
-  #   'timestamp',              # type: int (GPS or unix time)
-  #   'ego_pose',               # type: Transform (ego from world)
-
-  #   # Optional Point Cloud (e.g. Lidar projected to camera)
-  #   'clouds',                 # type: List[PointCloud]
-    
-  #   # Optional BBoxes (e.g. Cuboids projected to camera)
-  #   'bboxes',                 # type: List[BBox]
-
-  #   # Context
-  #   'cam_from_ego',           # type: Transform
-  #   'K',                      # type: np.ndarray, Camera matrix
-  #   # 'P',                      # type: np.ndarray, Camera projective matrix
-  #   'principal_axis_in_ego',  # type: np.ndarray, A 3d Vector expressing the
-  #                             #   pose of camera *device* in ego frame; may be
-  #                             #   different from `cam_from_ego`, which often
-  #                             #   has an embedded axis change.
-  # )
 
   def __eq__(self, other):
     return misc.attrs_eq(self, other)
@@ -1361,3 +1368,74 @@ class CameraImage(object):
 #                   scene_camera_eye_z=0.6, 
 #                   scene_aspectratio=dict(x=0.9, y=1, z=1));
 # fig.show()
+
+
+# @attr.s(slots=True, eq=False, weakref_slot=False)
+# class CameraVideo(object):
+#   """A video file event from a camera; the camera could be calibrated.  The video
+#   might also have a depth channel (i.e. RGB-D video)."""
+
+#   sensor_name = attr.ib(type=str, default='')
+#   """str: Name of the camera, e.g. camera_front"""
+
+#   video_bytes = attr.ib(type=bytearray, default=bytearray())
+#   """bytearray: Buffer of video data (rare; use `imageio` to sniff for
+#   video type)"""
+
+#   video_uri = attr.ib(type=str, default='')
+
+#   iter_image_factory = attr.ib(
+#       type=CloudpickeledCallable,
+#       converter=CloudpickeledCallable,
+#       default=None)
+#   """CloudpickeledCallable: A serializable factory function that emits a
+#   stream of HWC numpy array images"""
+
+#   width = attr.ib(type=int, default=0, validator=None)
+#   """int: Width of images in pixels"""
+
+#   height = attr.ib(type=int, default=0, validator=None)
+#   """int: Height of images in pixels"""
+
+#   start_timestamp = attr.ib(type=int, default=0)
+#   """int: Timestamp associated with the start of this video; typically a Unix stamp in
+#   nanoseconds."""
+
+#   end_timestamp = attr.ib(type=int, default=0)
+#   """int: Timestamp associated with the start of this video; typically a Unix stamp in
+#   nanoseconds."""
+
+#   K = attr.ib(type=np.ndarray, default=np.eye(3, 3))
+#   """numpy.ndarray: The 3x3 intrinsic calibration camera matrix"""
+
+#   distortion_model = attr.ib(type=str, default="")
+#   """str: Optional distortion model, e.g. OPENCV"""
+
+#   distortion_kv = attr.ib(default={}, type=typing.Dict[str, float])
+#   """Dict[str, float]: A map of distortion parameter name -> distortion paramte
+#   value.  E.g. for OPENCV there might be entries for k1, k2, p1, p2."""
+
+#   channel_names = attr.ib(default=['r', 'g', 'b'])
+#   """List[str]: Semantic names for the channels (or dimensions / attributes)
+#   of the image. By default, the `image` member uses `imageio` to read an
+#   3-channel RGB image as a HWC array.  (Some PNGs could use an alpha channel
+#   to produce an RGBA image).  In the case of depth images, one of the channels
+#   (usually the first) decodes as depth in meters."""
+
+#   extra = attr.ib(default={}, type=typing.Dict[str, str])
+#   """Dict[str, str]: A map for adhoc extra context"""
+
+
+
+
+
+# @attr.s(slots=True, eq=False, weakref_slot=False)
+# class CameraVideoEvent(object):
+#   """A video file event from a camera; the camera could be calibrated.  The video
+#   might also have a depth channel (i.e. RGB-D video).  A segment may have
+#   *two* datums for video: one at the start and one at the end."""
+
+#   is_start = attr.ib(type=bool, default=True)
+#   """bool: This datum denotes the start of a video sequence; there might be
+#   a separate datum at """
+

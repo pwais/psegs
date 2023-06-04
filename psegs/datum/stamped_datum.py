@@ -243,6 +243,7 @@ POINTCLOUD_PROTO = PointCloud(
 )
 
 CAMERAIMAGE_PROTO = CameraImage(
+  distortion_kv={'': 0.0},
   extra={'key': 'value'},
 )
 

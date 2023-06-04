@@ -113,6 +113,39 @@ def colmap_recon_create_camera_image(
         [0,  fy, cy],
         [0,   0,  1],
   ])
+  
+  distortion_kv = {}
+  if camera.model == 'OPENCV':
+    distortion_model = 'OPENCV'
+    distortion_kv = {
+      'k1': float(camera.params[4]),
+      'k2': float(camera.params[5]),
+      'p1': float(camera.params[6]),
+      'p2': float(camera.params[7]),
+    }
+  elif camera.model == 'FULL_OPENCV':
+    distortion_model = 'FULL_OPENCV'
+    distortion_kv = {
+      'k1': float(camera.params[4]),
+      'k2': float(camera.params[5]),
+      'p1': float(camera.params[6]),
+      'p2': float(camera.params[7]),
+      'k3': float(camera.params[8]),
+      'k4': float(camera.params[9]),
+      'k5': float(camera.params[10]),
+      'k6': float(camera.params[11]),
+    }
+  elif camera.model == 'OPENCV_FISHEYE':
+    distortion_model = 'OPENCV_FISHEYE'
+    distortion_kv = {
+      'k1': float(camera.params[4]),
+      'k2': float(camera.params[5]),
+      'k3': float(camera.params[6]),
+      'k4': float(camera.params[7]),
+    }
+  else:
+    distortion_model = f'colmap_camera.model={camera.model}'
+  
   h = camera.height
   w = camera.width
 
@@ -211,6 +244,8 @@ def colmap_recon_create_camera_image(
               ego_pose=ego_pose,
               ego_to_sensor=ego_to_sensor,
               K=K,
+              distortion_model=distortion_model,
+              distortion_kv=distortion_kv,
               extra=extra)
     return dci
   

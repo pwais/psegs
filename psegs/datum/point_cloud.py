@@ -107,11 +107,29 @@ class PointCloud(object):
       self.get_col_idx('z'),
     ]
 
+  def get_rgb_axes(self):
+    try:
+      return [
+        self.get_col_idx('r'),
+        self.get_col_idx('g'),
+        self.get_col_idx('b'),
+      ]
+    except ValueError:
+      return []
+
   def get_xyz_cloud(self):
     cloud = self.get_cloud()
     xyz = cloud[:, self.get_xyz_axes()]
     return xyz
 
+  def get_colors_cloud(self):
+    cloud = self.get_cloud()
+    axes = self.get_rgb_axes()
+    if axes:
+      return cloud[:, axes]
+    else:
+      return np.zeros((0, 3), dtype=cloud.dtype)
+    
   # @
   # def _get_2d_debug_image(
       
@@ -530,6 +548,7 @@ class PointCloud(object):
   def to_trimeshes_world_frame(
           self,
           period_meters=1.,
+          use_pc_colors=False,
           max_num_points=100_000,
           colors=None):
 
@@ -548,11 +567,15 @@ class PointCloud(object):
               np.arange(xyz.shape[0]), max_num_points)
       xyz = xyz[idx, :]
     
-    if colors is None:
+    if use_pc_colors:
+      colors = self.get_colors_cloud()
+      colors = np.clip(colors, 0, 255).astype('uint8')
+    elif colors is None:
       colors = rgb_for_distance(
                   np.linalg.norm(xyz, axis=1),
                   period_meters=period_meters)
       colors = np.clip(colors, 0, 255).astype('uint8')
+    
     pc_tmesh = trimesh.points.PointCloud(
                 vertices=xyz if len(xyz) else np.array([[0., 0., 0.]]),  # TODO fixme trimesh wont GLTF empty array?????
                 colors=colors if len(colors) else None)
