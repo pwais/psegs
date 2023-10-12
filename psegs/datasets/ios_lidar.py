@@ -748,6 +748,11 @@ def threeDScannerApp_convert_raw_to_sync_rgbd(
 
 class Fixtures(object):
 
+  # To use your own segments, override threeDScannerApp_data_root() and / or
+  # provide absoluate paths to info.json files (the latter is much faster
+  # when there are hundreds of segments).
+  INFO_JSON_PATHS = []
+
   ### Extension Data ##########################################################
   ### See https://github.com/pwais/psegs-ios-lidar-ext
 
@@ -771,20 +776,24 @@ class Fixtures(object):
     """Create and return one segment URI per scan"""
     from oarphpy import util as oputil
 
-    def _all_files_recursive(root_dir, pattern='*'):
-      import fnmatch
-      paths = []
-      n = len(os.listdir(root_dir))
-      iter_entries = tqdm(os.walk(root_dir), total=n, desc=f'Walk {root_dir}')
-      for root, dirs, files in iter_entries:
-        for basename in files:
-          if fnmatch.fnmatch(basename, pattern):
-            paths.append(os.path.join(root, basename))
-      return paths
+    # def _all_files_recursive(root_dir, pattern='*'):
+    #   import fnmatch
+    #   paths = []
+    #   n = len(os.listdir(root_dir))
+    #   iter_entries = tqdm(os.walk(root_dir), total=n, desc=f'Walk {root_dir}')
+    #   for root, dirs, files in iter_entries:
+    #     for basename in files:
+    #       if fnmatch.fnmatch(basename, pattern):
+    #         paths.append(os.path.join(root, basename))
+    #   return paths
 
-    all_info_paths = _all_files_recursive(
+    if not cls.threeDScannerApp_data_root().exists():
+      return []
+
+    all_info_paths = oputil.all_files_recursive(
                         str(cls.threeDScannerApp_data_root()),
                         pattern='info.json')
+    all_info_paths.extend(cls.INFO_JSON_PATHS)
     uris = []
     for info_path in all_info_paths:
       scan_dir = os.path.dirname(info_path)
