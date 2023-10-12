@@ -13,3 +13,4 @@
 # limitations under the License.
 
 from psegs.table.sd_table import StampedDatumTable
+from psegs.table.sd_table_factory import StampedDatumTableFactory

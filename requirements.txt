@@ -13,7 +13,7 @@ pandas
 plotly>=4.2.1
 plyfile
 psutil
-pyspark==3.3.2
+pyspark>=3.3.2
 pytest
 python-slugify
 rich

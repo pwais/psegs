@@ -336,7 +336,8 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
           cls,
           sd_table,
           only_topics=None,
-          resize_image_max_height=-1):
+          resize_image_max_height=-1,
+          spark=None):
     
     # Select the datums to export
     datum_rdd = sd_table.get_datum_rdd_matching(
@@ -346,7 +347,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     # Try to favor fewer, longer-lived python processes
     from oarphpy.spark import cluster_cpu_count
     from psegs.spark import Spark
-    with Spark.sess() as spark:
+    with Spark.sess(spark) as spark:
       n_cpus = cluster_cpu_count(spark)
     datum_rdd = datum_rdd.repartition(n_cpus).cache()
 
@@ -379,7 +380,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     data_path = cls.psegs_imgpath_to_uri_path()
     with open(data_path, 'w') as f:
       json.dump(uri_paths, f, indent=2)
-    util.log.info(f"... saved PSegs uri<->image mapping to f{data_path}")
+    util.log.info(f"... saved PSegs uri<->image mapping to {data_path}")
   
   @classmethod
   def get_imgpath_to_uri(cls):

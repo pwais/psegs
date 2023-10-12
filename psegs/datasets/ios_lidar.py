@@ -47,6 +47,7 @@ import os
 from pathlib import Path
 
 import numpy as np
+from tqdm.auto import tqdm
 
 from psegs import datum
 from psegs import util
@@ -767,9 +768,21 @@ class Fixtures(object):
 
   @classmethod
   def get_threeDScannerApp_segment_uris(cls):
-    """Createa and return one segment URI per scan"""
+    """Create and return one segment URI per scan"""
     from oarphpy import util as oputil
-    all_info_paths = oputil.all_files_recursive(
+
+    def _all_files_recursive(root_dir, pattern='*'):
+      import fnmatch
+      paths = []
+      n = len(os.listdir(root_dir))
+      iter_entries = tqdm(os.walk(root_dir), total=n, desc=f'Walk {root_dir}')
+      for root, dirs, files in iter_entries:
+        for basename in files:
+          if fnmatch.fnmatch(basename, pattern):
+            paths.append(os.path.join(root, basename))
+      return paths
+
+    all_info_paths = _all_files_recursive(
                         str(cls.threeDScannerApp_data_root()),
                         pattern='info.json')
     uris = []

@@ -135,6 +135,7 @@ def get_partition_paths(seg_uris):
 
 
 def get_partition_path(v):
+  "TODO move to URI"
   if isinstance(v, six.string_types):
     v = URI.from_str(v)
   
