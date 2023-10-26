@@ -1,3 +1,6 @@
+# Copyright 2023 Maintainers of PSegs
+
+# syntax=docker/dockerfile:1
 FROM oarphpy/full:0.1.1
 
 ## Include banner
@@ -5,6 +8,7 @@ COPY docker/bashrc /etc/bash.bashrc
 RUN chmod a+rwx /etc/bash.bashrc
 
 RUN \
+  --mount=type=cache,target=/var/cache/apt \
   apt-get update && \
   apt-get install -y \
     git \
@@ -44,6 +48,7 @@ RUN \
 # pycolmap and pycolmap: TODO use a wheel
 ## COLMAP
 RUN \
+  --mount=type=cache,target=/var/cache/apt \
   apt-get install -y \
     git \
     cmake \
@@ -76,6 +81,7 @@ RUN \
     ninja install && \
     colmap -h
 RUN \
+  --mount=type=cache,target=/root/.cache/pip \
   cd /opt && \
   git clone --recursive https://github.com/colmap/pycolmap.git && \
   cd pycolmap && \
@@ -86,6 +92,7 @@ RUN \
 
 COPY requirements.txt /tmp/requirements.txt
 RUN \
+  --mount=type=cache,target=/root/.cache/pip \
   pip3 install -r /tmp/requirements.txt && \
   rm /tmp/requirements.txt
 

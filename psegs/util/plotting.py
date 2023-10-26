@@ -303,8 +303,8 @@ def draw_xy_depth_in_image(
   colors = np.clip(colors, 0, 255).astype(int)
   
   # Draw the markers! NB: numpy assignment is very fast, even for 1M+ pts
-  yy = pts[:, 1].astype(np.int)
-  xx = pts[:, 0].astype(np.int)
+  yy = pts[:, 1].astype('int32')
+  xx = pts[:, 0].astype('int32')
   overlay[yy, xx] = colors
 
   if marker_radius < 0:
@@ -583,9 +583,20 @@ def sample_to_html(
     pdf = res.toPandas()
     util.log.info('Table: \n%s\n' % str(pdf))
     try:
-      pdf.style.set_precision(2)
-      pdf.style.hide_index()
-    except ValueError:
+      # Pandas <2
+      try:
+        pdf.style.set_precision(2)
+        pdf.style.hide_index()
+      except Exception:
+        pass
+      
+      # Pandas >=2
+      try:
+        pdf.style.format(precision=2)
+        pdf.style.hide()
+      except Exception:
+        pass
+    except Exception:
       pass
 
     css = """

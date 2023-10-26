@@ -1,14 +1,23 @@
 # Better cloudpickle support
 attrs>=21.4.0
 
-better_exceptions
 fasteners
 imageio
 imageio-ffmpeg
-numpy
+loguru
+
+
+# fixme why does 1.21.5 break? and who installs it?
+#numpy
+numpy>=1.26.1
+
 oarphpy[spark]==0.1.1
 open3d>=0.11.1
-opencv-python>=4.5.5.62
+
+# Fixme did we need old one?
+# opencv-python>=4.5.5.62
+opencv-python>=4.6.0
+
 pandas
 plotly>=4.2.1
 plyfile

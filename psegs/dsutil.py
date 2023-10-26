@@ -24,6 +24,8 @@ DS_TO_UTIL_IMPL = {
   'nuscenes': nuscenes.NuscDSUtil,
   'ios_lidar': ios_lidar.DSUtil,
   'tanks_and_temples': tanks_and_temples.DSUtil,
+  
+  # NB: colmap does not require a dataset; test fixtures are built-in
 }
 
 def run(dataset):

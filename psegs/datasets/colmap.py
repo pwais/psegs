@@ -28,14 +28,27 @@ except ImportError:
 import copy
 import json
 from pathlib import Path
+from tqdm.auto import tqdm
 
 import cv2
 import numpy as np
 
 from psegs import datum
-from psegs.table.sd_table import StampedDatumTable
 from psegs.table.sd_table_factory import StampedDatumTableFactory
 
+
+def _find_image_record(image_name, recon, err_msg=''):
+  # pycolmap does not provide a map, so we need to do a linear find
+  iinfo = None
+  iid = -1
+  for ciid, cinfo in recon.images.items():
+    if cinfo.name == image_name:
+      iinfo = cinfo
+      iid = ciid
+  if iinfo is None:
+    err_msg = err_msg or f"Could not find image_name {image_name}"
+    raise KeyError(err_msg)
+  return iinfo, iid
 
 
 def colmap_recon_create_world_cloud(
@@ -74,7 +87,6 @@ def colmap_recon_create_camera_image(
             image_name,
             recon_dir,
             src_images_dir,
-            uri='',
             sensor_name='colmap_sparse',
             timestamp=0,
             create_depth_image=False):
@@ -90,13 +102,13 @@ def colmap_recon_create_camera_image(
   recon = pycolmap.Reconstruction(recon_dir)
   
   # Find the image record
-  iinfo = None
-  iid = -1
-  for ciid, cinfo in recon.images.items():
-    if cinfo.name == image_name:
-      iinfo = cinfo
-      iid = ciid
-  assert iinfo is not None, f"Could not find {image_name} in {recon_dir}"
+  iinfo, iid = _find_image_record(image_name, recon, err_msg=f"Could not find {image_name} in {recon_dir}")
+  # iid = -1
+  # for ciid, cinfo in recon.images.items():
+  #   if cinfo.name == image_name:
+  #     iinfo = cinfo
+  #     iid = ciid
+  # assert iinfo is not None, 
 
   cameras = recon.cameras
   camera = cameras[iinfo.camera_id]
@@ -114,8 +126,16 @@ def colmap_recon_create_camera_image(
         [0,   0,  1],
   ])
   
+  camera_model = None
+  if hasattr(camera, 'model'):
+    camera_model = camera.model
+  elif hasattr(camera, 'model_name'):
+    # pycolmap >= 0.4.0
+    camera_model = camera.model_name
+  assert camera_model is not None
+
   distortion_kv = {}
-  if camera.model == 'OPENCV':
+  if camera_model == 'OPENCV':
     distortion_model = 'OPENCV'
     distortion_kv = {
       'k1': float(camera.params[4]),
@@ -123,7 +143,7 @@ def colmap_recon_create_camera_image(
       'p1': float(camera.params[6]),
       'p2': float(camera.params[7]),
     }
-  elif camera.model == 'FULL_OPENCV':
+  elif camera_model == 'FULL_OPENCV':
     distortion_model = 'FULL_OPENCV'
     distortion_kv = {
       'k1': float(camera.params[4]),
@@ -135,7 +155,7 @@ def colmap_recon_create_camera_image(
       'k5': float(camera.params[10]),
       'k6': float(camera.params[11]),
     }
-  elif camera.model == 'OPENCV_FISHEYE':
+  elif camera_model == 'OPENCV_FISHEYE':
     distortion_model = 'OPENCV_FISHEYE'
     distortion_kv = {
       'k1': float(camera.params[4]),
@@ -144,15 +164,16 @@ def colmap_recon_create_camera_image(
       'k4': float(camera.params[7]),
     }
   else:
-    distortion_model = f'colmap_camera.model={camera.model}'
+    distortion_model = f'colmap_camera.model={camera_model}'
   
   h = camera.height
   w = camera.width
 
   extra = {
     'colmap.image_id': str(iid),
+    'colmap.image_name': image_name,
     'colmap.camera_params_raw_json': json.dumps(list(camera.params)),
-    'colmap.camera_model_name': camera.model_name,
+    'colmap.camera_model_name': camera_model,
   }
 
   R = iinfo.rotation_matrix()
@@ -231,9 +252,6 @@ def colmap_recon_create_camera_image(
 
     image_factory = lambda: dev
 
-    uri = copy.deepcopy(uri)
-    if uri:
-      uri.topic = uri.topic + '|depth'
     dci = datum.CameraImage(
               sensor_name=sensor_name,
               image_factory=image_factory,
@@ -273,6 +291,207 @@ def colmap_recon_create_camera_image(
                 extra=extra)
     return ci
 
+
+def colmap_get_image_name_to_covis_names(recon_dir):
+
+  recon = pycolmap.Reconstruction(recon_dir)
+  
+  points3d = recon.points3D
+  image_id_to_name = dict(
+    (image.image_id, image.name) for image in recon.images.values())
+  image_name_to_covis_names = dict(
+    (name, set())
+    for name in image_id_to_name.values())
+  
+  iter_images = tqdm(recon.images.values(), desc="Collect covisible images")
+  for image in iter_images:
+    name = image.name
+        
+    # Get all tracked neighbors... this could be slow...
+    for imp in image.points2D:
+      if imp.has_point3D():
+        ptid = imp.point3D_id
+        p3d = points3d[ptid]
+        for te in p3d.track.elements:
+          track_image_id = te.image_id
+          track_image_name = image_id_to_name[track_image_id]
+          if track_image_name != name:
+            
+            # Ensure the covisibility graph is *undirected*
+            image_name_to_covis_names[name].add(track_image_name)
+            image_name_to_covis_names[track_image_name].add(name)
+
+  # Reformat
+  image_name_to_covis_names = dict(
+    (name, sorted(neighbs))
+    for name, neighbs in image_name_to_covis_names.items())
+  return image_name_to_covis_names
+
+
+def colmap_recon_create_matched_pair(
+        image1_name,
+        image2_name,
+        recon_dir,
+        matcher_name='colmap_sparse',
+        timestamp=0,
+        include_point3d_colors_uint8=True,
+        include_point3d_world_xyz=True,
+        include_point3d_extras=True,
+        img1=None,
+        img2=None,
+        src_images_dir=None,
+        camera_image_kwargs={}):
+  """Given a COLMAP reconstruction assets directory `recon_dir`, extract the
+  matched pair for given image names.  (Note that the image pair might not
+  have any matches; see `colmap_get_image_name_to_covis_names()` to help
+  restrict to only image pairs with covisible points).
+
+  Optionally uses pre-filled `img1` and `img2`, else attempts to load them.
+  """
+
+  assert image1_name != image2_name, image2_name
+
+  matches_colnames = [
+          # Core required
+          'x1', 'y1', 'x2', 'y2'
+  ]
+  if include_point3d_colors_uint8:
+    matches_colnames += ['r', 'g', 'b']
+  if include_point3d_world_xyz:
+    matches_colnames += ['world_x', 'world_y', 'world_z']
+  if include_point3d_extras:
+    matches_colnames += ['error', 'track_length', 'colmap_p3id']
+
+  def _get_matches(
+          recon_dir, image1_name, image2_name,
+          include_point3d_colors_uint8=True,
+          include_point3d_world_xyz=True,
+          include_point3d_extras=True):
+    recon = pycolmap.Reconstruction(recon_dir)
+    ii1nfo, iid1 = _find_image_record(image1_name, recon, 
+                                err_msg=
+                                  f"Could not find {image1_name} (_get_matches) in {recon_dir}")
+    ii2nfo, iid2 = _find_image_record(image2_name, recon, 
+                                err_msg=
+                                  f"Could not find {image2_name} (_get_matches) in {recon_dir}")
+    i1_p3id_to_p2d = dict(
+      (p.point3D_id, p) for p in ii1nfo.points2D if p.has_point3D())
+    i2_p3id_to_p2d = dict(
+      (p.point3D_id, p) for p in ii2nfo.points2D if p.has_point3D())
+    covis_p3ids = set(i1_p3id_to_p2d.keys()) & set(i2_p3id_to_p2d.keys())
+
+    n_cols = (
+      4 + (3 if include_point3d_colors_uint8 else 0) 
+      + (3 if include_point3d_world_xyz else 0) 
+      + (3 if include_point3d_extras else 0)
+    )
+    matches = np.zeros((len(covis_p3ids), n_cols), dtype='float')
+    for i, p3id in enumerate(covis_p3ids):
+      i1_p2d = i1_p3id_to_p2d[p3id]
+      i2_p2d = i2_p3id_to_p2d[p3id]
+      p3d = recon.points3D[p3id]
+      c = 0
+
+      x1 = i1_p2d.x
+      y1 = i1_p2d.y
+      x2 = i2_p2d.x
+      y2 = i2_p2d.y
+      matches[i, c:c+4] = x1, y1, x2, y2
+      c += 4
+
+      if include_point3d_colors_uint8:
+        # Yes it's RGB with colors in [0, 255]
+        # https://github.com/colmap/colmap/blob/a7b50e4d70888cb2c7e5a35fc44a6a1e1f82e69a/src/colmap/scene/point3d.h#L57
+        r = p3d.color[0]
+        g = p3d.color[1]
+        b = p3d.color[2]
+        matches[i, c:c+3] = r, g, b
+        c+=3
+      
+      if include_point3d_world_xyz:
+        wx = p3d.x
+        wy = p3d.y
+        wz = p3d.z
+        matches[i, c:c+3] = wx, wy, wz
+        c+=3
+
+      if include_point3d_extras:
+        error = p3d.error
+        track_length = p3d.track.length()
+        colmap_p3id = p3id
+        matches[i, c:c+3] = error, track_length, colmap_p3id
+        c+=3
+
+    return matches
+
+  extra = {
+    'colmap.image1_name': image1_name,
+    'colmap.image2_name': image2_name,
+  }
+
+  should_fill_images = (img1 is None and img2 is None)
+  if should_fill_images:
+    assert src_images_dir is not None, f"Programming error, need {src_images_dir}"
+
+    img1 = colmap_recon_create_camera_image(
+              image1_name,
+              recon_dir,
+              src_images_dir,
+              **camera_image_kwargs)
+
+    img2 = colmap_recon_create_camera_image(
+              image2_name,
+              recon_dir,
+              src_images_dir,
+              **camera_image_kwargs)
+
+    extra['colmap.image1_id'] = img1.extra['colmap.image_id']
+    extra['colmap.image2_id'] = img2.extra['colmap.image_id']
+
+  extra = {
+    'colmap.image1_name': image1_name,
+    'colmap.image2_name': image2_name,
+  }
+
+  mp = datum.MatchedPair(
+        matcher_name=matcher_name,
+        timestamp=timestamp,
+        img1=img1,
+        img2=img2,
+        matches_factory=lambda: _get_matches(
+          recon_dir, image1_name, image2_name,
+          include_point3d_colors_uint8=include_point3d_colors_uint8,
+          include_point3d_world_xyz=include_point3d_world_xyz,
+          include_point3d_extras=include_point3d_extras),
+        matches_colnames=matches_colnames,
+        extra=extra,
+  )
+  return mp
+
+
+  def _get_cloud(recon_dir):
+
+    recon = pycolmap.Reconstruction(recon_dir)
+    ptid_to_info = recon.points3D
+
+    xyzrgbErrViz = np.zeros((len(ptid_to_info), 8), dtype='float')
+    for i, (ptid, info) in enumerate(sorted(ptid_to_info.items())):
+      xyzrgbErrViz[i, :3] = info.xyz
+      xyzrgbErrViz[i, 3:6] = info.color
+      xyzrgbErrViz[i, 6] = info.error
+      xyzrgbErrViz[i, 7] = info.track.length()
+    return xyzrgbErrViz
+  
+  # The points are in the world frame; provide identity transform(s)
+  pc = datum.PointCloud.create_world_frame_cloud(
+          sensor_name=sensor_name,
+          cloud_factory=lambda: _get_cloud(recon_dir),
+          cloud_colnames=[
+            'x', 'y', 'z',
+            'r', 'g', 'b',
+            'colmap_err', 'num_views_visible',
+          ])
+  return pc
 
 
 def load_array(path):
@@ -472,7 +691,6 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
               uri.extra['colmap.image_name'],
               cls.COLMAP_RECON_DIR,
               cls.COLMAP_IMAGES_DIR,
-              uri=uri,
               sensor_name=uri.topic,
               timestamp=uri.timestamp,
               create_depth_image=False)
@@ -486,7 +704,6 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
               uri.extra['colmap.image_name'],
               cls.COLMAP_RECON_DIR,
               cls.COLMAP_IMAGES_DIR,
-              uri=uri,
               sensor_name=uri.topic,
               timestamp=uri.timestamp,
               create_depth_image=True)
@@ -537,7 +754,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     seg_uri = cls.get_segment_uri()
     if not seg_uri:
       return None
-    return cls.get_segment_sd_table([seg_uri], spark=spark)
+    return cls.get_segment_sd_table(segment_uri=seg_uri, spark=spark)
 
   @classmethod
   def create_sd_table_for_reconstruction(
