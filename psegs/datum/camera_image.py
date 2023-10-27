@@ -243,6 +243,24 @@ class CameraImage(object):
     missing = set(['r', 'g', 'b']) - set(self.channel_names)
     return not missing
 
+  def get_opencv_distcoeffs(self):
+    # yapf: disable
+    # OpenCV wants at least four numbers, perhaps more, in a specific order
+    KEYS = (
+      # Base model
+      'k1', 'k2', 'p1', 'p2',
+      # Full model
+      'k3', 'k4', 'k5', 'k6', 
+      # TODO support othermodels
+    )
+    # yapf: enable
+
+    dist_coeff_raw = [self.distortion_kv.get(k) for k in KEYS]
+    if all(v is not None for v in dist_coeff_raw):
+      return np.array(dist_coeff_raw)
+    else:
+      return None
+
   def depth_image_to_point_cloud(self):
     """Create and return a datum.PointCloud instance if this image is
     a depth image (and None otherwise)"""
