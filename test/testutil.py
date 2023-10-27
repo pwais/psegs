@@ -114,6 +114,7 @@ def check_stamped_datum_dfs_equal(
         sd_df_expected=None):
   
   from psegs.table.sd_table import StampedDatumTable
+  from psegs.spark import save_df_thunks
 
   if not testname:
     seg_df = sd_df_actual.select('uri.segment_id').orderBy('uri.segment_id')
@@ -125,12 +126,14 @@ def check_stamped_datum_dfs_equal(
 
   actual_path = test_tempdir(testname)
   util.log.info("Testing serialization of actual to %s ..." % actual_path)
-  Spark.save_df_thunks(
+  save_df_thunks(
         [lambda: sd_df_actual],
-        path=str(actual_path),
-        format='parquet',
-        partitionBy=StampedDatumTable.PARTITION_KEYS,
-        compression='lz4')
+        spark_save_opts=dict(
+          path=str(actual_path),
+          format='parquet',
+          partitionBy=StampedDatumTable.PARTITION_KEYS,
+          compression='lz4',
+        ))
   
   if sd_df_expected is None:
     util.log.info("Fetching expected from %s ..." % sd_df_expected_path)

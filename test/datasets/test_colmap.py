@@ -64,7 +64,11 @@ def test_colmap_get_image_name_to_covis_names():
   FIXTURES_DIR = testutil.test_fixtures_dir() / 'test_colmap'
   recon_dir = FIXTURES_DIR / 'sparse' / '0'
 
-  image_name_to_covis_names = pscolmap.colmap_get_image_name_to_covis_names(recon_dir)
+  import pycolmap
+  recon = pycolmap.Reconstruction(recon_dir)
+
+  image_name_to_covis_names = (
+    pscolmap.colmap_get_image_name_to_covis_names(recon))
 
   assert image_name_to_covis_names == EXPECTD_COVIS
 
@@ -75,7 +79,10 @@ def test_colmap_create_matched_pair():
   FIXTURES_DIR = testutil.test_fixtures_dir() / 'test_colmap'
   recon_dir = FIXTURES_DIR / 'sparse' / '0'
 
-  image_name_to_covis_names = pscolmap.colmap_get_image_name_to_covis_names(recon_dir)
+  import pycolmap
+  recon = pycolmap.Reconstruction(recon_dir)
+  image_name_to_covis_names = (
+    pscolmap.colmap_get_image_name_to_covis_names(recon))
 
   EXPECTED_PAIRS_TO_TEST = (
     ('frame_00033.jpg', 'frame_00003.jpg'),

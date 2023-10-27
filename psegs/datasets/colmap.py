@@ -27,6 +27,7 @@ except ImportError:
 
 import copy
 import json
+import itertools
 from pathlib import Path
 from tqdm.auto import tqdm
 
@@ -292,9 +293,11 @@ def colmap_recon_create_camera_image(
     return ci
 
 
-def colmap_get_image_name_to_covis_names(recon_dir):
-
-  recon = pycolmap.Reconstruction(recon_dir)
+def colmap_get_image_name_to_covis_names(recon):
+  """Create and return a dict of `image.name` -> all other `image.name`s with
+  at least one co-visible 3D point (i.e. a matched point).  Returns an
+  undirected graph; covisibility is bijective.
+  """  
   
   points3d = recon.points3D
   image_id_to_name = dict(
@@ -469,31 +472,6 @@ def colmap_recon_create_matched_pair(
   return mp
 
 
-  def _get_cloud(recon_dir):
-
-    recon = pycolmap.Reconstruction(recon_dir)
-    ptid_to_info = recon.points3D
-
-    xyzrgbErrViz = np.zeros((len(ptid_to_info), 8), dtype='float')
-    for i, (ptid, info) in enumerate(sorted(ptid_to_info.items())):
-      xyzrgbErrViz[i, :3] = info.xyz
-      xyzrgbErrViz[i, 3:6] = info.color
-      xyzrgbErrViz[i, 6] = info.error
-      xyzrgbErrViz[i, 7] = info.track.length()
-    return xyzrgbErrViz
-  
-  # The points are in the world frame; provide identity transform(s)
-  pc = datum.PointCloud.create_world_frame_cloud(
-          sensor_name=sensor_name,
-          cloud_factory=lambda: _get_cloud(recon_dir),
-          cloud_colnames=[
-            'x', 'y', 'z',
-            'r', 'g', 'b',
-            'colmap_err', 'num_views_visible',
-          ])
-  return pc
-
-
 def load_array(path):
   """Listed as a package-level function to improve clarity / portability."""
   import numpy as np
@@ -528,11 +506,18 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
 
   INCLUDE_DEPTH_IMAGES = True
   INCLUDE_WORLD_CLOUD = True
+  INCLUDE_MATCHED_PAIRS = True
   USE_NP_CACHED_ASSETS = True
+
+  MP_INCLUDE_POINT3D_COLORS_UINT8 = True
+  MP_INCLUDE_POINT3D_WORLD_XYS = True
+  MP_INCLUDE_POINT3D_EXTRAS = True
+  MP_INCLUDE_CAMERA_IMAGES = True
 
   CI_RECON_TOPIC_SUFFIX = '|colmap_sparse'
   DCI_RECON_TOPIC_SUFFIX = '|depth'
   WORLD_CLOUD_TOPIC = 'fused_world_cloud|colmap_sparse'
+  MP_TOPIC_SUFFIX = '|matches'
 
   ## Support
 
@@ -645,6 +630,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     registered_image_names = set(iinfo.name for iinfo in recon.images.values())
 
     all_uris = []
+    _ci_uris = []
     for imgpath, input_uri in imgpath_to_uri.items():
       imgpath = Path(imgpath)
       if imgpath.name in registered_image_names:
@@ -652,10 +638,41 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
             topic=input_uri.topic + cls.CI_RECON_TOPIC_SUFFIX)
         ci_uri.extra['colmap.image_name'] = imgpath.name
         all_uris.append(ci_uri)
+        _ci_uris.append(ci_uri)
         if cls.INCLUDE_DEPTH_IMAGES:
           dci_uri = ci_uri.replaced(
             topic=ci_uri.topic + cls.DCI_RECON_TOPIC_SUFFIX)
           all_uris.append(dci_uri)
+
+    if cls.INCLUDE_MATCHED_PAIRS:
+      ci_image_name_to_uri = dict(
+        (ci_uri.extra['colmap.image_name'], ci_uri) for ci_uri in _ci_uris)
+      image_name_to_covis_names = colmap_get_image_name_to_covis_names(recon)
+      # Build only one matched pair per distinct pair of images
+      image_pair_names = set(itertools.chain.from_iterable(
+        ((image_name1, in2) for in2 in image_name2s)
+        for image_name1, image_name2s in image_name_to_covis_names.items()))
+      for im1_name, im2_name in image_pair_names:
+        ci1_uri = ci_image_name_to_uri[im1_name]
+        ci2_uri = ci_image_name_to_uri[im2_name]
+
+        c1_topic_base = ci1_uri.topic.replace(cls.CI_RECON_TOPIC_SUFFIX, '')
+        c2_topic_base = ci2_uri.topic.replace(cls.CI_RECON_TOPIC_SUFFIX, '')
+        mp_topic_base = '|'.join(sorted((c1_topic_base, c2_topic_base)))
+
+        mp_uri = copy.deepcopy(ci1_uri)
+        mp_uri = mp_uri.replaced(
+            timestamp=min(ci1_uri.timestamp, ci2_uri.timestamp),
+            topic=(
+              # E.g. 'camera-input|camera-input|colmap_sparse|matches'
+              mp_topic_base + cls.CI_RECON_TOPIC_SUFFIX + cls.MP_TOPIC_SUFFIX
+              ))
+        mp_uri.extra['colmap.image1_name'] = im1_name
+        mp_uri.extra['colmap.image2_name'] = im2_name
+        mp_uri.extra['colmap.image1_uri'] = str(ci1_uri)
+        mp_uri.extra['colmap.image2_uri'] = str(ci2_uri)
+
+        all_uris.append(mp_uri)
 
     if cls.INCLUDE_WORLD_CLOUD:
       seg_uri = cls.get_segment_uri()
@@ -725,6 +742,47 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     return datum.StampedDatum(uri=uri, camera_image=dci)
 
   @classmethod
+  def _create_matched_pair(cls, uri):
+    from oarphpy.spark import CloudpickeledCallable
+
+    img1, img2 = None, None
+    if cls.MP_INCLUDE_CAMERA_IMAGES:
+      ci1_uri = datum.URI.from_str(uri.extra['colmap.image1_uri'])
+      sd1 = cls._create_camera_image(ci1_uri)
+      img1 = sd1.camera_image
+
+      ci2_uri = datum.URI.from_str(uri.extra['colmap.image2_uri'])
+      sd2 = cls._create_camera_image(ci2_uri)
+      img2 = sd2.camera_image
+
+    mp = colmap_recon_create_matched_pair(
+      uri.extra['colmap.image1_name'],
+      uri.extra['colmap.image2_name'],
+      cls.COLMAP_RECON_DIR,
+      matcher_name=uri.topic,
+      timestamp=uri.timestamp,
+      include_point3d_colors_uint8=cls.MP_INCLUDE_POINT3D_COLORS_UINT8,
+      include_point3d_world_xyz=cls.MP_INCLUDE_POINT3D_WORLD_XYS,
+      include_point3d_extras=cls.MP_INCLUDE_POINT3D_EXTRAS,
+      img1=img1,
+      img2=img2,
+    )
+    mp.extra['colmap.image1_uri'] = uri.extra['colmap.image1_uri']
+    mp.extra['colmap.image2_uri'] = uri.extra['colmap.image2_uri']
+
+    if cls.USE_NP_CACHED_ASSETS:
+      matches_npy_fname = f"{uri.topic}_{uri.timestamp}_matches.npy"
+      matches_npy_path = cls.psegs_npy_cache_dir() / matches_npy_fname
+      if not matches_npy_path.exists():
+        with open(matches_npy_path, 'wb') as f:
+          np.savez_compressed(f, matches=mp.get_matches())
+            # Use compression since we use it for other npy assets
+      mp.matches_factory = CloudpickeledCallable(
+        lambda: load_array(matches_npy_path)['matches'])
+
+    return datum.StampedDatum(uri=uri, matched_pair=mp)
+
+  @classmethod
   def create_stamped_datum(cls, uri):
     if uri.topic == cls.WORLD_CLOUD_TOPIC:
       return cls._create_point_cloud(uri)
@@ -732,6 +790,8 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
       return cls._create_depth_camera_image(uri)
     elif uri.topic.endswith(cls.CI_RECON_TOPIC_SUFFIX):
       return cls._create_camera_image(uri)
+    elif uri.topic.endswith(cls.MP_TOPIC_SUFFIX):
+      return cls._create_matched_pair(uri)
     else:
       raise ValueError(f"Don't know what to do with {uri}")
 
