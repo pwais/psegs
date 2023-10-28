@@ -76,7 +76,7 @@ def test_matched_pair_stereo_rect_viz_html():
     # distinct_keys = sorted(distinct_ci_key_rdd.collect())
 
     key, iter_plotdata = key_to_plotdatas_rdd.first()
-    plotdata = list(iter_plotdata)
+    iter_plotdata = sorted(iter_plotdata)
 
     ci_left = None
     ci_rights = []
@@ -123,6 +123,9 @@ def test_matched_pair_stereo_rect_viz_html():
               lr_matches=lr_matches,
               mp_uris=mp_uris)
 
+    with open('/opt/psegs/mp_test.html', 'w') as f:
+      f.write(html)
+    return
     breakpoint()
     sd_df.createOrReplaceTempView('')
     print()

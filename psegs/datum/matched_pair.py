@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import typing
+from pathlib import Path
 
 import attr
 import numpy as np
@@ -150,7 +151,7 @@ def create_stereo_rect_pair_debug_view_html(
       mp_uris=[],
       rect_image_wh=None,
       image_viz_max_size=-1,
-      embed_images_root_path=None,
+      embed_images_root_path='stereo_rect_pair_viz_images',
       embed_opencv_js=True):
   
   import cv2
@@ -163,7 +164,11 @@ def create_stereo_rect_pair_debug_view_html(
       assert len(mp_uris) == len(lr_matches), (
         f"{len(mp_uris)} != len(lr_matches)")
 
+  embed_images_root_path = Path(embed_images_root_path)
+  embed_images_root_path.mkdir(parents=True, exist_ok=True)
+
   rightImageIdToInfo_entries = []
+  default_right_image_uri = ""
   for i in range(len(ci_rights)):
     ci_right = ci_rights[i]
 
@@ -178,10 +183,10 @@ def create_stereo_rect_pair_debug_view_html(
     RT2 = ci_right.get_world_to_sensor().get_transformation_matrix(homogeneous=True)
 
     sRT1_inv = np.eye(4, 4)
-    sRT1_inv[:3, :3] = RT2[:3, :3].T
-    sRT1_inv[:3, 3] = RT2[:3, :3].T.dot(-1 * RT2[:3, 3])
+    sRT1_inv[:3, :3] = RT1[:3, :3].T
+    sRT1_inv[:3, 3] = RT1[:3, :3].T.dot(-1 * RT1[:3, 3])
 
-    RT_diff = sRT1_inv @ RT1
+    RT_diff = sRT1_inv @ RT2
 
     distCoeffs1 = ci_left.get_opencv_distcoeffs()
     if distCoeffs1 is None:
@@ -196,13 +201,25 @@ def create_stereo_rect_pair_debug_view_html(
                     newImageSize=rect_image_wh)
     sR1, sR2, sP1, sP2, sQ, sroi1, sroi2 = rect_output
 
-    right_image_uri = "todo"
+    right_image_dest = embed_images_root_path / f"right_{i}.jpg"
+    right_img = ci_right.image
+    cv2.imwrite(
+      str(right_image_dest),
+      cv2.cvtColor(right_img, cv2.COLOR_RGB2BGR),
+      [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    right_image_uri = str(right_image_dest)
+    if not default_right_image_uri:
+      default_right_image_uri = right_image_uri
 
-    def _mat2jsstr(name, mat):
+    def _mat2jsstr(mat):
+      nrows = mat.shape[0]
+      ncols = 1
+      if len(mat.shape) > 1:
+        ncols = mat.shape[1]
       js = f"""(
         new cv.matFromArray(
-          {mat.shape[0]}, // rows
-          {mat.shape[1]}, // cols
+          {nrows},
+          {ncols},
           cv.CV_32F,
           {mat.flatten().tolist()}
         )
@@ -231,15 +248,42 @@ def create_stereo_rect_pair_debug_view_html(
         }}
     """)
 
+  from oarphpy import plotting as opplot
+  left_img = ci_left.image
+  left_img_data_uri = opplot.img_to_data_uri(left_img, format='jpg', jpeg_quality=90)
+
+  stereoRectVizSelectRight_body = "\n".join(
+    f""" <option value="{i}">Image {i}</option> """
+    for i in range(len(ci_rights))
+  )
+
   final_html = f"""
+
+  <div id="stereoRectVizRoot">
+
+  <img src="{left_img_data_uri}" id="inputLeft" style="display: none;" />
+  <img 
+    src="{default_right_image_uri}" id="inputRight" style="display: none;"
+    onload="stereoRectVizRightLoaded()" />
 
   <table>
     <tr>
       <td><canvas id="stereoRectVizLeft"></td>
       <td><canvas id="stereoRectVizRight"></td>
     </tr>
+    <tr>
+      <td>
+        <div id="stereoRectMPURI">(not loaded)</div>
+      </td>
+    </tr>
   </table>
 
+  <select
+      id="stereoRectVizSelectRight"
+      onchange="stereoRectVizSelectRightChanged()">
+    {stereoRectVizSelectRight_body}
+  </select>
+  
   <script 
     async
     src="https://docs.opencv.org/3.4/opencv.js"
@@ -247,70 +291,114 @@ def create_stereo_rect_pair_debug_view_html(
   </script>
   <script type="text/javascript">
 
-    // BEGIN utils
-
-    showRightImageId = function(i) {{
-      console.log("Showing right image " + i);
-
-      info = rightImageIdToInfo[i];
-      let K1 = info["K1"];
-      let K2 = info["K2"];
-      let sR1 = info["sR1"];
-      let sR2 = info["sR2"];
-      let sP1 = info["sP1"];
-      let sP2 = info["sP2"];
-      let newImageSize = info["newImageSize"];
-
-      let leftMap1 = new cv.Mat();
-      let leftMap2 = new cv.Mat();
-      let rightMap1 = new cv.Mat();
-      let rightMap2 = new cv.Mat();
-      cv.initUndistortRectifyMap(
-        K1, distCoeffs1, sR1, sP1, newImageSize, cv.CV_32FC1,
-        leftMap1, leftMap2);
-      cv.initUndistortRectifyMap(
-        K2, distCoeffs2, sR2, sP2, newImageSize, cv.CV_32FC1,
-        rightMap1, rightMap2);
-
-      let leftOrigImg = cv.imread(document.getElementById("inputLeft"));
-      let rightOrigImg = cv.imread(document.getElementById("inputRight"));
-
-      let leftRectImg = new cv.Mat();
-      cv.remap(leftOrigImg, leftRectImg, leftMap1, leftMap2, cv.INTER_LANCZOS4);
-      let rightRectImg = new cv.Mat();
-      cv.remap(rightOrigImg, rightRectImg, rightMap1, rightMap2, cv.INTER_LANCZOS4);
-      
-      cv.imshow('stereoRectVizLeft', leftRectImg);
-      cv.imshow('stereoRectVizRight', rightRectImg);
-
-    }};
-
-    // END utils
-
-    // BEGIN embedded rect variables
-    
-    rightImageIdToInfo = {{
-      { ",".join(rightImageIdToInfo_entries) }
-    }};
-
-    // END embedded rect variables
+    stereoRectVizCurrentRight = "0";
 
     // BEGIN opencv loaded hook
-    currentRightImageId = 0;
 
     var Module = {{
       // https://emscripten.org/docs/api_reference/module.html#Module.onRuntimeInitialized
       onRuntimeInitialized() {{
         console.log("StereoRectViz Setup");
 
+        
+        // BEGIN embedded rect variables
+    
+        rightImageIdToInfo = {{
+          { ",".join(rightImageIdToInfo_entries) }
+        }};
 
+        // END embedded rect variables
+
+
+        // BEGIN utils
+
+        showRightImageId = function(i) {{
+          console.log("Showing right image " + i);
+
+          info = rightImageIdToInfo[i];
+          let K1 = info["K1"];
+          let K2 = info["K2"];
+          let sR1 = info["sR1"];
+          let sR2 = info["sR2"];
+          let sP1 = info["sP1"];
+          let sP2 = info["sP2"];
+          let sroi1 = info["sroi1"];
+          let sroi2 = info["sroi2"];
+          let distCoeffs1 = info["distCoeffs1"];
+          let distCoeffs2 = info["distCoeffs2"];
+          let newImageSize = info["newImageSize"];
+          let mpURI = info["mpURI"];
+
+          let leftMap1 = new cv.Mat();
+          let leftMap2 = new cv.Mat();
+          let rightMap1 = new cv.Mat();
+          let rightMap2 = new cv.Mat();
+          cv.initUndistortRectifyMap(
+            K1, distCoeffs1, sR1, sP1, newImageSize, cv.CV_32FC1,
+            leftMap1, leftMap2);
+          cv.initUndistortRectifyMap(
+            K2, distCoeffs2, sR2, sP2, newImageSize, cv.CV_32FC1,
+            rightMap1, rightMap2);
+
+          let leftOrigImg = cv.imread(document.getElementById("inputLeft"));
+          let rightOrigImg = cv.imread(document.getElementById("inputRight"));
+
+          let leftRectImg = new cv.Mat();
+          cv.remap(
+            leftOrigImg,
+            leftRectImg, leftMap1, leftMap2, cv.INTER_LANCZOS4);
+          let rightRectImg = new cv.Mat();
+          cv.remap(
+            rightOrigImg,
+            rightRectImg, rightMap1, rightMap2, cv.INTER_LANCZOS4);
+          
+          cv.rectangle(
+            leftRectImg,
+            new cv.Point(sroi1[0], sroi1[1]), new cv.Point(sroi1[2], sroi1[3]),
+            new cv.Scalar(0, 255, 0), 2);
+          cv.rectangle(
+            rightRectImg,
+            new cv.Point(sroi2[0], sroi2[1]), new cv.Point(sroi2[2], sroi2[3]),
+            new cv.Scalar(0, 255, 0), 2);
+
+          cv.imshow('stereoRectVizLeft', leftRectImg);
+          cv.imshow('stereoRectVizRight', rightRectImg);
+
+          document.getElementById("stereoRectMPURI").innerHTML = mpURI;
+
+        }};
+
+        stereoRectVizSelectRightChanged = function () {{
+          var rightId = document.getElementById("stereoRectVizSelectRight").value;
+        
+          console.log("Selecting right image " + rightId);
+
+          let info = rightImageIdToInfo[rightId];
+          let rightImageUri = info["rightImageUri"];
+          let rightImage = document.getElementById("inputRight");
+          stereoRectVizCurrentRight = rightId;
+          rightImage.src = rightImageUri;        
+        }};
+        
+        stereoRectVizRightLoaded = function () {{
+          console.log("Right image loaded " + stereoRectVizCurrentRight);
+          showRightImageId(stereoRectVizCurrentRight);
+        }};
+
+        // END utils
+
+
+        showRightImageId(stereoRectVizCurrentRight);
 
         console.log("StereoRectViz Setup Complete");
+
       }}
     }};
     // END opencv loaded hook
 
   </script>
+
+  </div> <!-- END stereoRectVizRoot -->
   
   """
 
