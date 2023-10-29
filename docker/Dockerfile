@@ -62,6 +62,7 @@ RUN \
     libeigen3-dev \
     libflann-dev \
     libfreeimage-dev \
+    libopencv-dev \
     libmetis-dev \
     libgoogle-glog-dev \
     libgflags-dev \

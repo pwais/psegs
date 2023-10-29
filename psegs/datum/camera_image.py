@@ -159,6 +159,7 @@ class CameraImage(object):
 
   def get_world_to_sensor(self):
     return (
+      # FIXME this is inverse of what says it is? check with colmap data etc
       self.ego_to_sensor[self.sensor_name, 'ego'] @ 
       self.ego_pose['ego', 'world']
     )
@@ -256,7 +257,8 @@ class CameraImage(object):
     # yapf: enable
 
     dist_coeff_raw = [self.distortion_kv.get(k) for k in KEYS]
-    if all(v is not None for v in dist_coeff_raw):
+    dist_coeff_raw = [v for v in dist_coeff_raw if v is not None]
+    if dist_coeff_raw:
       return np.array(dist_coeff_raw)
     else:
       return None

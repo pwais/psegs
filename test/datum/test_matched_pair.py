@@ -24,10 +24,13 @@ def test_matched_pair_stereo_rect_viz_html():
   from psegs.datasets import colmap as pscolmap
 
   FIXTURES_DIR = testutil.test_fixtures_dir() / 'test_colmap'
+  from pathlib import Path
+  FIXTURES_DIR = Path('/outer_root/media/mr0/pwais/psegs-ios-lidar-ext/re-colmap')
+
 
   # Dump numpy cached assets to a temp dir
   PSEGS_ASSET_DIR = testutil.test_tempdir(
-      'test_colmap_create_sd_table_for_reconstruction')
+      'test_colmap_create_sd_table_for_reconstruction222')
 
   with testutil.LocalSpark.sess() as spark:
     sdt = pscolmap.COLMAP_SDTFactory.create_sd_table_for_reconstruction(
@@ -75,7 +78,7 @@ def test_matched_pair_stereo_rect_viz_html():
     #     tuple(lkey_rkey_mpuri_mp[:2])).distinct()
     # distinct_keys = sorted(distinct_ci_key_rdd.collect())
 
-    key, iter_plotdata = key_to_plotdatas_rdd.first()
+    left_key, iter_plotdata = key_to_plotdatas_rdd.first()
     iter_plotdata = sorted(iter_plotdata)
 
     ci_left = None

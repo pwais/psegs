@@ -136,6 +136,7 @@ def colmap_recon_create_camera_image(
   assert camera_model is not None
 
   distortion_kv = {}
+  distortion_model = f'colmap_camera.model={camera_model}'
   if camera_model == 'OPENCV':
     distortion_model = 'OPENCV'
     distortion_kv = {
@@ -164,8 +165,6 @@ def colmap_recon_create_camera_image(
       'k3': float(camera.params[6]),
       'k4': float(camera.params[7]),
     }
-  else:
-    distortion_model = f'colmap_camera.model={camera_model}'
   
   h = camera.height
   w = camera.width
@@ -289,6 +288,8 @@ def colmap_recon_create_camera_image(
                 ego_pose=ego_pose,
                 ego_to_sensor=ego_to_sensor,
                 K=K,
+                distortion_model=distortion_model,
+                distortion_kv=distortion_kv,
                 extra=extra)
     return ci
 

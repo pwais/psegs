@@ -14,9 +14,9 @@ numpy>=1.26.1
 oarphpy[spark]==0.1.1
 open3d>=0.11.1
 
-# Fixme did we need old one?
+# Fixme did we need old one? maybe the old one was because of qt5 headless problems?
 # opencv-python>=4.5.5.62
-opencv-python>=4.6.0
+opencv-python-headless>=4.6.0
 
 pandas
 plotly>=4.2.1

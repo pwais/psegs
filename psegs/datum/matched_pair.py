@@ -177,16 +177,23 @@ def create_stereo_rect_pair_debug_view_html(
     mp_uri = '(unknown)' if not mp_uris else mp_uris[i]
 
     K1 = ci_left.K
-    RT1 = ci_left.get_world_to_sensor().get_transformation_matrix(homogeneous=True)
+    #RT1 = ci_left.get_world_to_sensor() # FIXME!! this is giving ego to ego :(
+    RT1 = ci_left.ego_pose
 
     K2 = ci_right.K
-    RT2 = ci_right.get_world_to_sensor().get_transformation_matrix(homogeneous=True)
+    RT2 = ci_right.ego_pose #get_world_to_sensor()
 
-    sRT1_inv = np.eye(4, 4)
-    sRT1_inv[:3, :3] = RT1[:3, :3].T
-    sRT1_inv[:3, 3] = RT1[:3, :3].T.dot(-1 * RT1[:3, 3])
+    # sRT1_inv = np.eye(4, 4)
+    # sRT1_inv[:3, :3] = RT1.[:3, :3].T
+    # sRT1_inv[:3, 3] = RT1[:3, :3].T.dot(-1 * RT1[:3, 3])
 
-    RT_diff = sRT1_inv @ RT2
+    # RT_diff = sRT1_inv @ RT2
+
+    invRT1 = RT1.get_inverse()
+    invRT1h = invRT1.get_transformation_matrix(homogeneous=True)
+    RT = RT2.get_transformation_matrix(homogeneous=True) @ invRT1h
+    R = RT[:3, :3]
+    T = RT[:3, 3]
 
     distCoeffs1 = ci_left.get_opencv_distcoeffs()
     if distCoeffs1 is None:
@@ -197,7 +204,7 @@ def create_stereo_rect_pair_debug_view_html(
     rect_output = cv2.stereoRectify(
                     K1, distCoeffs1, K2, distCoeffs2,
                     (ci_left.width, ci_right.height),
-                    RT_diff[:3, :3], RT_diff[:3, 3],
+                    R, T,
                     newImageSize=rect_image_wh)
     sR1, sR2, sP1, sP2, sQ, sroi1, sroi2 = rect_output
 
@@ -261,28 +268,45 @@ def create_stereo_rect_pair_debug_view_html(
 
   <div id="stereoRectVizRoot">
 
-  <img src="{left_img_data_uri}" id="inputLeft" style="display: none;" />
   <img 
-    src="{default_right_image_uri}" id="inputRight" style="display: none;"
-    onload="stereoRectVizRightLoaded()" />
+    src="{left_img_data_uri}"
+    id="inputLeft"
+    style="display: none;" />
+  <img 
+    src="{default_right_image_uri}"
+    id="inputRight"
+    style="display: none;"
+    onload="stereoRectVizRightLoaded();" />
 
-  <table>
-    <tr>
-      <td><canvas id="stereoRectVizLeft"></td>
-      <td><canvas id="stereoRectVizRight"></td>
-    </tr>
-    <tr>
-      <td>
-        <div id="stereoRectMPURI">(not loaded)</div>
-      </td>
-    </tr>
-  </table>
+  <div 
+    id="stereoRectVizContainer"
+    style="background-color: #eee; position: relative;" >
+    
+    <div 
+      id="stereoRectVizPairViz" 
+      style="position: absolute;" >
+      <table>
+        <tr>
+          <td><canvas id="stereoRectVizLeft"></canvas></td>
+          <td><canvas id="stereoRectVizRight"></canvas></td>
+        </tr>
+      </table>
+    </div>
+    <div 
+      id="stereoRectVizMouseChaseRoot"
+      style="position: absolute; z-index: 9;" >
+    </div>
+  </div>
+  
+  <div id="stereoRectMPURI">(not loaded)</div>
 
   <select
       id="stereoRectVizSelectRight"
-      onchange="stereoRectVizSelectRightChanged()">
+      onchange="stereoRectVizSelectRightChanged();">
     {stereoRectVizSelectRight_body}
   </select>
+
+  </div>
   
   <script 
     async
@@ -291,9 +315,66 @@ def create_stereo_rect_pair_debug_view_html(
   </script>
   <script type="text/javascript">
 
-    stereoRectVizCurrentRight = "0";
+    // BEGIN Mouse chaser lines
 
-    // BEGIN opencv loaded hook
+    stereoRectLineStyle = document.createElement('style');
+    stereoRectLineStyle.innerHTML = (
+      ".stereoRectStraightLine, .stereoRectHrLine{{" +
+      " position: absolute; background-color: red; z-index: 10;}}"
+    );
+    document.head.appendChild(stereoRectLineStyle);
+    mouseChaseDiv = document.getElementById("stereoRectVizMouseChaseRoot");
+    var drawLines = function(event) {{
+      //var x = event.pageX;
+      //var y = event.pageY;
+      var rect = event.target.getBoundingClientRect();
+      var x = event.clientX - rect.left; //x position within the element.
+      var y = event.clientY - rect.top;  //y position within the element.
+
+      var straightLine = 
+        mouseChaseDiv.querySelector('.stereoRectStraightLine');
+      var hrLine = mouseChaseDiv.querySelector('.stereoRectHrLine');
+      var slTrans = 'translate(' + x + 'px, 0px)';
+      var hrTrans = 'translate(0px, ' + y + 'px)';
+      if(!straightLine) {{
+        straightLine = document.createElement('div');
+        straightLine.classList.add('stereoRectStraightLine');
+        straightLine.style.height = "100%";
+        straightLine.style.width = '2px';
+        mouseChaseDiv.appendChild(straightLine);
+      }}
+      straightLine.style.transform = slTrans;
+      if(!hrLine) {{
+        hrLine = document.createElement('div');
+        hrLine.style.height = "2px";
+        hrLine.classList.add('stereoRectHrLine');
+        hrLine.style.width = '100%';
+        mouseChaseDiv.appendChild(hrLine);
+      }}
+      hrLine.style.transform = hrTrans;
+    }}
+
+    mouseChaseDiv.addEventListener('mousemove', function(event) {{
+      drawLines(event);
+    }});
+    mouseChaseDiv.addEventListener('mousedown', function(event) {{
+      drawLines(event);   
+    }});
+    mouseChaseDiv.addEventListener('mouseup', function(event) {{
+      drawLines(event);
+    }});
+    mouseChaseDiv.addEventListener('mouseout', function(event) {{
+      drawLines(event);
+    }});
+
+
+    // END Mouse chaser lines
+
+    
+    // BEGIN opencv rectifier and load hook
+
+    // Show first right image by default
+    stereoRectVizCurrentRight = "0";
 
     var Module = {{
       // https://emscripten.org/docs/api_reference/module.html#Module.onRuntimeInitialized
@@ -333,12 +414,17 @@ def create_stereo_rect_pair_debug_view_html(
           let leftMap2 = new cv.Mat();
           let rightMap1 = new cv.Mat();
           let rightMap2 = new cv.Mat();
-          cv.initUndistortRectifyMap(
-            K1, distCoeffs1, sR1, sP1, newImageSize, cv.CV_32FC1,
-            leftMap1, leftMap2);
-          cv.initUndistortRectifyMap(
-            K2, distCoeffs2, sR2, sP2, newImageSize, cv.CV_32FC1,
-            rightMap1, rightMap2);
+          try {{
+            cv.initUndistortRectifyMap(
+              K1, distCoeffs1, sR1, sP1, newImageSize, cv.CV_32FC1,
+              leftMap1, leftMap2);
+            cv.initUndistortRectifyMap(
+              K2, distCoeffs2, sR2, sP2, newImageSize, cv.CV_32FC1,
+              rightMap1, rightMap2);
+          }} catch(err) {{
+            document.getElementById("stereoRectMPURI").innerHTML = (
+              "Error rectifying, cameras are too far apart? " + err);
+          }}
 
           let leftOrigImg = cv.imread(document.getElementById("inputLeft"));
           let rightOrigImg = cv.imread(document.getElementById("inputRight"));
@@ -355,11 +441,11 @@ def create_stereo_rect_pair_debug_view_html(
           cv.rectangle(
             leftRectImg,
             new cv.Point(sroi1[0], sroi1[1]), new cv.Point(sroi1[2], sroi1[3]),
-            new cv.Scalar(0, 255, 0), 2);
+            new cv.Scalar(0, 255, 0), 1);
           cv.rectangle(
             rightRectImg,
             new cv.Point(sroi2[0], sroi2[1]), new cv.Point(sroi2[2], sroi2[3]),
-            new cv.Scalar(0, 255, 0), 2);
+            new cv.Scalar(0, 255, 0), 1);
 
           cv.imshow('stereoRectVizLeft', leftRectImg);
           cv.imshow('stereoRectVizRight', rightRectImg);
@@ -369,7 +455,8 @@ def create_stereo_rect_pair_debug_view_html(
         }};
 
         stereoRectVizSelectRightChanged = function () {{
-          var rightId = document.getElementById("stereoRectVizSelectRight").value;
+          var rightId = 
+            document.getElementById("stereoRectVizSelectRight").value;
         
           console.log("Selecting right image " + rightId);
 
