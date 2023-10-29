@@ -154,6 +154,9 @@ def create_stereo_rect_pair_debug_view_html(
       embed_images_root_path='stereo_rect_pair_viz_images',
       embed_opencv_js=True):
   
+  import json
+  
+  import attr
   import cv2
 
   if lr_matches:
@@ -251,7 +254,8 @@ def create_stereo_rect_pair_debug_view_html(
           "distCoeffs2": {_mat2jsstr(distCoeffs2)},
           "newImageSize": new cv.Size({rect_image_wh[0]}, {rect_image_wh[1]}),
           
-          "mpURI": "{str(mp_uri)}"
+          "mpURI": "{str(mp_uri)}",
+          "mpURIPretty": {json.dumps(attr.asdict(mp_uri, recurse=True))}
         }}
     """)
 
@@ -259,7 +263,7 @@ def create_stereo_rect_pair_debug_view_html(
   left_img = ci_left.image
   left_img_data_uri = opplot.img_to_data_uri(left_img, format='jpg', jpeg_quality=90)
 
-  stereoRectVizSelectRight_body = "\n".join(
+  stereoRectVizSelectRight_body = "".join(
     f""" <option value="{i}">Image {i}</option> """
     for i in range(len(ci_rights))
   )
@@ -268,46 +272,6 @@ def create_stereo_rect_pair_debug_view_html(
 
   <div id="stereoRectVizRoot">
 
-  <img 
-    src="{left_img_data_uri}"
-    id="inputLeft"
-    style="display: none;" />
-  <img 
-    src="{default_right_image_uri}"
-    id="inputRight"
-    style="display: none;"
-    onload="stereoRectVizRightLoaded();" />
-
-  <div 
-    id="stereoRectVizContainer"
-    style="background-color: #eee; position: relative;" >
-    
-    <div 
-      id="stereoRectVizPairViz" 
-      style="position: absolute;" >
-      <table>
-        <tr>
-          <td><canvas id="stereoRectVizLeft"></canvas></td>
-          <td><canvas id="stereoRectVizRight"></canvas></td>
-        </tr>
-      </table>
-    </div>
-    <div 
-      id="stereoRectVizMouseChaseRoot"
-      style="position: absolute; z-index: 9;" >
-    </div>
-  </div>
-  
-  <div id="stereoRectMPURI">(not loaded)</div>
-
-  <select
-      id="stereoRectVizSelectRight"
-      onchange="stereoRectVizSelectRightChanged();">
-    {stereoRectVizSelectRight_body}
-  </select>
-
-  </div>
-  
   <script 
     async
     src="https://docs.opencv.org/3.4/opencv.js"
@@ -315,62 +279,6 @@ def create_stereo_rect_pair_debug_view_html(
   </script>
   <script type="text/javascript">
 
-    // BEGIN Mouse chaser lines
-
-    stereoRectLineStyle = document.createElement('style');
-    stereoRectLineStyle.innerHTML = (
-      ".stereoRectStraightLine, .stereoRectHrLine{{" +
-      " position: absolute; background-color: red; z-index: 10;}}"
-    );
-    document.head.appendChild(stereoRectLineStyle);
-    mouseChaseDiv = document.getElementById("stereoRectVizMouseChaseRoot");
-    var drawLines = function(event) {{
-      //var x = event.pageX;
-      //var y = event.pageY;
-      var rect = event.target.getBoundingClientRect();
-      var x = event.clientX - rect.left; //x position within the element.
-      var y = event.clientY - rect.top;  //y position within the element.
-
-      var straightLine = 
-        mouseChaseDiv.querySelector('.stereoRectStraightLine');
-      var hrLine = mouseChaseDiv.querySelector('.stereoRectHrLine');
-      var slTrans = 'translate(' + x + 'px, 0px)';
-      var hrTrans = 'translate(0px, ' + y + 'px)';
-      if(!straightLine) {{
-        straightLine = document.createElement('div');
-        straightLine.classList.add('stereoRectStraightLine');
-        straightLine.style.height = "100%";
-        straightLine.style.width = '2px';
-        mouseChaseDiv.appendChild(straightLine);
-      }}
-      straightLine.style.transform = slTrans;
-      if(!hrLine) {{
-        hrLine = document.createElement('div');
-        hrLine.style.height = "2px";
-        hrLine.classList.add('stereoRectHrLine');
-        hrLine.style.width = '100%';
-        mouseChaseDiv.appendChild(hrLine);
-      }}
-      hrLine.style.transform = hrTrans;
-    }}
-
-    mouseChaseDiv.addEventListener('mousemove', function(event) {{
-      drawLines(event);
-    }});
-    mouseChaseDiv.addEventListener('mousedown', function(event) {{
-      drawLines(event);   
-    }});
-    mouseChaseDiv.addEventListener('mouseup', function(event) {{
-      drawLines(event);
-    }});
-    mouseChaseDiv.addEventListener('mouseout', function(event) {{
-      drawLines(event);
-    }});
-
-
-    // END Mouse chaser lines
-
-    
     // BEGIN opencv rectifier and load hook
 
     // Show first right image by default
@@ -409,6 +317,7 @@ def create_stereo_rect_pair_debug_view_html(
           let distCoeffs2 = info["distCoeffs2"];
           let newImageSize = info["newImageSize"];
           let mpURI = info["mpURI"];
+          let mpURIPretty = info["mpURIPretty"];
 
           let leftMap1 = new cv.Mat();
           let leftMap2 = new cv.Mat();
@@ -451,6 +360,8 @@ def create_stereo_rect_pair_debug_view_html(
           cv.imshow('stereoRectVizRight', rightRectImg);
 
           document.getElementById("stereoRectMPURI").innerHTML = mpURI;
+          document.getElementById("stereoRectMPURIPretty").innerHTML = 
+            JSON.stringify(mpURIPretty, undefined, 2);
 
         }};
 
@@ -482,6 +393,87 @@ def create_stereo_rect_pair_debug_view_html(
       }}
     }};
     // END opencv loaded hook
+  </script>
+    
+  
+  <!-- StereoRectViz HTML UI -->
+  
+  <img 
+    src="{left_img_data_uri}"
+    id="inputLeft"
+    style="display: none;" />
+  <img 
+    src="{default_right_image_uri}"
+    id="inputRight"
+    style="display: none;"
+    onload="stereoRectVizRightLoaded();" />
+
+  <div id="stereoRectVizContainer">
+    <div id="stereoRectVizContainerOverlayRoot" style="position: relative">
+    
+      <div 
+        id="stereoRectVizPairViz" 
+        style="position: absolute;">
+        <table style="background-color: rgba(128, 128, 128, 0.5);">
+          <tr>
+            <td><canvas id="stereoRectVizLeft"></canvas></td>
+            <td><canvas id="stereoRectVizRight"></canvas></td>
+          </tr>
+        </table>
+
+        <div id="stereoRectControlsNInfo">
+
+          <select
+              id="stereoRectVizSelectRight"
+              style="padding: 0.5em; font-size: large;"
+              onchange="stereoRectVizSelectRightChanged();">
+            {stereoRectVizSelectRight_body}
+          </select>
+
+          <pre>
+            <div id="stereoRectMPURI">(not loaded)</div>
+            <div id="stereoRectMPURIPretty">(not loaded)</div>
+          </pre>
+
+        </div>
+
+      </div>
+    
+      <div
+        id="stereoRectVizHorizontalLine"
+        style="position: absolute; z-index: 10; background-color: red; width: 100%; height: 2px; translate(0px, 100px)"
+        >
+      </div>
+    
+    </div>
+  </div>
+    
+  <script type="text/javascript">
+
+    // BEGIN Mouse chaser lines
+
+    mouseChaseDiv = document.getElementById("stereoRectVizPairViz");
+    var drawLines = function(event) {{
+      let rect = event.target.getBoundingClientRect();
+      let x = event.clientX - rect.left; //x position within the element.
+      let y = event.clientY - rect.top;  //y position within the element.
+      let lineDiv = document.getElementById("stereoRectVizHorizontalLine");
+      lineDiv.style.transform = 'translate(0px, ' + y + 'px)';
+    }}
+    mouseChaseDiv.addEventListener('mousemove', function(event) {{
+      drawLines(event);
+    }});
+    mouseChaseDiv.addEventListener('mousedown', function(event) {{
+      drawLines(event);   
+    }});
+    mouseChaseDiv.addEventListener('mouseup', function(event) {{
+      drawLines(event);
+    }});
+    mouseChaseDiv.addEventListener('mouseout', function(event) {{
+      drawLines(event);
+    }});
+
+    // END Mouse chaser lines
 
   </script>
 
