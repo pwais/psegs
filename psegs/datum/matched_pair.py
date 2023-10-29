@@ -151,6 +151,7 @@ def create_stereo_rect_pair_debug_view_html(
       mp_uris=[],
       rect_image_wh=None,
       image_viz_max_size=-1,
+      max_matches_per_pair=10_000,
       embed_images_root_path='stereo_rect_pair_viz_images',
       embed_opencv_js=True):
   
@@ -158,6 +159,8 @@ def create_stereo_rect_pair_debug_view_html(
   
   import attr
   import cv2
+
+  from oarphpy.plotting import hash_to_rbg
 
   if lr_matches:
     assert len(ci_rights) == len(lr_matches), (
@@ -172,12 +175,26 @@ def create_stereo_rect_pair_debug_view_html(
 
   rightImageIdToInfo_entries = []
   default_right_image_uri = ""
-  for i in range(len(ci_rights)):
-    ci_right = ci_rights[i]
+  for right_id in range(len(ci_rights)):
+    ci_right = ci_rights[right_id]
 
     rect_image_wh = None or (ci_left.width, ci_right.height)
-    matches = None if not lr_matches else lr_matches[i]
-    mp_uri = '(unknown)' if not mp_uris else mp_uris[i]
+    mp_uri = '(unknown)' if not mp_uris else mp_uris[right_id]
+
+    match_left_xy = []
+    match_right_xy = []
+    match_color = []
+    matches = None if not lr_matches else lr_matches[right_id]
+    if matches is not None:
+      rng = np.random.RandomState(1337)
+      n = min(max_matches_per_pair, matches.shape[0])
+      idx = rng.choice(np.arange(matches.shape[0]), n)
+      for mid in idx:
+        x1, y1, x2, y2 = matches[mid, :4]
+        r, g, b = hash_to_rbg(mid)
+        match_left_xy.append((x1, y1))
+        match_right_xy.append((x2, y2))
+        match_color.append((int(b), int(g), int(r)))
 
     K1 = ci_left.K
     #RT1 = ci_left.get_world_to_sensor() # FIXME!! this is giving ego to ego :(
@@ -185,12 +202,6 @@ def create_stereo_rect_pair_debug_view_html(
 
     K2 = ci_right.K
     RT2 = ci_right.ego_pose #get_world_to_sensor()
-
-    # sRT1_inv = np.eye(4, 4)
-    # sRT1_inv[:3, :3] = RT1.[:3, :3].T
-    # sRT1_inv[:3, 3] = RT1[:3, :3].T.dot(-1 * RT1[:3, 3])
-
-    # RT_diff = sRT1_inv @ RT2
 
     invRT1 = RT1.get_inverse()
     invRT1h = invRT1.get_transformation_matrix(homogeneous=True)
@@ -211,7 +222,7 @@ def create_stereo_rect_pair_debug_view_html(
                     newImageSize=rect_image_wh)
     sR1, sR2, sP1, sP2, sQ, sroi1, sroi2 = rect_output
 
-    right_image_dest = embed_images_root_path / f"right_{i}.jpg"
+    right_image_dest = embed_images_root_path / f"right_{right_id}.jpg"
     right_img = ci_right.image
     cv2.imwrite(
       str(right_image_dest),
@@ -237,10 +248,16 @@ def create_stereo_rect_pair_debug_view_html(
       """
       return js
     
+    def _roundFloats(o, precision=2):
+      """Save a bunch of JSON bytes where precision doesn't matter"""
+      if isinstance(o, float): return round(o, precision)
+      if isinstance(o, (list, tuple)): return [_roundFloats(x) for x in o]
+      return o
+
     rightImageIdToInfo_entries.append(f"""
-      "{i}": // rightImageId
+      "{right_id}": // rightImageId
         {{
-          "rightImageId": {i},
+          "rightImageId": {right_id},
           "rightImageUri": "{right_image_uri}",
           "K1": {_mat2jsstr(K1)},
           "K2": {_mat2jsstr(K2)},
@@ -253,9 +270,11 @@ def create_stereo_rect_pair_debug_view_html(
           "distCoeffs1": {_mat2jsstr(distCoeffs1)},
           "distCoeffs2": {_mat2jsstr(distCoeffs2)},
           "newImageSize": new cv.Size({rect_image_wh[0]}, {rect_image_wh[1]}),
-          
           "mpURI": "{str(mp_uri)}",
-          "mpURIPretty": {json.dumps(attr.asdict(mp_uri, recurse=True))}
+          "mpURIPretty": ( {json.dumps(attr.asdict(mp_uri, recurse=True))} ),
+          "matchLeftXY": ( {json.dumps(_roundFloats(match_left_xy))} ),
+          "matchRightXY": ( {json.dumps(_roundFloats(match_right_xy))} ),
+          "matchColor": ( {json.dumps(match_color)} )
         }}
     """)
 
@@ -274,7 +293,7 @@ def create_stereo_rect_pair_debug_view_html(
 
   <script 
     async
-    src="https://docs.opencv.org/3.4/opencv.js"
+    src="https://docs.opencv.org/4.5.5/opencv.js"
     type="text/javascript">
   </script>
   <script type="text/javascript">
@@ -318,6 +337,9 @@ def create_stereo_rect_pair_debug_view_html(
           let newImageSize = info["newImageSize"];
           let mpURI = info["mpURI"];
           let mpURIPretty = info["mpURIPretty"];
+          let matchLeftXY = info["matchLeftXY"];
+          let matchRightXY = info["matchRightXY"];
+          let matchColor = info["matchColor"];
 
           let leftMap1 = new cv.Mat();
           let leftMap2 = new cv.Mat();
@@ -337,6 +359,15 @@ def create_stereo_rect_pair_debug_view_html(
 
           let leftOrigImg = cv.imread(document.getElementById("inputLeft"));
           let rightOrigImg = cv.imread(document.getElementById("inputRight"));
+
+          for (var i = 0; i < matchLeftXY.length; i++) {{
+            let lxy = new cv.Point(matchLeftXY[i][0], matchLeftXY[i][1]);
+            let rxy = new cv.Point(matchRightXY[i][0], matchRightXY[i][1]);
+            let bgr = new cv.Scalar(
+              matchColor[i][0], matchColor[i][1], matchColor[i][2], 128);
+            cv.circle(leftOrigImg, lxy, 3.0, bgr, cv.FILLED);
+            cv.circle(rightOrigImg, rxy, 3.0, bgr, cv.FILLED);
+          }}
 
           let leftRectImg = new cv.Mat();
           cv.remap(
