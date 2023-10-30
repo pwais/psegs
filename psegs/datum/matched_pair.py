@@ -365,8 +365,8 @@ def create_stereo_rect_pair_debug_view_html(
             let rxy = new cv.Point(matchRightXY[i][0], matchRightXY[i][1]);
             let bgr = new cv.Scalar(
               matchColor[i][0], matchColor[i][1], matchColor[i][2], 128);
-            cv.circle(leftOrigImg, lxy, 3.0, bgr, cv.FILLED);
-            cv.circle(rightOrigImg, rxy, 3.0, bgr, cv.FILLED);
+            cv.circle(leftOrigImg, lxy, 3, bgr, cv.FILLED);
+            cv.circle(rightOrigImg, rxy, 3, bgr, cv.FILLED);
           }}
 
           let leftRectImg = new cv.Mat();

@@ -23,7 +23,7 @@ import psegs
 from psegs import util
 from psegs.spark import Spark
 
-
+# FIXME put in mount!
 # PS_TEST_TEMPDIR_ROOT = os.path.join(tempfile.gettempdir(), 'psegs_test')
 PS_TEST_TEMPDIR_ROOT = '/opt/psegs/psegs_test'
 

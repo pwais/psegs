@@ -30,7 +30,7 @@ def test_matched_pair_stereo_rect_viz_html():
 
   # Dump numpy cached assets to a temp dir
   PSEGS_ASSET_DIR = testutil.test_tempdir(
-      'test_colmap_create_sd_table_for_reconstruction222')
+      'test_colmap_create_sd_table_for_reconstruction')
 
   with testutil.LocalSpark.sess() as spark:
     sdt = pscolmap.COLMAP_SDTFactory.create_sd_table_for_reconstruction(
@@ -85,8 +85,14 @@ def test_matched_pair_stereo_rect_viz_html():
     ci_rights = []
     lr_matches = []
     mp_uris = []
+    temp = 0
     for indicator, mp_uri, mp in iter_plotdata:
-      
+      img = mp.get_debug_line_image()
+      import imageio
+      imageio.imwrite(f'/opt/psegs/stereo_rect_pair_viz_images/mp_viz_{temp}.jpg', img)
+      temp += 1
+
+
       if indicator == 'key_is_1':
         if ci_left is None:
           ci_left = mp.img1

@@ -460,12 +460,13 @@ def create_matches_debug_line_image(
       img1,
       img2,
       xyxy,
-      max_matches=1000,
-      line_color=(0, 255, 0),
+      max_matches=10_000,
+      # line_color=(0, 255, 0),
       thickness=1,
-      alpha=0.5):
+      alpha=0.7):
   
   import cv2
+  from oarphpy.plotting import hash_to_rbg
 
   debug = np.concatenate([img1, img2], axis=1) # TODO support different sizes
 
@@ -477,10 +478,13 @@ def create_matches_debug_line_image(
     xyxy = xyxy[idx]
 
   overlay = debug.copy()
-  for xyxy_i in xyxy:
+  for i, xyxy_i in enumerate(xyxy):
     x1, y1, x2, y2 = xyxy_i[:4].astype(int)
     x2 += img1.shape[1]
-    cv2.line(overlay, (x1, y1), (x2, y2), line_color, thickness=thickness)
+    r, g, b = hash_to_rbg(i)
+    cv2.circle(overlay, (x1, y1), 4, (b, g, r), cv2.FILLED)
+    cv2.circle(overlay, (x2, y2), 4, (b, g, r), cv2.FILLED)
+    # cv2.line(overlay, (x1, y1), (x2, y2), (b, g, r), thickness=thickness)
   
   debug = cv2.addWeighted(overlay, alpha, debug, 1 - alpha, 0)
   return debug
