@@ -461,9 +461,10 @@ def create_matches_debug_line_image(
       img2,
       xyxy,
       max_matches=10_000,
-      # line_color=(0, 255, 0),
+      radius=4,
       thickness=1,
-      alpha=0.7):
+      circle_alpha=0.7,
+      line_alpha=0.2):
   
   import cv2
   from oarphpy.plotting import hash_to_rbg
@@ -477,16 +478,19 @@ def create_matches_debug_line_image(
     idx = np.random.choice(xyxy.shape[0], max_matches, replace=False)
     xyxy = xyxy[idx]
 
-  overlay = debug.copy()
+  line_overlay = debug.copy()
+  circle_overlay = debug.copy()
   for i, xyxy_i in enumerate(xyxy):
     x1, y1, x2, y2 = xyxy_i[:4].astype(int)
     x2 += img1.shape[1]
     r, g, b = hash_to_rbg(i)
-    cv2.circle(overlay, (x1, y1), 4, (b, g, r), cv2.FILLED)
-    cv2.circle(overlay, (x2, y2), 4, (b, g, r), cv2.FILLED)
-    # cv2.line(overlay, (x1, y1), (x2, y2), (b, g, r), thickness=thickness)
+    cv2.circle(circle_overlay, (x1, y1), radius, (b, g, r), cv2.FILLED)
+    cv2.circle(circle_overlay, (x2, y2), radius, (b, g, r), cv2.FILLED)
+    cv2.line(line_overlay, (x1, y1), (x2, y2), (b, g, r), thickness=thickness)
   
-  debug = cv2.addWeighted(overlay, alpha, debug, 1 - alpha, 0)
+  debug = cv2.addWeighted(line_overlay, line_alpha, debug, 1 - line_alpha, 0)
+  debug = cv2.addWeighted(
+    circle_overlay, circle_alpha, debug, 1 - circle_alpha, 0)
   return debug
 
 

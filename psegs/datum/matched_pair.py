@@ -198,6 +198,7 @@ def create_stereo_rect_pair_debug_view_html(
 
     K1 = ci_left.K
     #RT1 = ci_left.get_world_to_sensor() # FIXME!! this is giving ego to ego :(
+    # https://forum.opencv.org/t/is-it-possible-to-stereorectify-with-externally-calibrated-cameras/8275/7
     RT1 = ci_left.ego_pose
 
     K2 = ci_right.K

@@ -92,7 +92,6 @@ def test_matched_pair_stereo_rect_viz_html():
       imageio.imwrite(f'/opt/psegs/stereo_rect_pair_viz_images/mp_viz_{temp}.jpg', img)
       temp += 1
 
-
       if indicator == 'key_is_1':
         if ci_left is None:
           ci_left = mp.img1
@@ -117,7 +116,7 @@ def test_matched_pair_stereo_rect_viz_html():
         
       else:
         raise ValueError(indicator)
-      
+
       ci_rights.append(ci_right)
       lr_matches.append(matches)
       mp_uris.append(mp_uri)

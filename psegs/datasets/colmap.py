@@ -451,11 +451,21 @@ def colmap_recon_create_matched_pair(
 
     extra['colmap.image1_id'] = img1.extra['colmap.image_id']
     extra['colmap.image2_id'] = img2.extra['colmap.image_id']
+  else:
+    recon = pycolmap.Reconstruction(recon_dir)
+    ii1nfo, iid1 = _find_image_record(image1_name, recon, 
+                      err_msg=
+                        f"Could not find {image1_name} (cmp) in {recon_dir}")
+    ii2nfo, iid2 = _find_image_record(image2_name, recon, 
+                      err_msg=
+                        f"Could not find {image2_name} (cmp) in {recon_dir}")
+    extra['colmap.image1_id'] = str(iid1)
+    extra['colmap.image2_id'] = str(iid2)
 
-  extra = {
+  extra.update({
     'colmap.image1_name': image1_name,
     'colmap.image2_name': image2_name,
-  }
+  })
 
   mp = datum.MatchedPair(
         matcher_name=matcher_name,
@@ -663,7 +673,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
 
         mp_uri = copy.deepcopy(ci1_uri)
         mp_uri = mp_uri.replaced(
-            timestamp=min(ci1_uri.timestamp, ci2_uri.timestamp),
+            timestamp=int(0.5 * abs(ci1_uri.timestamp + ci2_uri.timestamp)),
             topic=(
               # E.g. 'camera-input|camera-input|colmap_sparse|matches'
               mp_topic_base + cls.CI_RECON_TOPIC_SUFFIX + cls.MP_TOPIC_SUFFIX
@@ -731,7 +741,10 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     dci.extra['psegs.depth.rgb_uri'] = str(ci_uri)
 
     if cls.USE_NP_CACHED_ASSETS:
-      depth_npy_fname = f"{uri.topic}_{uri.timestamp}_depth.npy"
+      # Make sure the filename is definitely distinct
+      colmap_image_id = dci.extra['colmap.image_id']
+      depth_npy_fname = (
+        f"{uri.topic}_{uri.timestamp}_image_id.{colmap_image_id}_depth.npy")
       depth_npy_path = cls.psegs_npy_cache_dir() / depth_npy_fname
       if not depth_npy_path.exists():
         with open(depth_npy_path, 'wb') as f:
@@ -772,7 +785,10 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     mp.extra['colmap.image2_uri'] = uri.extra['colmap.image2_uri']
 
     if cls.USE_NP_CACHED_ASSETS:
-      matches_npy_fname = f"{uri.topic}_{uri.timestamp}_matches.npy"
+      # Make sure the filename is definitely distinct
+      iid1, iid2 = mp.extra['colmap.image1_id'], mp.extra['colmap.image2_id']
+      matches_npy_fname = (
+        f"{uri.topic}_{uri.timestamp}_iid1.{iid1}_iid2.{iid2}_matches.npy")
       matches_npy_path = cls.psegs_npy_cache_dir() / matches_npy_fname
       if not matches_npy_path.exists():
         with open(matches_npy_path, 'wb') as f:
