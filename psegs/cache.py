@@ -12,43 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This version of attrs has better cloudpickle support
-attrs>=21.4.0
 
-dateparser
-fasteners
-ffmpeg-python
-imageio
-imageio-ffmpeg
-loguru
+class IAssetCache(object):
+
+  def new_filepath(self, fname, t=None):
+    raise NotImplementedError
+
+  def new_dirpath(self, dirpath, t=None):
+    raise NotImplementedError
 
 
-# fixme why does 1.21.5 break? and who installs it?
-#numpy
-numpy>=1.26.1
 
-oarphpy[spark]==0.1.1
-open3d>=0.11.1
+class AssetDiskCache(object):
 
-# Fixme did we need old one? maybe the old one was because of qt5 headless problems?
-# opencv-python>=4.5.5.62
-opencv-python-headless>=4.6.0
+  def __init__(self, config=None):
+    """get canonical psegs config from somewhere or write to /opt/psegs/psegs_temp / dataroot stuff
+    """
+    self.yay = None
 
-pandas
-plotly>=4.2.1
-plyfile
-psutil
-pyspark>=3.3.2
-pytest
-python-slugify
-rich
-scipy>=1.4.0
-shapely
-six>=1.14.0
-sphinx-autoapi
-tabulate
-threadpoolctl
-tqdm
-trimesh
-xmltodict
+  def new_filepath(self, fname, t=None):
+    raise NotImplementedError
+
+  def new_dirpath(self, dirpath, t=None):
+    raise NotImplementedError
 

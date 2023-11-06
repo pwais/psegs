@@ -54,7 +54,7 @@ class ProjConf(object):
   easier to (virtually) concatenate them."""
 
   PS_TEMP = attr.ib(type=Path, default=DEFAULT_TEMP_DIR, converter=Path)
-  """Path: cache any PSegs-specific files in this temp directory; co-locate
+  """Path: save PSegs-specific debug files in this temp directory; co-locate
   them to make introspection and deletion easier."""
 
 C = ProjConf()

@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from pathlib import Path
 
 import six
+import attr
 
 from psegs import datum
 from psegs import util
 from psegs.spark import Spark
+from psegs.cache import AssetDiskCache
+from psegs.util.video import VideoMeta
 from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
@@ -179,8 +181,6 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
         not p.is_dir() and
         not is_stupid_mac_file(p) and
         any(p.name.lower().endswith(ext) for ext in video_extensions)
-
-        and '2250' in p.name
       )
     ]
 
@@ -327,6 +327,226 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
     if existing_uri_df is not None:
       util.log.info(
         f"Note: resume mode unsupported, got existing_uri_df {existing_uri_df}")
+    
+    if only_segments:
+      has_match = any(
+              suri.soft_matches_segment_of(cls.get_segment_uri())
+              for suri in only_segments)
+      if not has_match:
+        return []
+
+    # Generate URIs ...
+    uris = cls.get_image_uris()
+    uri_rdd = spark.sparkContext.parallelize(uris)
+    util.log.info(f"Creating datums for {len(uris)} frames ...")
+
+    datum_rdd = uri_rdd.map(cls.create_stamped_datum)
+
+    return [datum_rdd]
+
+
+
+
+
+class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
+  """This `StampedDatumTableFactory` TODO
+
+
+
+
+  """
+
+  # VIDEO_LOCATION = None
+  # START_NANOSTAMP = 0
+  # FRAMES_PER_SECOND = 1
+  # N_FRAMES = 0
+  # HEIGHT = 0
+  # WIDTH = 0
+
+  # DATASET = 'anon'
+  # SPLIT = 'anon'
+  # SEGMENT_ID = 'anon_segment'
+  # TOPIC = 'camera_video_adhoc'
+
+  # ASSET_CACHE_DIR = None
+
+
+  # @classmethod
+  # def _ffmpeg_asplode_lowfi_frames(cls, dest_root, max_hw=1080, jpeg_quality=2):
+  #   video_path = Path(cls.VIDEO_LOCATION).resolve()
+
+  #   from oarphpy import util as oputil
+
+  #   FFMPEG_CMD = f"""
+  #     cd {dest_root} && \
+  #     ffmpeg \
+  #       -y \
+  #       -noautorotate \
+  #       -i {video_path} \
+  #       -vf 'scale=if(gte(iw\,ih)\,min({max_hw}\,iw)\,-2):if(lt(iw\,ih)\,min({max_hw}\,ih)\,-2)' \
+  #       -vsync 0 \
+  #       -qscale {jpeg_quality} \
+  #         frame_%09d.jpg
+  #   """
+  #   oputil.run_cmd(FFMPEG_CMD)
+
+  #   paths = sorted(
+  #     Path(p)
+  #     for p in oputil.all_files_recursive(dest_root, pattern='frame_*'))
+  #   return paths
+
+
+  ## Classloader / writer
+
+  @classmethod
+  def _maybe_load_F(cls, seg_uri):
+    F_path = cls._cached_cls_path_for_seg_uri(seg_uri)
+    if not F_path.exists():
+      return None
+    
+    import cloudpickle
+    with open(F_path, 'rb') as f:
+      return cloudpickle.load(f)
+  
+  @classmethod
+  def _save_F(cls, F, seg_uri):
+    F_path = cls._cached_cls_path_for_seg_uri(seg_uri)
+    F_path.parent.mkdir(parents=True, exist_ok=True)
+   
+    import cloudpickle
+    with open(F_path, 'wb') as f:
+      cloudpickle.dump(F, f, protocol=3) # Support older python
+
+
+  ## Utils
+
+  @classmethod
+  def _default_segment_id_for_video_uri(cls, video_uri):
+    from urllib.parse import urlparse
+    import hashlib
+  
+    res = urlparse(str(video_uri))
+    path = res.path
+    fname = Path(path).name
+
+    uri_hash = hashlib.md5(str(video_uri).encode('utf-8')).hexdigest()
+
+    return f'{fname}_{uri_hash[:10]}'
+
+  @classmethod
+  def _cached_cls_path_for_seg_uri(cls, seg_uri):
+    cls_cache_dir = cls.CLS_CACHE_DIR
+    if not cls_cache_dir:
+      from psegs.conf import C
+      cls_cache_dir = C.DATA_ROOT / 'DiskCachedFramesVideoSegmentFactory_cache'
+      
+    cls_cache_dir = Path(cls_cache_dir)
+    
+    cls_cached_path = (
+      cls_cache_dir / 
+      seg_uri.dataset / 
+      seg_uri.split / 
+      seg_uri.segment_id / 
+      'DiskCachedFramesVideoSegmentFactory_cls.cpkl')
+    
+    return cls_cached_path
+
+  @classmethod
+  def _get_segment_uri(cls, base_uri, video_uri):
+    seg_uri = base_uri.to_segment_uri()
+    if not seg_uri.segment_id:
+      seg_uri.segment_id = cls._default_segment_id_for_video_uri(video_uri)
+    return seg_uri
+
+
+  ## User API
+
+  # Cache pre-computed `DiskCachedFramesVideoSegmentFactory` here; avoids
+  # having to re-read videos for metadata.
+  CLS_CACHE_DIR = None
+
+  IMAGE_CACHE_CLS = AssetDiskCache
+
+  BASE_URI = datum.URI(
+                  dataset='anon',
+                  split='anon',
+                  # NB: leave segment_id blank to deduce it from video_uri
+                  topic='video_camera')
+
+  @classmethod
+  def create_for_video(
+        cls,
+        video_uri,
+        base_uri=None,
+        start_timestamp_lstat_attr='st_mtime',
+        start_time_nanostamp=None,
+        max_n_frames=-1,
+        force_recompute=False,
+        do_cache_factory=True):
+    """Create and return a `StampedDatumTableFactory` class instance for the
+    given `video_uri`.  Use a pre-computed and cached class instance if
+    available (unless `force_recompute`); save the results of this function call
+    to the cache only if `do_cache_factory`.  We will read part of the video to
+    assess image dimensions, length, etc.  Use `explode_frames()` to also
+    decode the entire video and fill the frame caches.
+
+    If `start_timestamp_use` is a string, we will infer timestamps by not
+    just the frame index but by stat-ing the video and using this 
+    stat attribute.
+
+    If `start_timestamp_use` is an integer, we'll use that nanostamp
+    offset instead.
+
+    """
+  
+    base_uri = base_uri or cls.BASE_URI
+    seg_uri = cls._get_segment_uri(base_uri, video_uri)
+
+    if not force_recompute:
+      F = cls._maybe_load_F(seg_uri)
+      if F is not None:
+        return F
+
+    video_meta = VideoMeta.create_for_video(
+      video_uri, lstat_attr=start_timestamp_lstat_attr)
+    if max_n_frames >= 0:
+      video_meta.n_frames = max_n_frames
+    if start_time_nanostamp is not None:
+      video_meta.start_time_nanostamp = start_time_nanostamp
+    
+    
+
+    class MyAdhocVideosSDTFactory(cls):
+      VIDEO_URI = str(video_uri)
+      START_NANOSTAMP = start_time
+      FRAMES_PER_SECOND = fps
+      N_FRAMES = n_frames
+      HEIGHT = h
+      WIDTH = w
+
+      DATASET = dataset
+      SPLIT = split
+      SEGMENT_ID = segment_id
+      TOPIC = topic
+
+      ASSET_CACHE_DIR = Path(asset_cache_dir) if asset_cache_dir else None
+    
+    if asset_cache_dir:
+      MyAdhocVideosSDTFactory.maybe_save_factory()
+
+    return MyAdhocVideosSDTFactory
+
+  ## StampedDatumTableFactory Impl
+
+  @classmethod
+  def _get_all_segment_uris(cls):
+    return [cls.get_segment_uri()]
+
+  @classmethod
+  def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
+    if existing_uri_df is not None:
+      util.log.info(
+        f"Note: resume mode unsupported, got an existing_uri_df")
     
     if only_segments:
       has_match = any(
