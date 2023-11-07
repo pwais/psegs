@@ -17,6 +17,8 @@ from pathlib import Path
 
 @attr.s(slots=True, eq=True, weakref_slot=False)
 class VideoMeta(object):
+  video_uri = attr.ib(default='')
+
   start_time_nanostamp = attr.ib(default=0)
   frames_per_second = attr.ib(default=0.0)
   n_frames = attr.ib(default=0)
@@ -67,6 +69,7 @@ class VideoMeta(object):
 
 
     return cls(
+            video_uri=video_uri,
             start_time_nanostamp=start_time_nanostamp,
             frames_per_second=fps,
             n_frames=n_frames,
