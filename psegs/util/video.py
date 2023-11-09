@@ -97,9 +97,12 @@ def ffmpeg_meta_maybe_get_start_time(vid_dict):
 
   date_raw_str = (
     vid_dict['format']['tags'].get('com.apple.quicktime.creationdate') or
-    vid_dict['format']['tags'].get('creation_time')
+    vid_dict['format']['tags'].get('creation_time') or
     '')
   
+  if not date_raw_str:
+    return None
+
   try:
     return dateparser.parse(date_raw_str)
   except Exception as e:
@@ -112,3 +115,64 @@ def ffmpeg_meta_maybe_get_is_10bit_hdr(vid_dict):
       return True
   
   return False
+
+
+@attr.s(slots=True, eq=True, weakref_slot=False)
+class VideoExplodeParams(object):
+
+  max_hw = attr.ib(default=-1)
+
+  image_file_extension = attr.ib(default='png')
+
+  jpeg_quality_percent = attr.ib(default=100)
+
+  n_frames = attr.ib(default=-1)
+
+
+def ffmpeg_explode(params, video_uri, dest_root):
+  import math
+  from oarphpy import util as oputil
+  
+  try:
+    oputil.run_cmd("ffmpeg -h")
+  except Exception as e:
+    raise ValueError(f"This functionality requires system ffmpeg, got {e}")
+
+  video_path = Path(video_uri).resolve()
+
+  rescale_arg = ''
+  if params.max_hw >= 0:
+    rescale_arg = (
+      f"-vf 'scale=if(gte(iw\,ih)\,min({params.max_hw}\,iw)\,-2):if(lt(iw\,ih)\,min({params.max_hw}\,ih)\,-2)' "
+    )
+  qscale_arg = ''
+  if params.image_file_extension == 'jpg':
+    # ffmpeg jpeg quality is from 2 to 31 with 2 highest
+    jpeg_quality = 2 + (31 - 2) * (1. - (params.jpeg_quality_percent / 100.))
+    qscale_arg = f" -qscale {jpeg_quality} "
+
+  vframes_arg = ''
+  zfill = 6
+  if params.n_frames >= 0:
+    zfill = int(math.log10(params.n_frames)) + 1
+    vframes_arg = f" -vframes {params.n_frames} "
+
+  FFMPEG_CMD = f"""
+    cd "{dest_root}" && \
+    ffmpeg \
+      -y \
+      -noautorotate \
+      -i {video_path} \
+      {vframes_arg} \
+      {rescale_arg} \
+      -vsync 0 \
+      {qscale_arg} \
+        ffmpeg_explode_frame_%0{zfill}d.{params.image_file_extension}
+  """
+  oputil.run_cmd(FFMPEG_CMD)
+
+  paths = sorted(
+            oputil.all_files_recursive(
+              dest_root, 
+              pattern='ffmpeg_explode_frame_*'))
+  return paths

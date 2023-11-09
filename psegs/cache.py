@@ -13,17 +13,28 @@
 # limitations under the License.
 
 
-class IAssetCache(object):
+class LocalDiskCache(object):
+  """Defines the API that PSegs expects to cache clients and provides
+  a simple local adhoc disk cache."""
+
+  def __init__(self):
+    """Cache clients must have a zero-arg ctor"""
+    pass
 
   def new_filepath(self, fname, t=None):
-    raise NotImplementedError
+    from psegs.conf import C
+    dest = C.DATA_ROOT / 'psegs_local_disk_cache' / 'adhoc_files' / fname
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    return dest
 
   def new_dirpath(self, dirpath, t=None):
-    raise NotImplementedError
+    from psegs.conf import C
+    dest = C.DATA_ROOT / 'psegs_local_disk_cache' / 'adhoc_dirs' / dirpath
+    dest.mkdir(parents=True, exist_ok=True)
+    return dest
 
 
-
-class AssetDiskCache(object):
+class AssetDiskCache(LocalDiskCache):
 
   def __init__(self, config=None):
     """get canonical psegs config from somewhere or write to /opt/psegs/psegs_temp / dataroot stuff

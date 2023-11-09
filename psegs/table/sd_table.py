@@ -249,6 +249,8 @@ class StampedDatumTable(object):
       mode=mode,
     )
 
+    # TODO use save_df_thunks depending on backing type?
+
     spark_df = self.to_spark_df(spark=spark).persist()
     if partition:
       for k in self.PARTITION_KEYS:
@@ -421,11 +423,13 @@ class StampedDatumTable(object):
     # because it's faster
     def to_key_datum_df(df):
       URI_KEYS = (
-        'dataset',        # Use partition col
-        'split',          # Use partition col
-        'segment_id',     # Use partition col
-        'uri.timestamp',  # Must read from uri
-        'uri.topic')      # Must read from uri
+        # Use partition col if possible, else read from URI
+        'dataset' if 'dataset' in df.columns else 'uri.dataset',       
+        'split' if 'split' in df.columns else 'uri.split',       
+        'segment_id' if 'segment_id' in df.columns else 'uri.segment_id',       
+        # Must read from uri
+        'uri.timestamp',  
+        'uri.topic')
       kv_df = df.select(
                 F.concat(*URI_KEYS).alias('key'),
                 F.struct(*SD_COLS).alias('datum'))

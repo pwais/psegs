@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from pathlib import Path
 
 import six
-import attr
 
 from psegs import datum
 from psegs import util
 from psegs.spark import Spark
 from psegs.cache import AssetDiskCache
+from psegs.util.misc import get_image_wh
+from psegs.util.video import ffmpeg_explode
 from psegs.util.video import VideoMeta
+from psegs.util.video import VideoExplodeParams
 from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
@@ -369,25 +372,24 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
   # Cache the actual frame image paths after a call to `explode_frames()`
   EXPLODED_FRAME_PATHS = None
 
+  EXPLODE_PARAMS = None
+
   IMAGE_CACHE_CLS = None
 
   @classmethod
-  def _maybe_load_F(cls, seg_uri):
-    F_path = cls._cached_cls_path_for_seg_uri(seg_uri)
+  def _maybe_load_F(cls, uri, cls_cache_dir=None):
+    F_path = cls._cached_cls_path_for_uri(uri, cls_cache_dir=cls_cache_dir)
     if not F_path.exists():
       return None
-    
     import cloudpickle
     with open(F_path, 'rb') as f:
       return cloudpickle.load(f)
   
   @classmethod
   def _save_F(cls, F):
-    seg_uri = F._get_segment_uri()
-    F_path = cls._cached_cls_path_for_seg_uri(
-      seg_uri, cls_cache_dir=F.CLS_CACHE_DIR)
+    F_path = F._cached_cls_path_for_uri(
+      F.BASE_URI, cls_cache_dir=F.CLS_CACHE_DIR)
     F_path.parent.mkdir(parents=True, exist_ok=True)
-   
     import cloudpickle
     with open(F_path, 'wb') as f:
       cloudpickle.dump(F, f, protocol=3) # Support older python
@@ -401,14 +403,16 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
                   # NB: leave segment_id blank to deduce it from video_uri
                   topic='video_camera')
 
+  DEFAULT_EXPODE_PARAMS = VideoExplodeParams()
+
   @classmethod
   def create_factory_for_video(
         cls,
         video_uri,
         base_uri=None,
+        explode_params=None,
         start_timestamp_lstat_attr='st_mtime',
         start_time_nanostamp=None,
-        max_n_frames=-1,
         cls_cache_dir=None,
         force_recompute_cls=False,
         do_cache_factory=True):
@@ -428,27 +432,36 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
 
     """
   
-    base_uri = base_uri or cls.BASE_URI
-    seg_uri = cls._video_uri_to_segment_uri(base_uri, video_uri)
+    cls_base_uri = base_uri or copy.deepcopy(cls.DEFAULT_BASE_URI)
+    
+    explode_params = explode_params or copy.deepcopy(cls.DEFAULT_EXPODE_PARAMS)
+    topic_suffix = (
+      f"|max_hw_{explode_params.max_hw}"
+      f"|ext_{explode_params.image_file_extension}"
+    )
+    if not cls_base_uri.topic:
+      cls_base_uri.topic = 'video_camera'
+    cls_base_uri.topic = cls_base_uri.topic + topic_suffix    
+    
+    cls_base_uri.segment_id = cls._default_segment_id_for_video_uri(video_uri)
 
     if not force_recompute_cls:
-      F = cls._maybe_load_F(seg_uri)
+      F = cls._maybe_load_F(cls_base_uri, cls_cache_dir=cls_cache_dir)
       if F is not None:
+        util.log.info(
+          f"Using cached {F.__class__.__name__} for {str(cls_base_uri)}")
         return F
-
-    base_uri.segment_id = seg_uri.segment_id
 
     video_meta = VideoMeta.create_for_video(
       video_uri, lstat_attr=start_timestamp_lstat_attr)
-    if max_n_frames >= 0:
-      video_meta.n_frames = max_n_frames
     if start_time_nanostamp is not None:
       video_meta.start_time_nanostamp = start_time_nanostamp
     
     class MyVideoSDTFactory(cls):
-      BASE_URI = base_uri
+      BASE_URI = cls_base_uri
       VIDEO_METADATA = video_meta
       CLS_CACHE_DIR = cls_cache_dir
+      EXPLODE_PARAMS = explode_params
 
     if do_cache_factory:
       cls._save_F(MyVideoSDTFactory)
@@ -468,33 +481,46 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
         force_recompute=False,
         img_cache_cls=None,
         do_cache_factory=True,
-        cache_now_time=None):
+        img_cache_now_time=None):
     
     if cls.EXPLODED_FRAME_PATHS and not force_recompute:
+      util.log.info(f"Factory {str(cls.BASE_URI)} already has "
+                    f"{len(cls.EXPLODED_FRAME_PATHS)} exploded frames.")
       return cls
   
     img_cache_cls = img_cache_cls or cls.DEFAULT_IMAGE_CACHE_CLS
     
     img_cache = img_cache_cls()
-    dest_root = img_cache.new_dirpath(
-                    cls.BASE_URI.segment_id,
-                    t=cache_now_time)
-
-    exploded_frame_paths = cls._ffmpeg_asplode_frames(
-      cls.VIDEO_METADATA,
-      dest_root,
+    cache_dirkey = str(
+      Path('DiskCachedFramesVideoSegmentFactory_root') / 
+      cls._uri_dirkey_for_uri(cls.BASE_URI)
     )
+    dest_root = img_cache.new_dirpath(cache_dirkey, t=img_cache_now_time)
+
+    util.log.info(
+      f"Factory {str(cls.BASE_URI)} exploding frames to {dest_root} ...")
+    exploded_frame_paths = ffmpeg_explode(
+                              cls.EXPLODE_PARAMS,
+                              cls.VIDEO_METADATA.video_uri,
+                              dest_root)
+    util.log.info("... explode complete!")
 
     class MyExplodedVideoSDTFactory(cls):
       EXPLODED_FRAME_PATHS = exploded_frame_paths
       IMAGE_CACHE_CLS = img_cache_cls
     
     if do_cache_factory:
-      cls._save_F(MyExplodedVideoSDTFactory)
+      MyExplodedVideoSDTFactory._save_F(MyExplodedVideoSDTFactory)
 
     return MyExplodedVideoSDTFactory
     
-
+  @classmethod
+  def create_sd_table(cls, spark=None):
+    """Create and return a `StampedDatumTable` for just this Factory's video"""
+    with Spark.sess(spark) as spark:
+      seg_uri = cls.get_segment_uri()
+      sdt = cls.get_segment_sd_table(seg_uri, spark=spark)
+      return sdt
 
   ## StampedDatumTableFactory Impl
 
@@ -541,7 +567,12 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     return f'{fname}_{uri_hash[:10]}'
 
   @classmethod
-  def _cached_cls_path_for_seg_uri(cls, seg_uri, cls_cache_dir=None):
+  def _uri_dirkey_for_uri(cls, uri):
+    key = Path(uri.dataset) / uri.split / uri.segment_id / uri.topic
+    return str(key)
+
+  @classmethod
+  def _cached_cls_path_for_uri(cls, uri, cls_cache_dir=None):
     cls_cache_dir = cls_cache_dir or cls.CLS_CACHE_DIR
     if not cls_cache_dir:
       from psegs.conf import C
@@ -551,19 +582,10 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     
     cls_cached_path = (
       cls_cache_dir / 
-      seg_uri.dataset / 
-      seg_uri.split / 
-      seg_uri.segment_id / 
+      cls._uri_dirkey_for_uri(uri) /
       'DiskCachedFramesVideoSegmentFactory_cls.cpkl')
     
     return cls_cached_path
-
-  @classmethod
-  def _video_uri_to_segment_uri(cls, base_uri, video_uri):
-    seg_uri = base_uri.to_segment_uri()
-    if not seg_uri.segment_id:
-      seg_uri.segment_id = cls._default_segment_id_for_video_uri(video_uri)
-    return seg_uri
   
   @classmethod
   def _get_uri_extra(cls):
@@ -571,7 +593,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     
     vm = cls.VIDEO_METADATA
     extra = dict(
-      video_url=urllib.parse.quote_plus(vm.video_uri),
+      video_url=urllib.parse.quote_plus(str(vm.video_uri)),
       start_time_nanostamp=vm.start_time_nanostamp,
       frames_per_second=vm.frames_per_second,
       n_frames=vm.n_frames,
@@ -580,50 +602,51 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     prefix = 'DiskCachedFramesVideoSegmentFactory.'
     return dict((prefix + k, str(v)) for k, v in extra.items())
 
-  @classmethod
-  def _ffmpeg_asplode_frames(
-          cls,
-          video_meta,
-          dest_root,
-          max_hw=-1,
-          file_extension='png',
-          jpeg_quality=2):
+  # @classmethod
+  # def _ffmpeg_asplode_frames(
+  #         cls,
+  #         video_meta,
+  #         dest_root,
+  #         max_hw=-1,
+  #         file_extension='png',
+  #         jpeg_quality=2):
     
-    import math
-    from oarphpy import util as oputil
+  #   import math
+  #   from oarphpy import util as oputil
     
-    video_path = Path(video_meta.video_uri).resolve()
+  #   video_path = Path(video_meta.video_uri).resolve()
 
-    rescale_arg = ''
-    if max_hw >= 0:
-      rescale_arg = (
-        f"-vf 'scale=if(gte(iw\,ih)\,min({max_hw}\,iw)\,-2):if(lt(iw\,ih)\,min({max_hw}\,ih)\,-2)' "
-      )
-    qscale_arg = ''
-    if file_extension == 'jpg':
-      qscale_arg = f" -qscale {jpeg_quality} "
+  #   rescale_arg = ''
+  #   if max_hw >= 0:
+  #     rescale_arg = (
+  #       f"-vf 'scale=if(gte(iw\,ih)\,min({max_hw}\,iw)\,-2):if(lt(iw\,ih)\,min({max_hw}\,ih)\,-2)' "
+  #     )
+  #   qscale_arg = ''
+  #   if file_extension == 'jpg':
+  #     qscale_arg = f" -qscale {jpeg_quality} "
 
-    zfill = int(math.log10(video_meta.n_frames)) + 1
+  #   zfill = int(math.log10(video_meta.n_frames)) + 1
 
-    FFMPEG_CMD = f"""
-      cd {dest_root} && \
-      ffmpeg \
-        -y \
-        -noautorotate \
-        -i {video_path} \
-        {rescale_arg} \
-        -vsync 0 \
-        {qscale_arg} \
-          DiskCachedFramesVideoSegmentFactory_frame_%0{zfill}d.{file_extension}
-    """
-    oputil.run_cmd(FFMPEG_CMD)
+  #   FFMPEG_CMD = f"""
+  #     cd {dest_root} && \
+  #     ffmpeg \
+  #       -y \
+  #       -noautorotate \
+  #       -vframes {video_meta.n_frames} \
+  #       -i {video_path} \
+  #       {rescale_arg} \
+  #       -vsync 0 \
+  #       {qscale_arg} \
+  #         DiskCachedFramesVideoSegmentFactory_frame_%0{zfill}d.{file_extension}
+  #   """
+  #   oputil.run_cmd(FFMPEG_CMD)
 
-    paths = sorted(
-      Path(p)
-      for p in oputil.all_files_recursive(
-        dest_root, 
-        pattern='DiskCachedFramesVideoSegmentFactory_frame_*'))
-    return paths
+  #   paths = sorted(
+  #     Path(p)
+  #     for p in oputil.all_files_recursive(
+  #       dest_root, 
+  #       pattern='DiskCachedFramesVideoSegmentFactory_frame_*'))
+  #   return paths
 
   @classmethod
   def _get_image_uris(cls):
@@ -640,7 +663,6 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
 
   @classmethod
   def _create_stamped_datum(cls, uri):
-
     assert cls.EXPLODED_FRAME_PATHS, \
       (f"User must call explode_frames() before realizing a "
        f"StampedDatumTable, {cls} {cls.VIDEO_METADATA}")
@@ -650,17 +672,22 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     frame_path = cls.EXPLODED_FRAME_PATHS[frame_idx]
 
     assert Path(frame_path).exists()
-    extra = dict(extra)
-    extra['DiskCachedFramesVideoSegmentFactory.frame_path'] = frame_path
+    extra = dict(uri.extra)
+    extra['DiskCachedFramesVideoSegmentFactory.frame_path'] = str(frame_path)
 
-    image_factory = \
-      lambda: DiskCachedFramesVideoSegmentFactory_load_image(frame_path)
+    image_factory = (
+      lambda: DiskCachedFramesVideoSegmentFactory_load_image(frame_path))
     
     vm = cls.VIDEO_METADATA
+    w, h = vm.width, vm.height
+    if cls.EXPLODE_PARAMS.max_hw >= 0:
+      if w > cls.EXPLODE_PARAMS.max_hw or h > cls.EXPLODE_PARAMS.max_hw:
+        w, h = get_image_wh(frame_path)
+    
     ci = datum.CameraImage.create_world_frame_ci(
           sensor_name=uri.topic,
-          width=vm.width,
-          height=vm.height,
+          width=w,
+          height=h,
           timestamp=uri.timestamp,
           image_factory=image_factory,
           extra=extra)
@@ -828,27 +855,8 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
   @classmethod
   def create_stamped_datum(cls, uri):
     img_path = Path(uri.extra['AdhocImagePathsSDTFactory.image_path'])
-    if img_path.suffix.lower() in ('.jpg', '.jpeg'):
-      from oarphpy import util as oputil
-      try:
-        with open(img_path, 'rb') as f:
-          w, h = oputil.get_jpeg_size(f.read(1024))
-      except ValueError:
-        # Read entire image as fallback (slow)
-        from PIL import Image
-        Image.MAX_IMAGE_PIXELS = 1e12
-
-        import imageio
-        w, h = imageio.imread(img_path).shape[:2]
-
-    elif img_path.suffix.lower() == '.png':
-      from psegs.util import misc
-      with open(img_path, 'rb') as f:
-        w, h = misc.get_png_wh(f.read(1024))
-    else:
-      import imageio
-      w, h = imageio.imread(img_path).shape[:2]
-
+    w, h = get_image_wh(img_path)
+    
     ci = datum.CameraImage.create_world_frame_ci(
           sensor_name=uri.topic,
           width=w,

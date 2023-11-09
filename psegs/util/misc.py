@@ -114,6 +114,37 @@ def get_png_wh(png_bytes):
   w, h = struct.unpack(">LL", head[16:24])
   return int(w), int(h)
 
+def get_image_wh(path):
+  lpath = str(path).lower()
+  w, h = None, None
+  if lpath.endswith('.jpg') or lpath.endswith('.jpeg'):
+    from oarphpy import util as oputil
+    try:
+      with open(path, 'rb') as f:
+        w, h = oputil.get_jpeg_size(f.read(1024))
+    except ValueError:
+      # Read entire image as fallback (slow)
+      from PIL import Image
+      orig_max_pixels = Image.MAX_IMAGE_PIXELS
+      Image.MAX_IMAGE_PIXELS = 1e12
+
+      import imageio
+      w, h = imageio.imread(path).shape[:2]
+
+      Image.MAX_IMAGE_PIXELS = orig_max_pixels
+
+  elif lpath.endswith('.png'):
+    with open(path, 'rb') as f:
+      w, h = get_png_wh(f.read(1024))
+  
+  # TODO raw image support?
+
+  else:
+    import imageio
+    w, h = imageio.imread(path).shape[:2]
+  
+  return w, h
+
 
 def diff_of_pprint(v1, v2):
   """Return a human-readable diff string of the diff of `v1` and `v2`"""

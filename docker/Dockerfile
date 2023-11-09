@@ -45,6 +45,13 @@ RUN \
 # # ENV LD_LIBRARY_PATH ${LD_LIBRARY_PATH}:/usr/local/cuda-11.1/targets/x86_64-linux/lib/
 # RUN python3 -c ''
 
+# PSegs extras
+RUN \
+  --mount=type=cache,target=/var/cache/apt \
+  apt-get install -y \
+    ffmpeg
+
+
 # pycolmap and pycolmap: TODO use a wheel
 ## COLMAP
 RUN \

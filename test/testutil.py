@@ -22,6 +22,7 @@ from oarphpy.spark import SessionFactory
 import psegs
 from psegs import util
 from psegs.spark import Spark
+from psegs.cache import LocalDiskCache
 
 # FIXME put in mount!
 # PS_TEST_TEMPDIR_ROOT = os.path.join(tempfile.gettempdir(), 'psegs_test')
@@ -150,3 +151,26 @@ def check_stamped_datum_dfs_equal(
 def test_fixtures_dir():
   # Path to fixtures *included* with PSegs
   return Path(__file__).parent / 'fixtures'
+
+
+class PSegsTestLocalDiskCache(LocalDiskCache):
+  """A `LocalDiskCache` that uses a test-defined root dir"""
+
+  TEST_ROOT = Path('/tmp')
+
+  @classmethod
+  def cache_cls_for_testroot(cls, testroot):
+    class MyTestLocalDiskCache(cls):
+      TEST_ROOT = testroot
+    return MyTestLocalDiskCache
+
+
+  def new_filepath(self, fname, t=None):
+    dest = self.TEST_ROOT / 'psegs_local_disk_cache' / 'adhoc_files' / fname
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    return dest
+
+  def new_dirpath(self, dirpath, t=None):
+    dest = self.TEST_ROOT / 'psegs_local_disk_cache' / 'adhoc_dirs' / dirpath
+    dest.mkdir(parents=True, exist_ok=True)
+    return dest
