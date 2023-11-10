@@ -97,6 +97,9 @@ def test_DiskCachedFramesVideoSegmentFactory_create_factory_for_video():
   IMAGE_CACHE_DIR = testutil.test_tempdir(
         'test_DiskCachedFramesVideoSegmentFactory_images')
 
+  TEST_IMG_CACHE_CLS = testutil.PSegsTestLocalDiskCache.cache_cls_for_testroot(
+                    IMAGE_CACHE_DIR)
+
   FIXTURE_PQ = (testutil.test_fixtures_dir() / 
     'test_DiskCachedFramesVideoSegmentFactory_create_factory_for_video.parquet')
 
@@ -127,7 +130,8 @@ def test_DiskCachedFramesVideoSegmentFactory_create_factory_for_video():
   ## Test!
   F = ap.DiskCachedFramesVideoSegmentFactory.create_factory_for_video(
             VID_PATH,
-            cls_cache_dir=CLS_CACHE_TEST_DIR)
+            cls_cache_dir=CLS_CACHE_TEST_DIR,
+            img_cache_cls=TEST_IMG_CACHE_CLS)
 
   expected_base_uri = datum.URI(
                     dataset='anon',
@@ -157,11 +161,8 @@ def test_DiskCachedFramesVideoSegmentFactory_create_factory_for_video():
             cls_cache_dir=CLS_CACHE_TEST_DIR)
   
 
-  # Test explode
-  img_cache_cls = testutil.PSegsTestLocalDiskCache.cache_cls_for_testroot(
-                    IMAGE_CACHE_DIR)
-  
-  EF = F.explode_frames(img_cache_cls=img_cache_cls)
+  # Test explode 
+  EF = F.explode_frames()
 
   assert EF.EXPLODED_FRAME_PATHS is not None
   assert len(EF.EXPLODED_FRAME_PATHS) == EXPECTED_NUM_FRAMES
@@ -224,6 +225,9 @@ def test_DiskCachedFramesVideoSegmentFactory_resized_create_factory_for_video():
   IMAGE_CACHE_DIR = testutil.test_tempdir(
         'test_DiskCachedFramesVideoSegmentFactory_images_resized')
 
+  TEST_IMG_CACHE_CLS = testutil.PSegsTestLocalDiskCache.cache_cls_for_testroot(
+                    IMAGE_CACHE_DIR)
+
   # Create a test video borrowing the COLMAP test images
   IMAGES_DIR = testutil.test_fixtures_dir() / 'test_colmap' / 'images'
   VID_DIR = testutil.test_tempdir(
@@ -246,7 +250,8 @@ def test_DiskCachedFramesVideoSegmentFactory_resized_create_factory_for_video():
             explode_params=VideoExplodeParams(
               max_hw=300,
               image_file_extension='jpg'),
-            cls_cache_dir=CLS_CACHE_TEST_DIR)
+            cls_cache_dir=CLS_CACHE_TEST_DIR,
+            img_cache_cls=TEST_IMG_CACHE_CLS)
 
   expected_base_uri = datum.URI(
                     dataset='anon',
@@ -260,10 +265,7 @@ def test_DiskCachedFramesVideoSegmentFactory_resized_create_factory_for_video():
   assert F.VIDEO_METADATA.width == 320
 
   # Test explode
-  img_cache_cls = testutil.PSegsTestLocalDiskCache.cache_cls_for_testroot(
-                    IMAGE_CACHE_DIR)
-  
-  EF = F.explode_frames(img_cache_cls=img_cache_cls)
+  EF = F.explode_frames()
 
   assert EF.EXPLODED_FRAME_PATHS is not None
   assert len(EF.EXPLODED_FRAME_PATHS) == EXPECTED_NUM_FRAMES

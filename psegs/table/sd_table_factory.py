@@ -33,7 +33,6 @@ class StampedDatumTableFactory(object):
 
   @classmethod
   def get_segment_sd_table(cls, segment_uri=None, segment_uris=None, spark=None):
-    # TODO get sd table for segments...
     from psegs.spark import Spark
 
     if segment_uri is not None:

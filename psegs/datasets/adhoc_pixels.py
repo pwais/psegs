@@ -376,6 +376,8 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
 
   IMAGE_CACHE_CLS = None
 
+  AUTO_EXPLODE = True
+
   @classmethod
   def _maybe_load_F(cls, uri, cls_cache_dir=None):
     F_path = cls._cached_cls_path_for_uri(uri, cls_cache_dir=cls_cache_dir)
@@ -411,9 +413,11 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
         video_uri,
         base_uri=None,
         explode_params=None,
+        auto_explode=True,
         start_timestamp_lstat_attr='st_mtime',
         start_time_nanostamp=None,
         cls_cache_dir=None,
+        img_cache_cls=None,
         force_recompute_cls=False,
         do_cache_factory=True):
     """Create and return a `StampedDatumTableFactory` class instance for the
@@ -457,11 +461,15 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     if start_time_nanostamp is not None:
       video_meta.start_time_nanostamp = start_time_nanostamp
     
+    img_cache_cls = img_cache_cls or cls.DEFAULT_IMAGE_CACHE_CLS
+
     class MyVideoSDTFactory(cls):
       BASE_URI = cls_base_uri
       VIDEO_METADATA = video_meta
       CLS_CACHE_DIR = cls_cache_dir
       EXPLODE_PARAMS = explode_params
+      IMAGE_CACHE_CLS = img_cache_cls
+      AUTO_EXPLODE = auto_explode
 
     if do_cache_factory:
       util.log.info(
@@ -481,7 +489,6 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
   def explode_frames(
         cls,
         force_recompute=False,
-        img_cache_cls=None,
         do_cache_factory=True,
         img_cache_now_time=None):
     
@@ -489,10 +496,8 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
       util.log.info(f"Factory {str(cls.BASE_URI)} already has "
                     f"{len(cls.EXPLODED_FRAME_PATHS)} exploded frames.")
       return cls
-  
-    img_cache_cls = img_cache_cls or cls.DEFAULT_IMAGE_CACHE_CLS
-    
-    img_cache = img_cache_cls()
+      
+    img_cache = cls.IMAGE_CACHE_CLS()
     cache_dirkey = str(
       Path('DiskCachedFramesVideoSegmentFactory_root') / 
       cls._uri_dirkey_for_uri(cls.BASE_URI)
@@ -509,7 +514,6 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
 
     class MyExplodedVideoSDTFactory(cls):
       EXPLODED_FRAME_PATHS = exploded_frame_paths
-      IMAGE_CACHE_CLS = img_cache_cls
     
     if do_cache_factory:
       util.log.info(
@@ -545,6 +549,19 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
               for suri in only_segments)
       if not has_match:
         return []
+
+    if cls.AUTO_EXPLODE and not cls.EXPLODED_FRAME_PATHS:
+      util.log.info(
+        f"Auto-exploding cached images for {cls.__name__}"
+        f" for {str(cls.BASE_URI)} ...")
+      EF = cls.explode_frames()
+      util.log.info("... done auto-exploding!")
+      
+      return EF._create_datum_rdds(
+        spark,
+        existing_uri_df=existing_uri_df,
+        only_segments=only_segments)
+
 
     # Generate URIs ...
     uris = cls._get_image_uris()

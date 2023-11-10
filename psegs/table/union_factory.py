@@ -33,36 +33,57 @@ class UnionFactory(StampedDatumTableFactory):
   def get_all_segment_uris(cls):
     iseg_uris = itertools.chain.from_iterable(
         F.get_all_segment_uris() for F in cls.SDT_FACTORIES)
-    return sorted(iseg_uris)
+    distinct_set_uris = set(str(suri) for suri in iseg_uris)
+    return sorted(datum.URI.from_str(s) for s in distinct_set_uris)
 
   @classmethod
   def get_segment_sd_table(cls, segment_uri, spark=None):
-    F = cls._get_factory_for_seg_uri(segment_uri)
-    # TODO needs to be plural factories?
-    return F.get_segment_sd_table(segment_uri=segment_uri, spark=spark)
+    from psegs.spark import Spark
+
+    Fs = cls._get_factory_for_seg_uri(segment_uri)
+    with Spark.sess(spark) as spark:
+      # TODO make this more flexible, for now we assume 
+      # SDTF::get_segment_sd_table() gets a datum_rdd sdt and so it's 
+      # fastest to just union those.
+      union_datum_rdd = None
+      for F in Fs:
+        sdt = F.get_segment_sd_table(segment_uri=segment_uri, spark=spark)
+        datum_rdd = sdt.to_datum_rdd()
+        if union_datum_rdd is None:
+          union_datum_rdd = datum_rdd
+        else:
+          union_datum_rdd = union_datum_rdd.union(datum_rdd)
+
+    return union_datum_rdd
 
   # @classmethod
   # def build_cache(cls, spark=None, only_segments=None, table_root=''):
   #   raise NotImplementedError # TODO
 
   @classmethod
-  def _seguri_to_factoryidx(cls):
-    if not hasattr(cls, '_seguri_to_factoryidx_cache'):
-      seguri_to_factoryidx = {}
+  def _seguri_to_factoryidxes(cls):
+    if not hasattr(cls, '_seguri_to_factoryidxes_cache'):
+      seguri_to_factoryidxes = {}
       for F_idx, F in enumerate(cls.SDT_FACTORIES):
         seg_uris = F.get_all_segment_uris()
         for seg_uri in seg_uris:
-          seguri_to_factoryidx[str(seg_uri.to_segment_uri())] = F_idx
-      cls._seguri_to_factoryidx_cache = seguri_to_factoryidx
-    return cls._seguri_to_factoryidx_cache
+          key = str(seg_uri.to_segment_uri())
+          if key not in seguri_to_factoryidxes:
+            seguri_to_factoryidxes[key] = []
+          seguri_to_factoryidxes[key].append(F_idx)
+      cls._seguri_to_factoryidxes_cache = seguri_to_factoryidxes
+    return cls._seguri_to_factoryidxes_cache
   
   @classmethod
-  def _get_factory_for_seg_uri(cls, seg_uri):
+  def _get_factories_for_seg_uri(cls, seg_uri):
     seg_uri = datum.URI.from_str(seg_uri)    
     seg_uri_key = str(seg_uri.to_segment_uri())
-    F_idx = cls._seguri_to_factoryidx().get(seg_uri_key)
-    if F_idx is None:
+    F_idxes = cls._seguri_to_factoryidxes().get(seg_uri_key)
+    if F_idxes is None:
       raise NoKnowStampedDatumTableFactory(seg_uri)
     else:
-      return cls.SDT_FACTORIES[F_idx]
+      return [
+        cls.SDT_FACTORIES[F_idx]
+        for F_idx in F_idxes
+      ]
 
