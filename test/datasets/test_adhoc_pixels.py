@@ -17,7 +17,6 @@ import datetime
 
 from psegs import datum
 from psegs.datasets import adhoc_pixels as ap
-from psegs.util.video import VideoMeta
 
 from test import testutil
 
@@ -128,7 +127,6 @@ def test_DiskCachedFramesVideoSegmentFactory_create_factory_for_video():
   ## Test!
   F = ap.DiskCachedFramesVideoSegmentFactory.create_factory_for_video(
             VID_PATH,
-            start_time_nanostamp=0,
             cls_cache_dir=CLS_CACHE_TEST_DIR)
 
   expected_base_uri = datum.URI(
@@ -184,6 +182,13 @@ def test_DiskCachedFramesVideoSegmentFactory_create_factory_for_video():
 
     sdt = F.create_sd_table(spark=spark)
     
+    sd = sdt.to_datum_rdd().first()
+    ci = sd.camera_image
+    image = ci.image
+    h, w = image.shape[:2]
+    assert h == 240
+    assert w == 320
+
     sd_df_actual = sdt.to_spark_df()
     sd_df_actual.show()
 
@@ -209,3 +214,74 @@ def test_DiskCachedFramesVideoSegmentFactory_create_factory_for_video():
       sd_df_expected_path=FIXTURE_PQ)
 
 
+def test_DiskCachedFramesVideoSegmentFactory_resized_create_factory_for_video():
+  from psegs.util.video import VideoExplodeParams
+
+  ## Setup
+
+  CLS_CACHE_TEST_DIR = testutil.test_tempdir(
+        'test_DiskCachedFramesVideoSegmentFactory_cache_resized')
+  IMAGE_CACHE_DIR = testutil.test_tempdir(
+        'test_DiskCachedFramesVideoSegmentFactory_images_resized')
+
+  # Create a test video borrowing the COLMAP test images
+  IMAGES_DIR = testutil.test_fixtures_dir() / 'test_colmap' / 'images'
+  VID_DIR = testutil.test_tempdir(
+    'test_DiskCachedFramesVideoSegmentFactory_resized_create_factory_for_video')
+  VID_PATH = VID_DIR / 'my_video.mp4'
+
+  import imageio
+  FPS = 4
+  w = imageio.get_writer(VID_PATH, fps=FPS)
+  for p in sorted(IMAGES_DIR.iterdir()):
+    im = imageio.imread(p)
+    w.append_data(im)
+  w.close()
+  EXPECTED_NUM_FRAMES = len(sorted(IMAGES_DIR.iterdir()))
+
+
+  ## Test!
+  F = ap.DiskCachedFramesVideoSegmentFactory.create_factory_for_video(
+            VID_PATH,
+            explode_params=VideoExplodeParams(
+              max_hw=300,
+              image_file_extension='jpg'),
+            cls_cache_dir=CLS_CACHE_TEST_DIR)
+
+  expected_base_uri = datum.URI(
+                    dataset='anon',
+                    split='anon',
+                    segment_id='my_video.mp4_86e7a426d9',
+                    topic='video_camera|max_hw_300|ext_jpg')
+  assert F.BASE_URI == expected_base_uri
+
+  assert F.VIDEO_METADATA.video_uri == VID_PATH
+  assert F.VIDEO_METADATA.height == 240
+  assert F.VIDEO_METADATA.width == 320
+
+  # Test explode
+  img_cache_cls = testutil.PSegsTestLocalDiskCache.cache_cls_for_testroot(
+                    IMAGE_CACHE_DIR)
+  
+  EF = F.explode_frames(img_cache_cls=img_cache_cls)
+
+  assert EF.EXPLODED_FRAME_PATHS is not None
+  assert len(EF.EXPLODED_FRAME_PATHS) == EXPECTED_NUM_FRAMES
+
+  with testutil.LocalSpark.sess() as spark:
+    sdt = EF.create_sd_table(spark=spark)
+    
+    sd_df_actual = sdt.to_spark_df()
+    sd_df_actual.show()
+
+    hw_sdf = sd_df_actual.select(['camera_image.height', 'camera_image.width'])
+    hw_pdf = hw_sdf.toPandas()
+    assert all(hw_pdf['height'] == 226)
+    assert all(hw_pdf['width'] == 300)
+
+    sd = sdt.to_datum_rdd().first()
+    ci = sd.camera_image
+    image = ci.image
+    h, w = image.shape[:2]
+    assert h == 226
+    assert w == 300

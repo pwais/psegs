@@ -429,7 +429,6 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
 
     If `start_timestamp_use` is an integer, we'll use that nanostamp
     offset instead.
-
     """
   
     cls_base_uri = base_uri or copy.deepcopy(cls.DEFAULT_BASE_URI)
@@ -443,13 +442,14 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
       cls_base_uri.topic = 'video_camera'
     cls_base_uri.topic = cls_base_uri.topic + topic_suffix    
     
-    cls_base_uri.segment_id = cls._default_segment_id_for_video_uri(video_uri)
+    if not cls_base_uri.segment_id:
+      cls_base_uri.segment_id = cls._default_segment_id_for_video_uri(video_uri)
 
     if not force_recompute_cls:
       F = cls._maybe_load_F(cls_base_uri, cls_cache_dir=cls_cache_dir)
       if F is not None:
         util.log.info(
-          f"Using cached {F.__class__.__name__} for {str(cls_base_uri)}")
+          f"Using cached {F.__name__} for {str(cls_base_uri)}")
         return F
 
     video_meta = VideoMeta.create_for_video(
@@ -464,6 +464,8 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
       EXPLODE_PARAMS = explode_params
 
     if do_cache_factory:
+      util.log.info(
+        f"Saving cached {cls.__name__} for {str(cls_base_uri)}")
       cls._save_F(MyVideoSDTFactory)
 
     return MyVideoSDTFactory
@@ -510,6 +512,9 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
       IMAGE_CACHE_CLS = img_cache_cls
     
     if do_cache_factory:
+      util.log.info(
+        f"Saving updated cached {MyExplodedVideoSDTFactory.__name__}"
+        f" for {str(MyExplodedVideoSDTFactory.BASE_URI)}")
       MyExplodedVideoSDTFactory._save_F(MyExplodedVideoSDTFactory)
 
     return MyExplodedVideoSDTFactory
@@ -526,7 +531,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
 
   @classmethod
   def _get_all_segment_uris(cls):
-    return [cls._get_segment_uri()]
+    return [cls.get_segment_uri()]
 
   @classmethod
   def _create_datum_rdds(cls, spark, existing_uri_df=None, only_segments=None):
@@ -580,6 +585,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
       
     cls_cache_dir = Path(cls_cache_dir)
     
+    util.log.info(f"{cls.__name__} using cls_cache_dir {cls_cache_dir} ...")
     cls_cached_path = (
       cls_cache_dir / 
       cls._uri_dirkey_for_uri(uri) /
@@ -654,7 +660,8 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     vm = cls.VIDEO_METADATA
     uris = []
     for i in range(vm.n_frames):
-      t = int(vm.start_time_nanostamp + i * (1e9 / vm.frames_per_second))
+      t = int(
+        vm.start_time_nanostamp + i * (1e9 / float(vm.frames_per_second)))
       uri = base_uri.replaced(timestamp=t)
       uri.extra.update(cls._get_uri_extra())
       uri.extra['DiskCachedFramesVideoSegmentFactory.frame_index'] = str(i)

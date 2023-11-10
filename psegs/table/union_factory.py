@@ -38,6 +38,7 @@ class UnionFactory(StampedDatumTableFactory):
   @classmethod
   def get_segment_sd_table(cls, segment_uri, spark=None):
     F = cls._get_factory_for_seg_uri(segment_uri)
+    # TODO needs to be plural factories?
     return F.get_segment_sd_table(segment_uri=segment_uri, spark=spark)
 
   # @classmethod
