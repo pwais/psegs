@@ -452,7 +452,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     if not force_recompute_cls:
       F = cls._maybe_load_F(cls_base_uri, cls_cache_dir=cls_cache_dir)
       if F is not None:
-        util.log.info(
+        util.log.debug(
           f"Using cached {F.__name__} for {str(cls_base_uri)}")
         return F
 
@@ -493,7 +493,8 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
         img_cache_now_time=None):
     
     if cls.EXPLODED_FRAME_PATHS and not force_recompute:
-      util.log.info(f"Factory {str(cls.BASE_URI)} already has "
+      util.log.debug(
+        f"Factory \n{str(cls.BASE_URI)}\n already has "
                     f"{len(cls.EXPLODED_FRAME_PATHS)} exploded frames.")
       return cls
       
@@ -505,7 +506,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     dest_root = img_cache.new_dirpath(cache_dirkey, t=img_cache_now_time)
 
     util.log.info(
-      f"Factory {str(cls.BASE_URI)} exploding frames to {dest_root} ...")
+      f"Factory \n{str(cls.BASE_URI)}\n exploding frames to \n{dest_root} ...")
     exploded_frame_paths = ffmpeg_explode(
                               cls.EXPLODE_PARAMS,
                               cls.VIDEO_METADATA.video_uri,
@@ -602,7 +603,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
       
     cls_cache_dir = Path(cls_cache_dir)
     
-    util.log.info(f"{cls.__name__} using cls_cache_dir {cls_cache_dir} ...")
+    util.log.debug(f"{cls.__name__} using cls_cache_dir {cls_cache_dir} ...")
     cls_cached_path = (
       cls_cache_dir / 
       cls._uri_dirkey_for_uri(uri) /

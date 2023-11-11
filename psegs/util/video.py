@@ -160,7 +160,7 @@ def ffmpeg_explode(params, video_uri, dest_root):
   FFMPEG_CMD = f"""
     cd "{dest_root}" && \
     ffmpeg \
-      -y \
+      -y -v quiet -stats \
       -noautorotate \
       -i {video_path} \
       {vframes_arg} \

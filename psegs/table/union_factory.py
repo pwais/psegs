@@ -40,7 +40,7 @@ class UnionFactory(StampedDatumTableFactory):
   def get_segment_sd_table(cls, segment_uri, spark=None):
     from psegs.spark import Spark
 
-    Fs = cls._get_factory_for_seg_uri(segment_uri)
+    Fs = cls._get_factories_for_seg_uri(segment_uri)
     with Spark.sess(spark) as spark:
       # TODO make this more flexible, for now we assume 
       # SDTF::get_segment_sd_table() gets a datum_rdd sdt and so it's 
@@ -76,11 +76,11 @@ class UnionFactory(StampedDatumTableFactory):
   
   @classmethod
   def _get_factories_for_seg_uri(cls, seg_uri):
-    seg_uri = datum.URI.from_str(seg_uri)    
+    seg_uri = datum.URI.from_str(seg_uri)
     seg_uri_key = str(seg_uri.to_segment_uri())
     F_idxes = cls._seguri_to_factoryidxes().get(seg_uri_key)
     if F_idxes is None:
-      raise NoKnowStampedDatumTableFactory(seg_uri)
+      raise NoKnowStampedDatumTableFactory(str(seg_uri))
     else:
       return [
         cls.SDT_FACTORIES[F_idx]

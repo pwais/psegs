@@ -277,7 +277,7 @@ class URI(object):
     Returns:
       URI: The constructed instance
     """
-      
+
     if isinstance(s, cls) or not bool(s):
       return s
 
