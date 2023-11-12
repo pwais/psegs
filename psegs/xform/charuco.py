@@ -1,4 +1,4 @@
-# Copyright 2022 Maintainers of PSegs
+# Copyright 2023 Maintainers of PSegs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,13 +23,13 @@ import numpy as np
 
 from psegs import util
 
-
-"""
-
-
-requires opencv-contrib-python==4.5.5.62
-
-"""
+# def from_cv2_import_aruco():
+#   try:
+#     from cv2 import aruco
+#     return aruco
+#   except ImportError as e:
+#     raise ValueError(
+#       f"This feature requires opencv-contrib-python>=4.5.5.62, error: {e}")
 
 @attr.s()
 class CharucoBoard(object):
@@ -38,13 +38,22 @@ class CharucoBoard(object):
   rows = attr.ib(default=8, type='int')
   square_length_meters = attr.ib(default=0.022, type='float')
   marker_length_meters = attr.ib(default=0.017, type='float')
+  
+  # Important!!
+  # https://github.com/opencv/opencv/issues/23873#issuecomment-1620504453
+  is_legacy_pattern = attr.ib(default=True, type='bool')
+
   # dict_key = attr.ib(default='DICT_5X5_1000', type='str')
   # cols = attr.ib(default=4, type='int')
   # rows = attr.ib(default=4, type='int')
   # square_length_meters = attr.ib(default=0.040, type='float')
   # marker_length_meters = attr.ib(default=0.031, type='float')
 
+
+
+
   def create_aruco_dict(self):
+    # aruco = from_cv2_import_aruco()
     from cv2 import aruco
 
     # TODO perhaps support custom_dictionary()
@@ -54,18 +63,31 @@ class CharucoBoard(object):
       raise ValueError(
         f"Requested {self.dict_key} but only support {valid_flags}")
 
-    aruco_dict = aruco.Dictionary_get(flag)
+    try:
+      aruco_dict = aruco.Dictionary_get(flag)
+    except AttributeError:
+      aruco_dict = aruco.getPredefinedDictionary(flag)
     return aruco_dict
 
   def create_board_and_dict(self):
+    # aruco = from_cv2_import_aruco()
     from cv2 import aruco
+    
     aruco_dict = self.create_aruco_dict()
-    board = aruco.CharucoBoard_create(
+
+    if hasattr(aruco, 'CharucoBoard_create'):
+      board = aruco.CharucoBoard_create(
               squaresX=self.cols,
               squaresY=self.rows,
               squareLength=self.square_length_meters,
               markerLength=self.marker_length_meters,
               dictionary=aruco_dict)
+    else:
+      board = aruco.CharucoBoard(
+        (self.cols, self.rows),
+        squareLength=self.square_length_meters,
+        markerLength=self.marker_length_meters,
+        dictionary=aruco_dict)
     return board, aruco_dict
 
   def create_board_image(self, height_pixels=2000, width_pixels=1000):
@@ -73,7 +95,7 @@ class CharucoBoard(object):
     img = board.draw((width_pixels, height_pixels))
     return img
 
-  def detect_board(self, img_gray, K=None, dist_coeffs=None, refine=False):
+  def detect_board_legacy(self, img_gray, K=None, dist_coeffs=None, refine=False):
     """
     TODO
     refine - Tutorials says do not use when detecting Charuco boards because
@@ -81,16 +103,29 @@ class CharucoBoard(object):
       feature for detecting markers in the wild.
       https://docs.opencv.org/3.4/df/d4a/tutorial_charuco_detection.html
     """
+    # aruco = from_cv2_import_aruco()
+    # import cv2
     from cv2 import aruco
+
+    # from packaging import version
+    # assert version.parse(cv2.__version__) >= version.parse('4.8.1'), (
+    #   "Required cv2 version >= 4.8.1 b/c the aruco impl has changed "
+    #   "dramatically")
+     
     
     board, aruco_dict = self.create_board_and_dict()
 
-    aruco_params = aruco.DetectorParameters_create()
-    arucoCorners, arucoIds, rejectedImgPoints = aruco.detectMarkers(
-                                        img_gray,
-                                        aruco_dict,
-                                        parameters=aruco_params)
-    
+    if hasattr(aruco, 'CharucoDetector'):
+      detector = aruco.CharucoDetector(board)
+      idk1, idk2, arucoCorners, arucoIds = detector.detectBoard(img_gray)
+    else:
+      aruco_params = aruco.DetectorParameters_create()
+      arucoCorners, arucoIds, rejectedImgPoints = aruco.detectMarkers(
+                                          img_gray,
+                                          aruco_dict,
+                                          parameters=aruco_params)
+
+      
     # if refine:
     #   ret = aruco.refineDetectedMarkers(
     #             img_gray,
@@ -104,6 +139,35 @@ class CharucoBoard(object):
       print('FIXME no detections')
       return None
 
+    """
+    cv::VideoCapture inputVideo;
+    inputVideo.open(0);
+    cv::Mat cameraMatrix, distCoeffs;
+    // You can read camera parameters from tutorial_camera_params.yml
+    readCameraParameters(filename, cameraMatrix, distCoeffs);  // This function is implemented in aruco_samples_utility.hpp
+    cv::aruco::Dictionary dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
+    // To use tutorial sample, you need read custom dictionaty from tutorial_dict.yml
+    readDictionary(filename, dictionary); // This function is implemented in opencv/modules/objdetect/src/aruco/aruco_dictionary.cpp
+    cv::Ptr<cv::aruco::GridBoard> board = cv::aruco::GridBoard::create(5, 7, 0.04, 0.01, dictionary);
+    cv::aruco::DetectorParameters detectorParams = cv::aruco::DetectorParameters();
+    cv::aruco::ArucoDetector detector(dictionary, detectorParams);
+    
+
+
+    import cv2
+    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_1000)
+    aruco_board = cv2.aruco.CharucoBoard((11, 8), 0.022, 0.017, dictionary=aruco_dict)
+    detector_params = cv2.aruco.DetectorParameters()
+    charuco_params = cv2.aruco.CharucoParameters()
+    charuco_params.tryRefineMarkers = True
+    refine_params = cv2.aruco.RefineParameters()
+    detector = cv2.aruco.CharucoDetector(board=aruco_board, charucoParams=charuco_params, detectorParams=detector_params, refineParams=refine_params)
+    
+    ret = detector.detectBoard(img)
+
+    """
+
+    breakpoint()
     ret = aruco.interpolateCornersCharuco(
             arucoCorners,
             arucoIds,
@@ -313,6 +377,107 @@ class CharucoBoard(object):
     # print()
     #return rvecss, tvecss, debugs_est, cameraMatrix
     return cal_rvecs, cal_tvecs, debugs_est, cameraMatrix
+
+
+def check_opencv():
+  import cv2
+
+  from packaging import version
+  assert version.parse(cv2.__version__) >= version.parse('4.8.1'), (
+    "Required cv2 version >= 4.8.1 b/c the aruco impl has changed "
+    "dramatically between versions; aruco was moved from opencv-contrib "
+    "to mainly opencv objdetect and board patterns changed. See e.g. "
+    "https://github.com/opencv/opencv/blob/9b97c97bd1a4726f84679618a586e7a6cc8b0909/modules/objdetect/misc/python/test/test_objdetect_aruco.py#L189 "
+    "and "
+    "https://github.com/opencv/opencv/issues/23873#issuecomment-1620504453")
+
+def detect_charuco_board(
+      board_params: CharucoBoard,
+      img: np.ndarray) -> 'Any':
+  
+  check_opencv()
+
+  import cv2
+  import cv2.aruco
+
+  if hasattr(cv2.aruco, board_params.dict_key):
+    dict_key = getattr(cv2.aruco, board_params.dict_key)
+  else:
+    valid_flags = sorted(k for k in dir(cv2.aruco) if k.startswith('DICT_'))
+    raise ValueError(
+      f"Requested {board_params.dict_key} but only support {valid_flags}")
+
+  aruco_dict = cv2.aruco.getPredefinedDictionary(dict_key)
+  aruco_board = cv2.aruco.CharucoBoard(
+                    (board_params.cols, board_params.rows), 
+                    board_params.square_length_meters, 
+                    board_params.marker_length_meters, 
+                    dictionary=aruco_dict)
+  
+  # https://github.com/opencv/opencv/issues/23873#issuecomment-1620504453
+  aruco_board.setLegacyPattern(board_params.is_legacy_pattern)
+  
+  detector_params = cv2.aruco.DetectorParameters()
+  charuco_params = cv2.aruco.CharucoParameters()
+  charuco_params.tryRefineMarkers = True
+  refine_params = cv2.aruco.RefineParameters()
+  
+  marker_detector = cv2.aruco.ArucoDetector(
+    dictionary=aruco_dict,
+    detectorParams=detector_params,
+    refineParams=refine_params)
+
+  md_ret = marker_detector.detectMarkers(img)
+  markerCorners, markerIds, rejectedImgPoints = md_ret
+  debug_marker_detections = cv2.aruco.drawDetectedMarkers(
+                              img.copy(), corners=markerCorners, ids=markerIds)
+  
+  cv2.imwrite('/opt/psegs/debug_marker_detections.png', debug_marker_detections)
+
+  debug_marker_rejections = cv2.aruco.drawDetectedMarkers(
+                                img.copy(), corners=rejectedImgPoints)
+
+  cv2.imwrite('/opt/psegs/debug_marker_rejections.png', debug_marker_rejections)
+
+  board_detector = cv2.aruco.CharucoDetector(
+    board=aruco_board,
+    charucoParams=charuco_params)
+    # detectorParams=detector_params,
+    # refineParams=refine_params)
+  
+  debug_board_image = aruco_board.generateImage((board_params.cols*50, board_params.rows*50), marginSize=10)
+  cv2.imwrite('/opt/psegs/debug_board_image.png', debug_board_image)
+
+  bdet_ret = board_detector.detectBoard(img)
+  charucoCorners, charucoIds, bdet_markerCorners, bdet_markerIds = bdet_ret
+
+  debug_board_detections = cv2.aruco.drawDetectedCornersCharuco(
+    img.copy(), charucoCorners, charucoIds=charucoIds)
+  cv2.imwrite('/opt/psegs/debug_board_detections.png', debug_board_detections)
+
+  breakpoint()
+  print()
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 """
 w, h 5312 2988

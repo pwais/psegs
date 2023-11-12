@@ -9,10 +9,13 @@ RUN chmod a+rwx /etc/bash.bashrc
 
 RUN \
   --mount=type=cache,target=/var/cache/apt \
+  --mount=type=cache,target=/root/.cache/pip \
   apt-get update && \
   apt-get install -y \
     git \
-    wget
+    wget \
+  && \
+  pip3 install --upgrade pip
 
 # # Pytorch3d
 # RUN \
@@ -48,14 +51,15 @@ RUN \
 # PSegs extras
 RUN \
   --mount=type=cache,target=/var/cache/apt \
+  apt-get update && \
   apt-get install -y \
     ffmpeg
-
 
 # pycolmap and pycolmap: TODO use a wheel
 ## COLMAP
 RUN \
   --mount=type=cache,target=/var/cache/apt \
+  apt-get update && \
   apt-get install -y \
     git \
     cmake \
@@ -98,11 +102,22 @@ RUN \
   sed -i -e "s/cfg = 'Debug'/cfg = 'RelWithDebInfo' # /g" setup.py && \
   pip3 install -v -e .
 
+# FIXME when upgrading base image
+RUN \
+  --mount=type=cache,target=/root/.cache/pip \
+  sudo apt remove -y python3-blinker && \
+  pip3 install "blinker>=1.7.0"
+
 COPY requirements.txt /tmp/requirements.txt
 RUN \
   --mount=type=cache,target=/root/.cache/pip \
   pip3 install -r /tmp/requirements.txt && \
   rm /tmp/requirements.txt
+
+# RUN \
+#   --mount=type=cache,target=/root/.cache/pip \
+#   pip3 install \
+#     "opencv-contrib-python>=4.5.5.62"
 
 RUN mkdir -p /opt/psegs
 COPY . /opt/psegs
