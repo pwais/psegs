@@ -17,6 +17,8 @@
 ##  * https://github.com/opencv/opencv_contrib/tree/a26f71313009c93d105151094436eecd4a0990ed/modules/aruco/misc/pattern_generator 
 ##  * https://calib.io/pages/camera-calibration-pattern-generator 
 
+from typing import List
+
 from cmath import isfinite
 import attr
 import numpy as np
@@ -379,7 +381,10 @@ class CharucoBoard(object):
     return cal_rvecs, cal_tvecs, debugs_est, cameraMatrix
 
 
-def check_opencv():
+
+
+
+def check_opencv_version_for_aruco():
   import cv2
 
   from packaging import version
@@ -391,11 +396,35 @@ def check_opencv():
     "and "
     "https://github.com/opencv/opencv/issues/23873#issuecomment-1620504453")
 
+@attr.s(slots=True)
+class CharucoDetections(object):
+
+  aruco_marker_corners = attr.ib(default=None, type=List[np.ndarray])
+  aruco_marker_ids = attr.ib(default=None, type=np.ndarray)
+  aruco_rejected_image_points = attr.ib(default=None, type=np.ndarray)
+
+  charuco_corners = attr.ib(default=None, type=List[np.ndarray])
+  charuco_ids = attr.ib(default=None, type=np.ndarray)
+
+  # These are usually identical to `aruco_marker_corners`
+  charuco_marker_corners = attr.ib(default=None, type=List[np.ndarray])
+  charuco_marker_ids = attr.ib(default=None, type=np.ndarray)
+
+  debug_marker_detections = attr.ib(default=None, type=np.ndarray)
+  debug_marker_rejections = attr.ib(default=None, type=np.ndarray)
+  debug_board_image = attr.ib(default=None, type=np.ndarray)
+  debug_board_detections = attr.ib(default=None, type=np.ndarray)
+
+
 def detect_charuco_board(
-      board_params: CharucoBoard,
-      img: np.ndarray) -> 'Any':
+      board_params,
+      img_gray,
+      try_refine_markers=True,
+      create_marker_debug_images=True,
+      create_board_image=True,
+      create_board_detections_debug_images=True):
   
-  check_opencv()
+  check_opencv_version_for_aruco()
 
   import cv2
   import cv2.aruco
@@ -419,44 +448,62 @@ def detect_charuco_board(
   
   detector_params = cv2.aruco.DetectorParameters()
   charuco_params = cv2.aruco.CharucoParameters()
-  charuco_params.tryRefineMarkers = True
   refine_params = cv2.aruco.RefineParameters()
+
+  # Often does nothing but we include it as an option
+  charuco_params.tryRefineMarkers = try_refine_markers
   
   marker_detector = cv2.aruco.ArucoDetector(
     dictionary=aruco_dict,
     detectorParams=detector_params,
     refineParams=refine_params)
 
-  md_ret = marker_detector.detectMarkers(img)
+  md_ret = marker_detector.detectMarkers(img_gray)
   markerCorners, markerIds, rejectedImgPoints = md_ret
-  debug_marker_detections = cv2.aruco.drawDetectedMarkers(
-                              img.copy(), corners=markerCorners, ids=markerIds)
-  
-  cv2.imwrite('/opt/psegs/debug_marker_detections.png', debug_marker_detections)
+  debug_marker_detections = None
+  debug_marker_rejections = None
+  if create_marker_debug_images:
+    debug_marker_detections = cv2.aruco.drawDetectedMarkers(
+                              img_gray.copy(), corners=markerCorners, ids=markerIds)
 
-  debug_marker_rejections = cv2.aruco.drawDetectedMarkers(
-                                img.copy(), corners=rejectedImgPoints)
-
-  cv2.imwrite('/opt/psegs/debug_marker_rejections.png', debug_marker_rejections)
+    debug_marker_rejections = cv2.aruco.drawDetectedMarkers(
+                                img_gray.copy(), corners=rejectedImgPoints)
 
   board_detector = cv2.aruco.CharucoDetector(
     board=aruco_board,
     charucoParams=charuco_params)
-    # detectorParams=detector_params,
-    # refineParams=refine_params)
   
-  debug_board_image = aruco_board.generateImage((board_params.cols*50, board_params.rows*50), marginSize=10)
-  cv2.imwrite('/opt/psegs/debug_board_image.png', debug_board_image)
+  debug_board_image = None
+  if create_board_image:
+    debug_board_image = aruco_board.generateImage(
+      (board_params.cols*50, board_params.rows*50), marginSize=10)
 
-  bdet_ret = board_detector.detectBoard(img)
+  bdet_ret = board_detector.detectBoard(img_gray)
   charucoCorners, charucoIds, bdet_markerCorners, bdet_markerIds = bdet_ret
 
-  debug_board_detections = cv2.aruco.drawDetectedCornersCharuco(
-    img.copy(), charucoCorners, charucoIds=charucoIds)
-  cv2.imwrite('/opt/psegs/debug_board_detections.png', debug_board_detections)
+  debug_board_detections = None
+  if create_board_detections_debug_images:
+    debug_board_detections = cv2.aruco.drawDetectedCornersCharuco(
+      img_gray.copy(), charucoCorners, charucoIds=charucoIds)
+  
 
-  breakpoint()
-  print()
+  result = CharucoDetections(
+      aruco_marker_corners = markerCorners,
+      aruco_marker_ids = markerIds,
+      aruco_rejected_image_points=rejectedImgPoints,
+
+      charuco_corners = charucoCorners,
+      charuco_ids = charucoIds,
+
+      charuco_marker_corners = bdet_markerCorners,
+      charuco_marker_ids = bdet_markerIds,
+
+      debug_marker_detections = debug_marker_detections,
+      debug_marker_rejections = debug_marker_rejections,
+      debug_board_image = debug_board_image,
+      debug_board_detections = debug_board_detections)
+  
+  return result
   
 
 

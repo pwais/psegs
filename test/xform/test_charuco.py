@@ -14,28 +14,81 @@
 
 import pytest
 
+from oarphpy import util as oputil
 from psegs.xform import charuco as psc
 
 from test import testutil
 
-# try:
-#   psc.from_cv2_import_aruco()
-#   HAVE_ARUCO = True
-# except ImportError:
-#   HAVE_ARUCO = False
+try:
+  psc.check_opencv_version_for_aruco()
+  HAVE_OBJDET_ARUCO = True
+except ImportError:
+  HAVE_OBJDET_ARUCO = False
 
-# skip_if_no_aruco = pytest.mark.skipif(not HAVE_ARUCO, reason="Requires opencv-contrib Aruco")
+skip_if_no_objdet_aruco = pytest.mark.skipif(
+  not HAVE_OBJDET_ARUCO,
+  reason="Requires modern OpenCV Aruco, see `check_opencv_version_for_aruco()`")
 
 
-# @skip_if_no_aruco
-def test_charuco_detect_board():
-  FIXTURE_IMG_PATH = (testutil.test_fixtures_dir() / 
-    'test_charuco' / 'frame_00000.jpg')
+def check_img(actual, fixture_name, actual_output_dir):
+  FIXTURES_DIR = testutil.test_fixtures_dir() / 'test_charuco_output'
+  oputil.mkdir(actual_output_dir)
   
-  import cv2
+  # First dump actual, in case the fixture doesn't exist yet and we're
+  # writing a new test
+  actual_bytes = oputil.to_png_bytes(actual)
+  actual_path = actual_output_dir / ('actual_' + fixture_name)
+  with open(actual_path, 'wb') as f:
+    f.write(actual_bytes)
+  print(actual_path)
 
-  board = psc.CharucoBoard()
-  img_gray = cv2.imread(str(FIXTURE_IMG_PATH), cv2.IMREAD_GRAYSCALE)
-  ret = psc.detect_charuco_board(board, img_gray)
+  # expected_bytes = open(FIXTURES_DIR / fixture_name, 'rb').read()
+  # assert actual_bytes == expected_bytes, "Check %s" % actual_path
+
+
+@skip_if_no_objdet_aruco
+def test_charuco_detect_board():
+  import cv2
+  
+  ACTUAL_OUTPUT_DIR = testutil.test_tempdir('test_charuco_detect_board')
+
+  FIXTURE_INPUT_DIR = testutil.test_fixtures_dir() / 'test_charuco' 
+  
+  board = psc.CharucoBoard(
+            dict_key='DICT_6X6_1000',
+            cols=11,
+            rows=8,
+            square_length_meters=0.022,
+            marker_length_meters=0.017,
+            is_legacy_pattern=True)
+  
+  img_gray = cv2.imread(
+    str(FIXTURE_INPUT_DIR / 'frame_00000.jpg'), cv2.IMREAD_GRAYSCALE)
+  result = psc.detect_charuco_board(board, img_gray)
+
+  FRAMES_TO_CHECK = (
+    'frame_00000.jpg',
+    'frame_00021.jpg',
+    'frame_00057.jpg',
+  )
+
+  for frame_fname in FRAMES_TO_CHECK:
+
+    img_gray = cv2.imread(
+      str(FIXTURE_INPUT_DIR / frame_fname), cv2.IMREAD_GRAYSCALE)
+    result = psc.detect_charuco_board(board, img_gray)
+
+    DEBUGS_TO_CHECK = (
+      'debug_marker_detections',
+      'debug_marker_rejections',
+      'debug_board_image',
+      'debug_board_detections')
+    for debug_to_check in DEBUGS_TO_CHECK:
+      actual = getattr(result, debug_to_check)
+      fixture_name = f'{frame_fname}.{debug_to_check}.png'
+      check_img(actual, fixture_name, ACTUAL_OUTPUT_DIR)
+
+
+
   breakpoint()
   print()

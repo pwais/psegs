@@ -16,6 +16,7 @@
 import itertools
 
 from psegs import datum
+from psegs.table.sd_table import StampedDatumTable
 from psegs.table.sd_table_factory import StampedDatumTableFactory
 
 
@@ -54,7 +55,9 @@ class UnionFactory(StampedDatumTableFactory):
         else:
           union_datum_rdd = union_datum_rdd.union(datum_rdd)
 
-    return union_datum_rdd
+      union_sdt = StampedDatumTable.from_datum_rdd(
+        union_datum_rdd, spark=spark)
+    return union_sdt
 
   # @classmethod
   # def build_cache(cls, spark=None, only_segments=None, table_root=''):
