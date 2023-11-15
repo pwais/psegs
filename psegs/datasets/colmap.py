@@ -680,7 +680,9 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
               ))
         mp_uri.extra['colmap.image1_name'] = im1_name
         mp_uri.extra['colmap.image2_name'] = im2_name
+        # TODO urllib.parse.quote_plus ?
         mp_uri.extra['colmap.image1_uri'] = str(ci1_uri)
+        # TODO urllib.parse.quote_plus ?
         mp_uri.extra['colmap.image2_uri'] = str(ci2_uri)
 
         all_uris.append(mp_uri)
