@@ -42,8 +42,9 @@ def check_img(actual, fixture_name, actual_output_dir):
     f.write(actual_bytes)
   print(actual_path)
 
-  # expected_bytes = open(FIXTURES_DIR / fixture_name, 'rb').read()
-  # assert actual_bytes == expected_bytes, "Check %s" % actual_path
+  return
+  expected_bytes = open(FIXTURES_DIR / fixture_name, 'rb').read()
+  assert actual_bytes == expected_bytes, "Check %s" % actual_path
 
 
 @skip_if_no_objdet_aruco
@@ -76,7 +77,8 @@ def test_charuco_detect_board():
 
     img_gray = cv2.imread(
       str(FIXTURE_INPUT_DIR / frame_fname), cv2.IMREAD_GRAYSCALE)
-    result = psc.detect_charuco_board(board, img_gray)
+    dets = psc.charuco_detect_board(board, img_gray)
+    debug_images = psc.charuco_create_debug_images(img_gray, dets)
 
     DEBUGS_TO_CHECK = (
       'debug_marker_detections',
@@ -84,7 +86,7 @@ def test_charuco_detect_board():
       'debug_board_image',
       'debug_board_detections')
     for debug_to_check in DEBUGS_TO_CHECK:
-      actual = getattr(result, debug_to_check)
+      actual = getattr(debug_images, debug_to_check)
       fixture_name = f'{frame_fname}.{debug_to_check}.png'
       check_img(actual, fixture_name, ACTUAL_OUTPUT_DIR)
 

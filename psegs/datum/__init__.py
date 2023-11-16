@@ -18,6 +18,7 @@ from psegs.datum.camera_image import CameraImage
 from psegs.datum.matched_pair import MatchedPair
 from psegs.datum.pobj import PObj
 from psegs.datum.point_cloud import PointCloud
+from psegs.datum.points2d import Points2D
 from psegs.datum.stamped_datum import Sample
 from psegs.datum.stamped_datum import StampedDatum
 from psegs.datum.stamped_datum import URI_PROTO
