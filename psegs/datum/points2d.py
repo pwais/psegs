@@ -34,9 +34,9 @@ class Points2D(object):
 
   timestamp = attr.ib(type=int, default=0)
   """int: Timestamp associated with this set of points; often the timestamp of
-  `img1`."""
+  `img`."""
 
-  img1 = attr.ib(default=None, type=CameraImage)
+  img = attr.ib(default=None, type=CameraImage)
   """CameraImage: The image domain for these points."""
 
   points_array = attr.ib(type=np.ndarray, default=None)

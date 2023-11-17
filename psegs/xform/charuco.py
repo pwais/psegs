@@ -597,6 +597,17 @@ def charuco_detections_to_point2ds(
   # We will return these
   all_p2ds = []
 
+  board_params = det.board_params
+  base_extra = {
+    'charuco.board_id': det.board_id,
+    'charuco.dict_key': board_params.dict_key,
+    'charuco.cols': str(board_params.cols),
+    'charuco.rows': str(board_params.rows),
+    'charuco.square_length_meters': str(board_params.square_length_meters),
+    'charuco.marker_length_meters': str(board_params.marker_length_meters),
+    'charuco.is_legacy_pattern': str(board_params.is_legacy_pattern),
+  }
+
   if include_aruco_marker_corners:
     aruco_use_board = False
     if try_use_board_marker_corners:
@@ -612,7 +623,7 @@ def charuco_detections_to_point2ds(
     for mid, corners in zip(det_mids, det_corners):
       for c in (0, 1, 2, 3):
         x, y = corners[c]
-        gid = charuco_get_marker_corner_global_id(det.board_params, mid, c)
+        gid = charuco_get_marker_corner_global_id(board_params, mid, c)
         xyinfos.append(
           [x, y, mid, c, gid]
         )
@@ -625,6 +636,7 @@ def charuco_detections_to_point2ds(
       'charuco.try_use_board_marker_corners': str(try_use_board_marker_corners),
       'charuco.is_aruco_use_board': str(aruco_use_board),
     }
+    extra.update(base_extra)
 
     p2d = datum.Points2D(
       annotator_name='aruco_marker_corners',
@@ -642,7 +654,7 @@ def charuco_detections_to_point2ds(
     xyinfos = []
     for bcid, bcorner in zip(det_bcids, det_bcorners):
       x, y = bcorner
-      bcgid = charuco_get_board_corner_global_id(det.board_params, bcid)
+      bcgid = charuco_get_board_corner_global_id(board_params, bcid)
       xyinfos.append(
         [x, y, bcid, bcgid]
       )
@@ -651,11 +663,14 @@ def charuco_detections_to_point2ds(
     points_colnames = [
       'x', 'y', 'charuco_corner_id', 'psegs_charuco_corner_gid'
     ]
+    extra = {}
+    extra.update(base_extra)
 
     p2d = datum.Points2D(
       annotator_name='charuco_corners',
       points_array=points_array,
       points_colnames=points_colnames,
+      extra=extra,
     )
     all_p2ds.append(p2d)
 
