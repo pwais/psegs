@@ -23,7 +23,7 @@ def test_serialization():
   pts = Points2D(points_array=np.array([
     [1., 2.],
     [3., 4.],
-  ])
+  ]))
 
   import pickle
   s = pickle.dumps(pts)

@@ -498,7 +498,7 @@ class CharucoDetectionDebugImages(object):
   debug_board_marker_detections = attr.ib(default=None, type=np.ndarray)
 
 
-def charuco_detect_boards(
+def charuco_detect_many_boards(
     board_id_to_params,
     camera_image,
     try_refine_markers=True,
@@ -529,16 +529,18 @@ def charuco_should_use_board_marker_corners(det):
     return False
   elif len(det.charuco_marker_corners) == len(det.aruco_marker_corners):
     ar_marker_id_to_corners = dict(
-      zip(det.aruco_marker_ids, det.aruco_marker_corners))
+      zip(det.aruco_marker_ids.flatten(), det.aruco_marker_corners))
     ch_marker_id_to_corners = dict(
-      zip(det.charuco_marker_ids, det.charuco_marker_corners))
+      zip(det.charuco_marker_ids.flatten(), det.charuco_marker_corners))
     ar_mids = sorted(ar_marker_id_to_corners.keys())
     ch_mids = sorted(ch_marker_id_to_corners.keys())
     if ar_mids != ch_mids:
       return False
     else:
       return any(
-        np.abs(ar_marker_id_to_corners[mid] - ch_marker_id_to_corners[mid]) > 0
+        np.abs(
+          ar_marker_id_to_corners[mid] - ch_marker_id_to_corners[mid]
+          ).sum() > 0
         for mid in ar_mids
       )
   else:
@@ -616,11 +618,16 @@ def charuco_detections_to_point2ds(
     attrib_prefix = 'aruco_marker_'
     if aruco_use_board:
       attrib_prefix = 'charuco_marker_'
+
     det_mids = getattr(det, attrib_prefix + 'ids')
     det_corners = getattr(det, attrib_prefix + 'corners')
+    if det_mids is None or det_corners is None:
+      det_mids, det_corners = [], []
     
     xyinfos = []
     for mid, corners in zip(det_mids, det_corners):
+      mid = mid.item()
+      corners = corners.squeeze()
       for c in (0, 1, 2, 3):
         x, y = corners[c]
         gid = charuco_get_marker_corner_global_id(board_params, mid, c)
@@ -648,11 +655,17 @@ def charuco_detections_to_point2ds(
 
 
   if include_board_corners:
-    det_bcids = det.charuco_marker_ids
-    det_bcorners = det.charuco_marker_corners
+    det_bcids = det.charuco_ids
+    det_bcorners = det.charuco_corners
+    if det_bcids is None or det_bcorners is None:
+      det_bcids = np.array([])
+      det_bcorners = np.array([])
+
+    det_bcids = det_bcids.squeeze()
 
     xyinfos = []
     for bcid, bcorner in zip(det_bcids, det_bcorners):
+      bcorner = bcorner.squeeze()
       x, y = bcorner
       bcgid = charuco_get_board_corner_global_id(board_params, bcid)
       xyinfos.append(

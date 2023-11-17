@@ -55,7 +55,7 @@ def test_charuco_detect_board():
 
   FIXTURE_INPUT_DIR = testutil.test_fixtures_dir() / 'test_charuco' 
   
-  board = psc.CharucoBoard(
+  board = psc.CharucoBoardParams(
             dict_key='DICT_6X6_1000',
             cols=11,
             rows=8,
@@ -65,7 +65,6 @@ def test_charuco_detect_board():
   
   img_gray = cv2.imread(
     str(FIXTURE_INPUT_DIR / 'frame_00000.jpg'), cv2.IMREAD_GRAYSCALE)
-  result = psc.detect_charuco_board(board, img_gray)
 
   FRAMES_TO_CHECK = (
     'frame_00000.jpg',
@@ -80,6 +79,10 @@ def test_charuco_detect_board():
     dets = psc.charuco_detect_board(board, img_gray)
     debug_images = psc.charuco_create_debug_images(img_gray, dets)
 
+    # todo moveme
+    psc.charuco_should_use_board_marker_corners(dets)
+    psc.charuco_detections_to_point2ds(dets)
+
     DEBUGS_TO_CHECK = (
       'debug_marker_detections',
       'debug_marker_rejections',
@@ -91,6 +94,8 @@ def test_charuco_detect_board():
       check_img(actual, fixture_name, ACTUAL_OUTPUT_DIR)
 
 
+
+  
 
   breakpoint()
   print()
