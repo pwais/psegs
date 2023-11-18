@@ -24,14 +24,15 @@ from psegs.datum.camera_image import CameraImage
 from psegs.datum.point_cloud import PointCloud
 from psegs.datum.transform import Transform
 from psegs.util import plotting as pspl
-
+from psegs.util import misc
 
 @attr.s(slots=True, eq=False, weakref_slot=False)
 class MatchedPair(object):
   """A pair of `CameraImages` with pixelwise matches"""
 
   matcher_name = attr.ib(type=str, default='')
-  """str: Name of the match source, e.g. SIFT_matches"""
+  """str: Name of the match source, e.g. SIFT_matches; could be identical to
+  the topic name or topic suffix."""
 
   timestamp = attr.ib(type=int, default=0)
   """int: Timestamp associated with this matched pair; use the timestamp
@@ -62,6 +63,9 @@ class MatchedPair(object):
 
   extra = attr.ib(default={}, type=typing.Dict[str, str])
   """Dict[str, str]: A map for adhoc extra context"""
+
+  def __eq__(self, other):
+    return misc.attrs_eq(self, other)
 
   def get_matches(self):
     if self.matches_array is not None:
@@ -109,7 +113,7 @@ class MatchedPair(object):
     return pspl.create_matches_debug_line_image(
               self.img1.image,
               self.img2.image,
-              self.get_matches())
+              self.get_x1y1x2y2())
 
   def get_point_cloud_in_world_frame(self):
 

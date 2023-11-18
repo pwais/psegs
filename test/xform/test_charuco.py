@@ -15,6 +15,7 @@
 import pytest
 
 from oarphpy import util as oputil
+from psegs import datum
 from psegs.xform import charuco as psc
 
 from test import testutil
@@ -82,6 +83,56 @@ def test_charuco_detect_board():
     # todo moveme
     psc.charuco_should_use_board_marker_corners(dets)
     psc.charuco_detections_to_point2ds(dets)
+
+    # TODO moveme
+
+    p2ds = psc.charuco_detections_to_point2ds(dets)
+    p2d = p2ds[0]
+    import imageio
+    imageio.imwrite('/opt/psegs/p2d_test.jpg', p2d.get_debug_points_image())
+    return
+
+
+    # need cases where some detections are null
+    import copy
+    dets_markers_null = copy.deepcopy(dets)
+    dets_markers_null.aruco_marker_corners = None
+    dets_markers_null.aruco_marker_ids = None
+    psc.charuco_detections_to_point2ds(dets_markers_null)
+
+    dets_bmarkers_null = copy.deepcopy(dets)
+    dets_bmarkers_null.charuco_marker_corners = None
+    dets_bmarkers_null.charuco_marker_ids = None
+    psc.charuco_detections_to_point2ds(dets_bmarkers_null)
+
+    dets_board_null = copy.deepcopy(dets)
+    dets_board_null.charuco_corners = None
+    dets_board_null.charuco_ids = None
+    psc.charuco_detections_to_point2ds(dets_board_null)
+
+    dets_ch_markers_has_diff = copy.deepcopy(dets)
+    dets_ch_markers_has_diff.charuco_marker_ids = (
+      copy.deepcopy(dets_ch_markers_has_diff.aruco_marker_ids))
+    dets_ch_markers_has_diff.charuco_marker_corners = (
+      copy.deepcopy(dets_ch_markers_has_diff.aruco_marker_corners))
+    for c in dets_ch_markers_has_diff.charuco_marker_corners:
+      c += 0.1
+    psc.charuco_detections_to_point2ds(dets_board_null)
+
+
+
+    # TODO moveme
+    p2ds = psc.charuco_detections_to_point2ds(dets)
+    datums = [
+      datum.StampedDatum(uri=datum.URI(), points_2d=p2d) for p2d in p2ds
+    ]
+    from psegs.datum.stamped_datum import Sample
+    from psegs.table.sd_table import StampedDatumTable
+    sdt = StampedDatumTable.from_sample(Sample(datums=datums))
+    sdf = sdt.to_spark_df()
+    sdf.show()
+
+
 
     DEBUGS_TO_CHECK = (
       'debug_marker_detections',

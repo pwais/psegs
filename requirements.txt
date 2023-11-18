@@ -19,7 +19,7 @@ dateparser
 fasteners
 ffmpeg
 imageio
-imageio-ffmpeg
+imageio[ffmpeg]
 loguru
 
 

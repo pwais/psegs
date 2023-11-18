@@ -494,6 +494,77 @@ def create_matches_debug_line_image(
   return debug
 
 
+def draw_colored_2dpts_in_image(
+      img,
+      pts,
+      marker_radius=-1,
+      alpha=.7,
+      user_colors=None):
+  """Similar to `draw_xy_depth_in_image()` but does not use a depth-based
+  color scale.
+
+  Args:
+    img (np.array): Draw in this image.
+    pts (np.array): An array of N by 3 points in form
+      (pixel x, pixel y, depth meters).
+    marker_radius (int): Draw a marker with this size (or a non-positive
+      number to auto-choose based upon number of points).
+    alpha (float): Blend point color using weight [0, 1].
+    user_colors (np.array): Instead of coloring by distance, use this array
+      of nx3 colors.
+  """
+
+  from oarphpy.plotting import hash_to_rbg
+
+  # OpenCV can't draw transparent colors, so we use the 'overlay image' trick:
+  # First draw dots an an overlay...
+  overlay = img.copy()
+  h, w = overlay.shape[:2]
+
+  pts = pts[:, :2].copy()
+
+  # Map points to pixels and filter off-screen points
+  pts = np.rint(pts)
+  pts = pts[np.where(
+    (pts[:, 0] >= 0) & (pts[:, 0] < w) &
+    (pts[:, 1] >= 0) & (pts[:, 1] < h)
+  )]
+  if not pts.any():
+    return
+  
+  if user_colors is not None:
+    colors = user_colors.copy()
+  else:
+    colors = np.array([
+      hash_to_rbg(p) for p in pts
+    ])
+  colors = np.clip(colors, 0, 255).astype(int)
+  
+  # Draw the markers! NB: numpy assignment is very fast, even for 1M+ pts
+  yy = pts[:, 1].astype('int32')
+  xx = pts[:, 0].astype('int32')
+  overlay[yy, xx] = colors
+
+  if marker_radius < 0:
+    # Draw larger markers for fewer points (or user_colors) to make points
+    # more conspicuous
+    if user_colors is not None:
+      marker_radius = 3
+    elif pts.shape[0] <= 1e5:
+      marker_radius = 2
+
+  if marker_radius >= 1:
+    # Draw a crosshairs marker
+    for r in range(-marker_radius, marker_radius + 1):
+      overlay[(yy + r) % h, xx] = colors
+      overlay[yy, (xx + r) % w] = colors
+        # NB: toroidal boundary conditions plot hack for speed ...
+
+  # Now blend!
+  import cv2
+  img[:] = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+
+
 def images_to_html_video(images=[], fps=4, play_on_hover=True):
   """Given a sequence of HWC numpy images, create and return an HTML video
   
@@ -509,7 +580,8 @@ def images_to_html_video(images=[], fps=4, play_on_hover=True):
   import base64
   import tempfile
   import urllib.parse
-  
+
+  from tqdm.auto import tqdm
   import imageio
 
   if not images:
@@ -518,13 +590,17 @@ def images_to_html_video(images=[], fps=4, play_on_hover=True):
   h, w = images[0].shape[:2]
 
   # We tried BytesIO but imageio seems to struggle with that and ffmpeg
-  buffer = tempfile.NamedTemporaryFile(suffix=".psegs_html_video.mp4")
-  imageio.mimsave(
-          buffer.name,
-          images,
-          fps=fps)
+  with tempfile.NamedTemporaryFile(suffix='psegs_html_video.mp4', delete=False) as f:
+    
+    # Use pyav because ffmpeg sometimes hangs / blocks forever on frame write
+    with imageio.imopen(f.name, "w", plugin="pyav") as iiow:
+      iiow.init_video_stream(
+        "libx264", fps=fps, max_keyframe_interval=1, force_keyframes=True)
+      for img in tqdm(images, desc=f"Saving debug video to {f.name}"):
+        iiow.write_frame(img)
 
-  video_bytes = open(buffer.name, 'rb').read()
+    video_bytes = open(f.name, 'rb').read()
+
   encoded = base64.b64encode(video_bytes)
   html_data = urllib.parse.quote(encoded.decode('ascii'))
 
@@ -551,12 +627,14 @@ def sample_to_html(
         include_videos=True,
         videos_n_frames=50,
         video_fps=4,
+        video_target_height=400,
         rgbd_depth_to_clouds=True,
         include_cloud_viz=True,
         clouds_n_clouds=50,
         clouds_n_pts_per_plot=50000,
         cloud_include_cam_poses=True,
-        matches_n_examples=10):
+        matches_n_examples=10,
+        points2d_n_examples=10):
   
   from psegs import datum
   from psegs import table
@@ -577,12 +655,10 @@ def sample_to_html(
   else:
     raise ValueError("Don't know what to do with %s" % (sample,))
 
-  
   sd_df = sd_df.repartition('uri.timestamp')
   sd_df = sd_df.persist()
   sd_df.createOrReplaceTempView('sd_df')
   reports = []
-
 
   util.log.info("Rendering summaries for %s datums ..." % sd_df.count())
 
@@ -591,7 +667,7 @@ def sample_to_html(
     pdf = res.toPandas()
     util.log.info('Table: \n%s\n' % str(pdf))
     try:
-      # Pandas <2
+      # Pandas < 2
       try:
         pdf.style.set_precision(2)
         pdf.style.hide_index()
@@ -642,7 +718,7 @@ def sample_to_html(
           }
         </style>
     """
-    return css + pdf.to_html()#pdf.style.render() # Pandas succint "to HTML" with nice style
+    return css + pdf.to_html()
 
   ## Summary ###############################################################
   html = _get_table_html("""
@@ -810,6 +886,7 @@ def sample_to_html(
             n,
             (n / (1e-9 * duration_ns)) AS Hz,
             1e-9 * duration_ns AS duration_sec,
+            matcher_name,
             matches_colnames,
             img1_width,
             img1_height,
@@ -827,6 +904,7 @@ def sample_to_html(
                       MIN(uri.timestamp) AS start,
                       MAX(uri.timestamp) AS end,
                       MAX(uri.timestamp) - MIN(uri.timestamp) AS duration_ns,
+                      FIRST(matched_pair.matcher_name) AS matcher_name,
                       FIRST(matched_pair.matches_colnames) AS matches_colnames,
                       FIRST(matched_pair.img1.width) AS img1_width,
                       FIRST(matched_pair.img1.height) AS img1_height,
@@ -848,6 +926,40 @@ def sample_to_html(
           ORDER BY topic
       """)
   reports.append({'section': 'MatchedPairs', 'html': html})
+
+  ## Points2D ##############################################################
+  html = _get_table_html("""
+          SELECT 
+            topic,
+            n,
+            (n / (1e-9 * duration_ns)) AS Hz,
+            1e-9 * duration_ns AS duration_sec,
+            annotator_name,
+            points_colnames,
+            img_width,
+            img_height,
+            FROM_UNIXTIME(start * 1e-9) AS start,
+            FROM_UNIXTIME(end * 1e-9) AS end
+
+          FROM 
+              (
+                  SELECT
+                      FIRST(uri.topic) AS topic,
+                      MIN(uri.timestamp) AS start,
+                      MAX(uri.timestamp) AS end,
+                      MAX(uri.timestamp) - MIN(uri.timestamp) AS duration_ns,
+                      FIRST(points_2d.annotator_name) AS annotator_name,
+                      FIRST(points_2d.points_colnames) AS points_colnames,
+                      FIRST(points_2d.img.width) AS img_width,
+                      FIRST(points_2d.img.height) AS img_height,
+                      COUNT(*) AS n
+                  FROM sd_df
+                  WHERE points_2d IS NOT NULL
+                  GROUP BY uri.topic
+              )
+          ORDER BY topic
+      """)
+  reports.append({'section': 'Points2D', 'html': html})
 
   # Find depth topics for later
   rows = spark.sql("""
@@ -905,32 +1017,40 @@ def sample_to_html(
       
       ##################################################
       ## Now render video
-      def _to_t_debug_image(row):
+      def _to_t_debug_image(row, video_target_height=400):
         import cv2
+        
+        # Pad the height a little to make ffmpeg most efficient
+        # (and complain less)
+        if video_target_height % 16 != 0:
+          video_target_height += 16 - (video_target_height % 16)
+        
         ci = table.StampedDatumTable.sd_from_row(row.camera_image)
+        print('derp', ci.sensor_name, ci.timestamp, ci.extra)
         image = ci.get_debug_image(period_meters=period_meters)
         aspect = float(ci.width) / float(ci.height)
-        target_height = 400
-        target_width = int(aspect * target_height)
+        target_width = int(aspect * video_target_height)
         
         # Pad the width a little to make ffmpeg most efficient
         # (and complain less)
         if target_width % 16 != 0:
             target_width += 16 - (target_width % 16)
-        image = cv2.resize(image, (target_width, target_height))
+        image = cv2.resize(image, (target_width, video_target_height))
 
         return row.uri.timestamp, image
 
       if sample_sd_df.rdd.isEmpty():
         html = "<i>No images to viz</i>"
       else:
-        iter_t_image = sample_sd_df.rdd.map(_to_t_debug_image).collect()
+        iter_t_image = sample_sd_df.rdd.map(
+          lambda r: _to_t_debug_image(
+            r, video_target_height=video_target_height)).collect()
         images = [
           image
           for t, image in sorted(iter_t_image, key=lambda ti: ti[0])
         ]
 
-        # Global re-scale for depth debug coloring
+        # *Global* re-scale for depth debug coloring
         if topic in depth_camera_topics:
           im_min = min(i.min() for i in images)
           im_max = min(i.max() for i in images)
@@ -939,19 +1059,23 @@ def sample_to_html(
               (i.astype('float') - im_min) / (im_max - im_min)).astype('uint8')
             for i in images
           ]
+        
         html = images_to_html_video(images, fps=video_fps)
       if topic in depth_camera_topics:
         footer = """
           <br/><i>Depth coloring with {period_meters}-meter hue period</i><br/>
           """.format(period_meters=period_meters)
         html = html + footer
+      
       topic_htmls.append((topic, html))
     
     def _to_section_html(info):
       topic, vhtml = info
       html = """
-        <h3>{topic}</h3><br/><br/>
-        {vhtml}
+        <div id="video-{topic}" style="margin: 10px; background-color: #777">
+          <h3>{topic}</h3><br/>
+          {vhtml}
+        </div>
         <br/><br/>
       """.format(topic=topic, vhtml=vhtml)
       return html
@@ -1110,7 +1234,7 @@ def sample_to_html(
     util.log.info(
       "... rendering MatchedPair viz for %s pairs ..." % sample_sd_df.count())
 
-    def _row_to_debug_image(row):
+    def _row_to_mp_debug_image(row):
       sd = table.StampedDatumTable.sd_from_row(row)
       mp = sd.matched_pair
       debug = mp.get_debug_line_image()
@@ -1120,10 +1244,37 @@ def sample_to_html(
 
       html = "<b>%s</b></br>%s<br/><br/>" % (sd.uri, debug_img_html)
       return html
-    mp_htmls = sample_sd_df.rdd.map(_row_to_debug_image).collect()
+    mp_htmls = sample_sd_df.rdd.map(_row_to_mp_debug_image).collect()
 
     section_html = ''.join(mp_htmls)
     reports.append({'section': 'MatchedPair Viz', 'html': section_html})
+
+  ## Points2D ##############################################################
+  if points2d_n_examples > 0:
+    sample_sd_df = spark.sql("""
+                        SELECT *
+                        FROM sd_df
+                        WHERE points_2d IS NOT NULL
+                        ORDER BY RAND(1337)
+                        LIMIT {points2d_n_examples}
+                    """.format(points2d_n_examples=points2d_n_examples))
+    sample_sd_df = sample_sd_df.repartition('uri.timestamp')
+
+    def _row_to_p2d_debug_image(row):
+      sd = table.StampedDatumTable.sd_from_row(row)
+      p2d = sd.points_2d
+      debug = p2d.get_debug_points_image()
+      
+      from oarphpy.plotting import img_to_img_tag
+      debug_img_html = img_to_img_tag(debug, format='jpg')
+
+      html = "<b>%s</b></br>%s<br/><br/>" % (sd.uri, debug_img_html)
+      return html
+    p2d_htmls = sample_sd_df.rdd.map(_row_to_p2d_debug_image).collect()
+
+    section_html = ''.join(p2d_htmls)
+    reports.append({'section': 'Points2D Viz', 'html': section_html})
+
 
   ## Generate full report!
   util.log.info(

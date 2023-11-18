@@ -59,6 +59,7 @@ class StampedDatumTable(object):
       with Spark.sess(spark) as spark:
         datum_rdd = spark.sparkContext.parallelize(self._sample.datums)
         self._spark_df = self._sd_rdd_to_sd_df(spark, datum_rdd)
+        return self._spark_df
     elif self._spark_df:
       return self._spark_df
     elif self._datum_rdd:
@@ -228,7 +229,7 @@ class StampedDatumTable(object):
     with Spark.sess(spark) as spark:
       return sample_to_html(
                 spark,
-                self.to_spark_df(spark=spark),
+                self,
                 **html_kwargs)
 
 

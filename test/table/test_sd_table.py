@@ -17,6 +17,8 @@ from psegs.datum.cuboid import Cuboid
 from psegs.datum.point_cloud import PointCloud
 from psegs.datum.stamped_datum import StampedDatum
 from psegs.datum.transform import Transform
+from psegs.datum.matched_pair import MatchedPair
+from psegs.datum.points2d import Points2D
 from psegs.datum.uri import URI
 from psegs.table.sd_table_factory import StampedDatumTableFactory
 
@@ -76,6 +78,12 @@ def test_sd_table_one_of_every():
     StampedDatum(
       uri=BASE_URI.replaced(topic='ego_pose', timestamp=1),
       transform=Transform()),
+    StampedDatum(
+      uri=BASE_URI.replaced(topic='matches', timestamp=1),
+      matched_pair=MatchedPair()),
+    StampedDatum(
+      uri=BASE_URI.replaced(topic='points', timestamp=1),
+      points_2d=Points2D()),
   ]
 
   class OneOfEvery(TestSDTFactoryBase):
@@ -85,8 +93,9 @@ def test_sd_table_one_of_every():
       return [spark.sparkContext.parallelize(test_datums)]
     
   with testutil.LocalSpark.sess() as spark:
-    OneOfEvery.build(spark)
-    df = OneOfEvery.as_df(spark)
+    sdt = OneOfEvery.get_segment_sd_table(spark=spark)
+
+    df = sdt.to_spark_df(spark)
     assert df.count() == len(test_datums)
     
     # Let's do a basic query
@@ -95,7 +104,7 @@ def test_sd_table_one_of_every():
       sorted(TOPICS) ==
       sorted(r.topic for r in df.select('uri.topic').collect()))
 
-    datum_rdd = OneOfEvery.as_datum_rdd(spark)
+    datum_rdd = sdt.to_datum_rdd(spark)
     datums = datum_rdd.collect()
     assert sorted(datums) == sorted(test_datums)
 

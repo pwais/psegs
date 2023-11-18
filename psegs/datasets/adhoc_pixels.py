@@ -348,9 +348,16 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
     return [datum_rdd]
 
 
-def DiskCachedFramesVideoSegmentFactory_load_image(path):
-  import imageio
-  return imageio.imread(path)
+# class DiskCachedFramesVideoSegmentFactory_load_image(object):
+#   __slots__ = ['_path']
+#   def __init__(self, path):
+#     self._path = path
+#   def __call__(self):
+#     import imageio
+#     return imageio.imread(self._path)
+# def DiskCachedFramesVideoSegmentFactory_load_image(path):
+#   import imageio
+#   return imageio.imread(path)
 
 
 class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
@@ -696,13 +703,19 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     frame_idx = int(frame_idx)
     frame_path = cls.EXPLODED_FRAME_PATHS[frame_idx]
 
-    assert Path(frame_path).exists()
+    assert Path(frame_path).exists(), frame_path
     extra = dict(uri.extra)
     extra['DiskCachedFramesVideoSegmentFactory.frame_path'] = str(frame_path)
 
-    image_factory = (
-      lambda: DiskCachedFramesVideoSegmentFactory_load_image(frame_path))
-    
+    # image_factory = (
+    #   lambda: DiskCachedFramesVideoSegmentFactory_load_image(frame_path))
+    # image_factory = DiskCachedFramesVideoSegmentFactory_load_image(frame_path)
+
+    def _load_image(path=None):
+      import imageio
+      return imageio.imread(path)
+    image_factory = lambda: _load_image(path=frame_path)
+
     vm = cls.VIDEO_METADATA
     w, h = vm.width, vm.height
     if cls.EXPLODE_PARAMS.max_hw >= 0:

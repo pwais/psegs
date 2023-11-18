@@ -260,11 +260,7 @@ MATCHED_PAIR_PROTO = MatchedPair(
 POINTS2D_PROTO = Points2D(
   img=CAMERAIMAGE_PROTO,
   points_array=np.ones((3, 2), dtype=np.float32),
-  point_attributes=[
-    ['a', 'a'],
-    ['b', 'b'],
-    ['c', 'c'],
-  ],
+  point_attributes=['a', 'a', 'c'],
   extra={'key': 'value'},
 )
 
