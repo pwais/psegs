@@ -1026,7 +1026,6 @@ def sample_to_html(
           video_target_height += 16 - (video_target_height % 16)
         
         ci = table.StampedDatumTable.sd_from_row(row.camera_image)
-        print('derp', ci.sensor_name, ci.timestamp, ci.extra)
         image = ci.get_debug_image(period_meters=period_meters)
         aspect = float(ci.width) / float(ci.height)
         target_width = int(aspect * video_target_height)
@@ -1072,7 +1071,7 @@ def sample_to_html(
     def _to_section_html(info):
       topic, vhtml = info
       html = """
-        <div id="video-{topic}" style="margin: 10px; background-color: #777">
+        <div id="video-{topic}" style="padding: 10px; background-color: #ccc">
           <h3>{topic}</h3><br/>
           {vhtml}
         </div>
@@ -1268,7 +1267,13 @@ def sample_to_html(
       from oarphpy.plotting import img_to_img_tag
       debug_img_html = img_to_img_tag(debug, format='jpg')
 
-      html = "<b>%s</b></br>%s<br/><br/>" % (sd.uri, debug_img_html)
+      html = """
+      <div id="p2d-{sd.uri}" style="padding: 10px; background-color: #eee">
+        <b>%s</b></br>
+        %s
+        <br/><br/>
+      </div>
+      """ % (sd.uri, debug_img_html)
       return html
     p2d_htmls = sample_sd_df.rdd.map(_row_to_p2d_debug_image).collect()
 
