@@ -164,7 +164,6 @@ class PSegsTestLocalDiskCache(LocalDiskCache):
       TEST_ROOT = testroot
     return MyTestLocalDiskCache
 
-
   def new_filepath(self, fname, t=None):
     dest = self.TEST_ROOT / 'psegs_local_disk_cache' / 'adhoc_files' / fname
     dest.parent.mkdir(parents=True, exist_ok=True)

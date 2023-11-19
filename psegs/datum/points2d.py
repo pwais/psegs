@@ -106,6 +106,11 @@ class Points2D(object):
     xy_extra = matches[:, cols]
     return xy_extra
 
+  def get_points_colnames(self, colnames):
+    axes = [self.get_col_idx(c) for c in colnames]
+    points = self.get_points()
+    return points[:, axes]
+
   def get_debug_points_image(self, should_color_with_gid_col=True):
     from psegs.util import plotting as pspl
     from oarphpy.plotting import hash_to_rbg
@@ -117,8 +122,8 @@ class Points2D(object):
       if should_color_with_gid_col:
         for i, colname in enumerate(self.points_colnames):
           if colname.endswith('gid'):
-            colordata = self.get_xy_extra()
-            colordata = colordata[:, i]    
+            colordata = self.get_points()
+            colordata = colordata[:, i]
       if colordata is None:
         colordata = self.get_xy_extra()
         colordata = colordata[:, 2:]

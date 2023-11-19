@@ -778,6 +778,10 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
   SEGMENT_ID = 'anon_segment'
   TOPIC = 'camera_adhoc'
 
+  # For smaller datasets, use a smaller number of partitions based upon the
+  # size of `IMAGE_PATHS`
+  SPARK_AUTO_REPARTITION = True
+
   @classmethod
   def create_factory_for_images(
         cls,
@@ -934,7 +938,13 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
 
     # Generate URIs ...
     uris = cls.get_image_uris()
-    uri_rdd = spark.sparkContext.parallelize(uris)
+    num_slices = None
+    if cls.SPARK_AUTO_REPARTITION:
+      import math
+      num_slices = max(1, int(math.log(len(uris))))
+
+    # ... now create RDD
+    uri_rdd = spark.sparkContext.parallelize(uris, numSlices=num_slices)
     util.log.info(f"Creating datums for {len(uris)} images ...")
 
     datum_rdd = uri_rdd.map(cls.create_stamped_datum)
