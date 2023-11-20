@@ -449,7 +449,7 @@ def charuco_detect_board(
   import cv2
   import cv2.aruco
 
-  from oarphpy.util.misc import np_truthy
+  # from oarphpy.util.misc import np_truthy
 
   aruco_board, aruco_dict = charuco_create_board(board_params)
   
@@ -468,10 +468,10 @@ def charuco_detect_board(
   md_ret = marker_detector.detectMarkers(img_gray)
   markerCorners, markerIds, rejectedImgPoints = md_ret
 
-  if not np_truthy(markerCorners):
-    # OpenCV is inconsistent with returning array size 0 or None
-    markerCorners = None
-    markerIds = None
+  # if not np_truthy(markerCorners):
+  #   # OpenCV is inconsistent with returning array size 0 or None
+  #   markerCorners = None
+  #   markerIds = None
 
   board_detector = cv2.aruco.CharucoDetector(
     board=aruco_board,
@@ -480,15 +480,15 @@ def charuco_detect_board(
   bdet_ret = board_detector.detectBoard(img_gray)
   charucoCorners, charucoIds, bdet_markerCorners, bdet_markerIds = bdet_ret
  
-  if not np_truthy(charucoCorners):
-    # OpenCV is inconsistent with returning array size 0 or None
-    charucoCorners = None
-    charucoIds = None
+  # if not np_truthy(charucoCorners):
+  #   # OpenCV is inconsistent with returning array size 0 or None
+  #   charucoCorners = None
+  #   charucoIds = None
 
-  if not np_truthy(bdet_markerCorners):
-    # OpenCV is inconsistent with returning array size 0 or None
-    bdet_markerCorners = None
-    bdet_markerIds = None
+  # if not np_truthy(bdet_markerCorners):
+  #   # OpenCV is inconsistent with returning array size 0 or None
+  #   bdet_markerCorners = None
+  #   bdet_markerIds = None
 
   result = CharucoDetections(
       board_params=board_params,
