@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+# vim: tabstop=2 shiftwidth=2 expandtab
+
+# Copyright 2023 Maintainers of PSegs
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+DESC = """
+devtool - This tool serves to both document and automate the PSegs
+development workflow.
+
+## Example
+
+TODO ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``O
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+
+## Logging
+import logging
+LOG_FORMAT = "%(asctime)s\t%(name)-4s %(process)d : %(message)s"
+log = logging.getLogger("ps")
+log.setLevel(logging.INFO)
+console_handler = logging.StreamHandler(sys.stderr)
+console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+log.addHandler(console_handler)
+
+PS_DOCKER_REPOSITORY = os.environ.get('PS_DOCKER_REPOSITORY', 'psegs')
+PS_CONTAINER_NAME = os.environ.get('PS_CONTAINER_NAME', 'psegs')
+PS_IMAGE_NAME = os.environ.get('PS_IMAGE_NAME', 'psegs')
+PS_ROOT = os.environ.get(
+  'PS_ROOT', os.path.abspath(os.path.dirname(__file__)))
+
+## Utils 
+
+def get_psegs_version(ps_root):
+  import warnings
+  with warnings.catch_warnings():
+    warnings.filterwarnings("ignore",category=DeprecationWarning)
+    import imp
+      # Dear imp maintainers, please stop renaming things ...
+
+  path = os.path.join(ps_root, 'psegs/__init__.py')
+  m = imp.load_source('_', path)
+  return m.__version__
+
+def run_cmd(cmd):
+  cmd = cmd.replace('\n', '').strip()
+  log.info("Running %s ..." % cmd)
+  subprocess.check_call(cmd, shell=True)
+  log.info("... done with %s " % cmd)
+
+
+class DockerEnv(object):
+  """Handle for a single Dockerized environemt"""
+
+  DOCKERFILE_PATH = os.path.join(PS_ROOT, 'docker', 'Dockerfile')
+  IMAGE_NAME = PS_IMAGE_NAME
+  IMAGE_VERSION = get_psegs_version(PS_ROOT)
+  SRC_ROOT = PS_ROOT
+  DOCKER_REPOSITORY = PS_DOCKER_REPOSITORY
+
+  @classmethod
+  def full_image_name(cls):
+    return "%s/%s:%s" % (
+      cls.DOCKER_REPOSITORY , cls.IMAGE_NAME, cls.IMAGE_VERSION)
+
+  @classmethod
+  def build(cls):
+    image = cls.full_image_name()
+    CMD = """
+      DOCKER_BUILDKIT=1 docker build -t {image} -f {dockerfile} {rootdir}
+    """.format(
+      image=image,
+      dockerfile=cls.DOCKERFILE_PATH,
+      rootdir=cls.SRC_ROOT)
+    run_cmd(CMD)
+
+  @classmethod
+  def push_as_latest(cls):
+    image = cls.full_image_name()
+    latest = image.split(':')[0]
+    toks = image.split(':')
+    toks[-1] = 'latest'
+    latest = ':'.join(toks)
+    run_cmd('docker tag ' + image + ' ' + latest)
+    run_cmd('docker push ' + latest)
+    run_cmd('docker push ' + image)
+
+  @classmethod
+  def start(
+        cls,
+        container_name=PS_CONTAINER_NAME,
+        mnt_local_root=True,
+        include_outer_root=True):
+    image = cls.full_image_name()
+    have_nvidia_docker = False
+    try:
+      run_cmd('nvidia-docker --help > /dev/null')
+      have_nvidia_docker = True
+    except Exception:
+      log.info("Not using nvidia-docker")
+
+    mounts = ''
+    if mnt_local_root:
+      mounts += ' -v `pwd`:/opt/psegs:z'
+    if include_outer_root:
+      mounts += ' -v /:/outer_root'
+
+    docker = 'nvidia-docker' if have_nvidia_docker else 'docker'
+    CMD = """
+      {docker} run
+        --name {container_name}
+        -d -it -P --net=host
+        {mounts}
+          {docker_image} sleep infinity || docker start {container_name} || true
+    """.format(
+          docker=docker,
+          container_name=container_name,
+          mounts=mounts,
+          docker_image=image)
+    run_cmd(CMD)
+
+  @classmethod
+  def shell(cls, container_name=PS_CONTAINER_NAME):
+    cls.start(container_name=container_name)
+    EXEC_CMD = 'docker exec -it %s bash' % container_name
+    os.execvp("docker", EXEC_CMD.split(' '))
+
+  @classmethod
+  def remove(cls, container_name=PS_CONTAINER_NAME):
+    try:
+      run_cmd('docker rm -f %s' % container_name)
+    except Exception:
+      pass
+    log.info("Removed container %s" % container_name)
+
+  @classmethod
+  def run_cmd(
+        cls,
+        cmd,
+        container_name=None,
+        force_build=False,
+        mnt_local_root=True,
+        include_outer_root=True,
+        rm=True):
+    """Run `cmd` in a container, and potentially build the needed docker image
+    if it doesn't exist."""
+    image = cls.full_image_name()
+    
+    have_image = False
+    if not force_build:
+      try:
+        run_cmd('docker image inspect %s > /dev/null' % image)
+        have_image = True
+      except Exception:
+        pass
+
+    if not have_image:
+      log.info("Don't have %s, trying to build ..." % image)
+      cls.build()
+      log.info("... done building.")
+
+    log.info("Using docker image %s" % image)
+
+
+    ### Run `cmd`!
+    if not container_name:
+      container_name = 'psegs-temp'
+
+    cls.start(
+      container_name=container_name,
+      mnt_local_root=mnt_local_root,
+      include_outer_root=include_outer_root)
+    RUN_CMD = 'docker exec -it %s %s' % (container_name, cmd)
+    run_cmd(RUN_CMD)
+
+    if rm:
+      cls.remove(container_name=container_name)
+
+  @classmethod
+  def run_tests(cls):
+    # Always use a clean run
+    cls.remove(container_name='psegs-test')
+    
+    # Test!
+    CMD = 'python3 setup.py test'
+    cls.run_cmd(
+          CMD,
+          container_name='psegs-test',
+          mnt_local_root=False,
+          include_outer_root=False,
+          force_build=True,
+          rm=True)
+
+
+def run_dsutil(dataset):
+  assert os.path.exists('/opt/psegs'), (
+    "Run DSUtil from inside the PSegs dockerized environment.  Haved you run "
+    "psegs-util --shell ?")
+  
+  assert sys.version_info[0] >= 3, \
+    "Python 3 required, try with `python3 ./psegs-util --dsutil=help`"
+
+  # Import PSegs or die
+  sys.path.append(PS_ROOT)
+  try:
+    import psegs
+  except Exception as e:
+    assert False, (
+      "Could not find PSegs, have you run psegs-util --shell? err %s" % (e,))
+  
+  from psegs import dsutil
+  dsutil.run(dataset)
+
+
+def create_arg_parser():
+  import argparse
+  
+  parser = argparse.ArgumentParser(
+                      description=DESC,
+                      formatter_class=argparse.RawDescriptionHelpFormatter)
+
+  # Actions
+  parser.add_argument(
+    '--shell', default=False, action='store_true',
+    help='Drop into a dockerized shell')
+  parser.add_argument(
+    '--shell-rm', default=False, action='store_true',
+    help='Remove the PS dev env container')
+  
+  parser.add_argument(
+    '--build-env', default=False, action='store_true',
+    help='Build the PS docker image')
+  parser.add_argument(
+    '--push-as-latest', default=False, action='store_true',
+    help='Tag Docker images at latest and push them')
+  parser.add_argument(
+    '--test', default=False, action='store_true',
+    help='Run unit tests in the PS docker environment')
+  parser.add_argument(
+    '--docs', default='',
+    help='Generate docs and copy HTML to the given directory')
+  
+  parser.add_argument(
+    '--dsutil',
+    help='Run the PSegs Dataset Util for this dataset '
+         '(to see choices, run with --dsutil=help )')
+
+  return parser
+
+
+## Routines
+
+def main(args=None):
+  if not args:
+    parser = create_arg_parser()
+    args = parser.parse_args()
+  
+  if args.build_env:
+    DockerEnv.build()
+  
+  if args.push_as_latest:
+    DockerEnv.push_as_latest()
+  
+  if args.test:
+    DockerEnv.run_tests()
+      
+  if args.shell:
+    DockerEnv.shell()
+  
+  if args.shell_rm:
+    DockerEnv.remove()
+  
+  if args.docs:
+    DockerEnv.build()
+    DockerEnv.run_cmd("bash -c 'cd docs && make html'")
+    run_cmd("cp -v -r docs/build/html %s/psegs_docs" % args.docs)
+  
+  if args.dsutil:
+    run_dsutil(args.dsutil)
+
+if __name__ == '__main__':
+  main()
+

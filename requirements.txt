@@ -1,0 +1,55 @@
+# Copyright 2023 Maintainers of PSegs
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This version of attrs has better cloudpickle support
+attrs>=21.4.0
+
+dateparser
+fasteners
+ffmpeg
+imageio
+imageio[ffmpeg]
+loguru
+
+
+# fixme why does 1.21.5 break? and who installs it?
+#numpy
+numpy>=1.26.1
+
+oarphpy[spark]==0.1.1
+open3d>=0.11.1
+
+# Fixme did we need old one? maybe the old one was because of qt5 headless problems?
+# opencv-python>=4.5.5.62
+opencv-python>=4.8.1
+opencv-python-headless>=4.8.1
+
+pandas
+plotly>=4.2.1
+plyfile
+psutil
+pyspark>=3.3.2
+pytest
+python-slugify
+rich
+scipy>=1.4.0
+shapely
+six>=1.14.0
+sphinx-autoapi
+tabulate
+threadpoolctl
+tqdm
+trimesh
+xmltodict
+
