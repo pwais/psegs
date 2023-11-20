@@ -449,6 +449,8 @@ def charuco_detect_board(
   import cv2
   import cv2.aruco
 
+  from oarphpy.util.misc import np_truthy
+
   aruco_board, aruco_dict = charuco_create_board(board_params)
   
   detector_params = cv2.aruco.DetectorParameters()
@@ -466,6 +468,11 @@ def charuco_detect_board(
   md_ret = marker_detector.detectMarkers(img_gray)
   markerCorners, markerIds, rejectedImgPoints = md_ret
 
+  if not np_truthy(markerCorners):
+    # OpenCV is inconsistent with returning array size 0 or None
+    markerCorners = None
+    markerIds = None
+
   board_detector = cv2.aruco.CharucoDetector(
     board=aruco_board,
     charucoParams=charuco_params)
@@ -473,6 +480,16 @@ def charuco_detect_board(
   bdet_ret = board_detector.detectBoard(img_gray)
   charucoCorners, charucoIds, bdet_markerCorners, bdet_markerIds = bdet_ret
  
+  if not np_truthy(charucoCorners):
+    # OpenCV is inconsistent with returning array size 0 or None
+    charucoCorners = None
+    charucoIds = None
+
+  if not np_truthy(bdet_markerCorners):
+    # OpenCV is inconsistent with returning array size 0 or None
+    bdet_markerCorners = None
+    bdet_markerIds = None
+
   result = CharucoDetections(
       board_params=board_params,
 
@@ -594,7 +611,8 @@ def charuco_detections_to_point2ds(
         det,
         include_aruco_marker_corners=True,
         include_board_corners=True,
-        try_use_board_marker_corners=True):
+        try_use_board_marker_corners=True,
+        ignore_empty_detections=True):
   
   from oarphpy.util.misc import np_truthy
 
@@ -635,24 +653,24 @@ def charuco_detections_to_point2ds(
           xyinfos.append(
             [x, y, mid, c, gid]
           )
+    if xyinfos or (not ignore_empty_detections):
+      points_array = np.array(xyinfos)
+      points_colnames = [
+        'x', 'y', 'aruco_marker_id', 'corner_num', 'psegs_aruco_marker_corner_gid'
+      ]
+      extra = {
+        'charuco.try_use_board_marker_corners': str(try_use_board_marker_corners),
+        'charuco.is_aruco_use_board': str(aruco_use_board),
+      }
+      extra.update(base_extra)
 
-    points_array = np.array(xyinfos)
-    points_colnames = [
-      'x', 'y', 'aruco_marker_id', 'corner_num', 'psegs_aruco_marker_corner_gid'
-    ]
-    extra = {
-      'charuco.try_use_board_marker_corners': str(try_use_board_marker_corners),
-      'charuco.is_aruco_use_board': str(aruco_use_board),
-    }
-    extra.update(base_extra)
-
-    p2d = datum.Points2D(
-      annotator_name='aruco_marker_corners',
-      points_array=points_array,
-      points_colnames=points_colnames,
-      extra=extra,
-    )
-    all_p2ds.append(p2d)
+      p2d = datum.Points2D(
+        annotator_name='aruco_marker_corners',
+        points_array=points_array,
+        points_colnames=points_colnames,
+        extra=extra,
+      )
+      all_p2ds.append(p2d)
 
 
   if include_board_corners:
@@ -671,20 +689,21 @@ def charuco_detections_to_point2ds(
           [x, y, bcid, bcgid]
         )
 
-    points_array = np.array(xyinfos)
-    points_colnames = [
-      'x', 'y', 'charuco_corner_id', 'psegs_charuco_corner_gid'
-    ]
-    extra = {}
-    extra.update(base_extra)
+    if xyinfos or (not ignore_empty_detections):
+      points_array = np.array(xyinfos)
+      points_colnames = [
+        'x', 'y', 'charuco_corner_id', 'psegs_charuco_corner_gid'
+      ]
+      extra = {}
+      extra.update(base_extra)
 
-    p2d = datum.Points2D(
-      annotator_name='charuco_corners',
-      points_array=points_array,
-      points_colnames=points_colnames,
-      extra=extra,
-    )
-    all_p2ds.append(p2d)
+      p2d = datum.Points2D(
+        annotator_name='charuco_corners',
+        points_array=points_array,
+        points_colnames=points_colnames,
+        extra=extra,
+      )
+      all_p2ds.append(p2d)
 
   return all_p2ds
 

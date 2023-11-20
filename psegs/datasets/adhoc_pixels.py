@@ -940,8 +940,11 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
     uris = cls.get_image_uris()
     num_slices = None
     if cls.SPARK_AUTO_REPARTITION:
+      from oarphpy.spark import cluster_cpu_count
       import math
-      num_slices = max(1, int(math.log(len(uris))))
+      n_cpus = cluster_cpu_count(spark)
+      if len(uris) < n_cpus:
+        num_slices = max(1, int(math.log(len(uris))))
 
     # ... now create RDD
     uri_rdd = spark.sparkContext.parallelize(uris, numSlices=num_slices)

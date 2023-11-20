@@ -84,35 +84,7 @@ def colmap_recon_create_world_cloud(
   return pc
 
 
-def colmap_recon_create_camera_image(
-            image_name,
-            recon_dir,
-            src_images_dir,
-            sensor_name='colmap_sparse',
-            timestamp=0,
-            create_depth_image=False):
-  """Given a COLMAP reconstruction assets directory `recon_dir`, create
-  and return a single `CameraImage` from the COLMAP-computed camera pose
-  (and perhaps the visible COLMAP 3D keypoints only if `create_depth_image`).
-
-  `image_name` must be the (file) name of the image in the COLMAP
-  reconstruction, and `src_images_dir` is the input image directory (which
-  COLMAP typically requires be called "images") given to COLMAP.
-  """
-
-  recon = pycolmap.Reconstruction(recon_dir)
-  
-  # Find the image record
-  iinfo, iid = _find_image_record(image_name, recon, err_msg=f"Could not find {image_name} in {recon_dir}")
-  # iid = -1
-  # for ciid, cinfo in recon.images.items():
-  #   if cinfo.name == image_name:
-  #     iinfo = cinfo
-  #     iid = ciid
-  # assert iinfo is not None, 
-
-  cameras = recon.cameras
-  camera = cameras[iinfo.camera_id]
+def colmap_get_intrinsics(camera):
   if len(camera.params) < 4:
     # Probably SIMPLE_PINHOLE
     # FMI https://github.com/colmap/colmap/blob/9f3a75ae9c72188244f2403eb085e51ecf4397a8/scripts/python/visualize_model.py#L88
@@ -165,15 +137,50 @@ def colmap_recon_create_camera_image(
       'k3': float(camera.params[6]),
       'k4': float(camera.params[7]),
     }
-  
+
   h = camera.height
   w = camera.width
+
+  return K, h, w, camera_model, distortion_model, distortion_kv
+
+def colmap_recon_create_camera_image(
+            image_name,
+            recon_dir,
+            src_images_dir,
+            sensor_name='colmap_sparse',
+            timestamp=0,
+            create_depth_image=False):
+  """Given a COLMAP reconstruction assets directory `recon_dir`, create
+  and return a single `CameraImage` from the COLMAP-computed camera pose
+  (and perhaps the visible COLMAP 3D keypoints only if `create_depth_image`).
+
+  `image_name` must be the (file) name of the image in the COLMAP
+  reconstruction, and `src_images_dir` is the input image directory (which
+  COLMAP typically requires be called "images") given to COLMAP.
+  """
+
+  recon = pycolmap.Reconstruction(recon_dir)
+  
+  # Find the image record
+  iinfo, iid = _find_image_record(image_name, recon, err_msg=f"Could not find {image_name} in {recon_dir}")
+  # iid = -1
+  # for ciid, cinfo in recon.images.items():
+  #   if cinfo.name == image_name:
+  #     iinfo = cinfo
+  #     iid = ciid
+  # assert iinfo is not None, 
+
+  cameras = recon.cameras
+  camera = cameras[iinfo.camera_id]
+  
+  ret = colmap_get_intrinsics(camera)
+  K, h, w, colmap_camera_model, distortion_model, distortion_kv = ret
 
   extra = {
     'colmap.image_id': str(iid),
     'colmap.image_name': image_name,
     'colmap.camera_params_raw_json': json.dumps(list(camera.params)),
-    'colmap.camera_model_name': camera_model,
+    'colmap.camera_model_name': colmap_camera_model,
   }
 
   R = iinfo.rotation_matrix()
