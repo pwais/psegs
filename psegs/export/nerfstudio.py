@@ -16,6 +16,9 @@
 import json
 from pathlib import Path
 
+from tqdm.auto import tqdm
+import numpy as np
+
 from psegs import util
 
 def _save_image(
@@ -166,17 +169,17 @@ def export_sdt_to_nerfstudio_format(
       include_mm_depth=True,
       mm_depth_type='uint16',
       mm_depth_scale=1000.,
+      include_world_pointclouds=True,
+      only_pc_topics=None,
       limit=-1):
   """
   Given a `:class:`~psegs.table.StampedDatumTable` instance, export the 
   `CameraImage` images (and other metadata) to `outdir` in Nerfstudio format:
-   * https://github.com/nerfstudio-project/nerfstudio/blob/5d640bfcfdf174922687c11a629a9eb7659a47ce/nerfstudio/data/dataparsers/nerfstudio_dataparser.py#L14
+   * nerfstudio.data.dataparsers.nerfstudio_dataparser.Nerfstudio
 
   Args:
     sd_table (StampedDatumTable): Export images from this table.
     outdir (Path or str): Dump all data to this directory.
-    splits_to_write (List[str]): Export transform data for these splits
-      (NB: we currently always ignore splits specified in the `sd_table` URIs).
     downscales (List[int]): Also export downsized copies of images, downscaled
       by these factors.
     resize_max_h (int): Resize input images to have this maximum
@@ -187,6 +190,9 @@ def export_sdt_to_nerfstudio_format(
     mm_depth_type (str): Encode mm depth into integer values of this type.
     mm_depth_scale (float): Scale depth channel to millimeters using
       this factor.
+    include_world_pointclouds (bool): Include PointClouds in world frame
+      as a single PLY file (nerfstudio spec).
+    only_pc_topics (List[str]): Only export these point cloud topics.
     limit (int): Sample this number of frames uniformly.
 
   """
@@ -194,7 +200,7 @@ def export_sdt_to_nerfstudio_format(
   outdir = Path(outdir)
 
   images_outdir = outdir / 'images'
-
+  downscales = downscales or []
 
   # Select the datums to export
   datum_rdd = sd_table.get_datum_rdd_matching(
@@ -282,12 +288,44 @@ def export_sdt_to_nerfstudio_format(
                                       resize_max_h,
                                       mm_depth_type,
                                       mm_depth_scale)
-    frames = sd_frame_rdd.map(save_dci).collect()
+    dframes = sd_frame_rdd.map(save_dci).collect()
       # NB: this implicity overwrites `frames` to only include frames that
       # have *both* RGB and Depth.  Nerfstudio wants this 1-to-1 parity at
       # time of writing.
-    frames = [f for f in frames if f]
-    util.log.info(f"... saved depth frames, now have {len(frames)} frames ...")
+    if dframes:
+      frames = [f for f in dframes if f]
+      util.log.info(f"... saved depth frames, now have {len(frames)} frames ...")
+    else:
+      util.log.info(f"... no depth frames, skipping! ...")
+
+  ns_ply_file_path = '' # Actually fname
+  if include_world_pointclouds:
+    import open3d as o3d
+
+    util.log.info("Exporting world cloud to PLY ...")
+
+    datum_pc_rdd = sd_table.get_datum_rdd_matching(
+                    only_types=['point_cloud'],
+                    only_topics=only_pc_topics)
+    xyzrgbs = []
+    iter_pc_sds = tqdm(datum_pc_rdd.collect(), desc="Export PC single PLY")
+    for pc_sd in iter_pc_sds:
+      pc = pc_sd.point_cloud
+      if pc is None:
+        continue
+
+      # TODO: make sure in world frame
+      xyzrgbs.append(pc.get_xyzrgb(default_color=(0, 0, 0)))
+    
+    ply_dest = outdir / 'psegs_world_point_cloud.ply'
+    xyzrgb = np.concatenate(xyzrgbs)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(xyzrgb[:, :3])
+    pcd.colors = o3d.utility.Vector3dVector(xyzrgb[:, 3:] / 256.)
+    o3d.io.write_point_cloud(str(ply_dest), pcd)
+    ns_ply_file_path = str(ply_dest.name)
+    
+    util.log.info(f"... exported world cloud to {ply_dest} .")
 
   frames = sorted(frames, key=lambda f: f['file_path'])
   transforms_data = {
@@ -305,6 +343,9 @@ def export_sdt_to_nerfstudio_format(
     for k in KEYS_TO_MAKE_GLOBAL:
       if k in f0:
         transforms_data[k] = f0[k]
+
+  if ns_ply_file_path:
+    transforms_data['ply_file_path'] = ns_ply_file_path
 
   transforms_dest = outdir / f'transforms.json' 
   with open(transforms_dest, 'w') as f:

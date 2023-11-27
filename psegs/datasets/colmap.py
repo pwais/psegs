@@ -537,6 +537,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
   WORLD_CLOUD_TOPIC = 'fused_world_cloud|colmap_sparse'
   MP_TOPIC_SUFFIX = '|matches'
 
+
   ## Support
 
   @classmethod

@@ -117,10 +117,30 @@ class PointCloud(object):
     except ValueError:
       return []
 
+  def has_rgb(self):
+    return all(k in self.cloud_colnames for k in ('r', 'g', 'b'))
+
   def get_xyz_cloud(self):
+    # TODO: accept frame parameter e.g. world / sensor
     cloud = self.get_cloud()
     xyz = cloud[:, self.get_xyz_axes()]
     return xyz
+
+  def get_xyzrgb(self, default_color=None):
+    # TODO: accept frame parameter e.g. world / sensor
+    if self.has_rgb():
+      axes = self.get_xyz_axes() + self.get_rgb_axes()
+      cloud = self.get_cloud()
+      return cloud[:, axes]
+    else:
+      xyz = self.get_xyz_cloud()
+      if default_color is None:
+        default_color = (0, 0, 0)
+      rgb = np.zeros_like(xyz)
+      rgb[:, 0] = default_color[0]
+      rgb[:, 1] = default_color[1]
+      rgb[:, 2] = default_color[2]
+      return np.hstack([xyz, rgb])
 
   def get_colors_cloud(self):
     cloud = self.get_cloud()
