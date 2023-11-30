@@ -776,18 +776,7 @@ class Fixtures(object):
     """Create and return one segment URI per scan"""
     from oarphpy import util as oputil
 
-    # def _all_files_recursive(root_dir, pattern='*'):
-    #   import fnmatch
-    #   paths = []
-    #   n = len(os.listdir(root_dir))
-    #   iter_entries = tqdm(os.walk(root_dir), total=n, desc=f'Walk {root_dir}')
-    #   for root, dirs, files in iter_entries:
-    #     for basename in files:
-    #       if fnmatch.fnmatch(basename, pattern):
-    #         paths.append(os.path.join(root, basename))
-    #   return paths
-
-    if not cls.threeDScannerApp_data_root().exists():
+    if not (cls.threeDScannerApp_data_root().exists() or cls.INFO_JSON_PATHS):
       return []
 
     all_info_paths = oputil.all_files_recursive(
@@ -910,7 +899,7 @@ class IOSLidarSDTFactory(StampedDatumTableFactory):
                                       lambda kv: kv[1])
 
     ## ... now build Datum RDDs ...
-    URIS_PER_CHUNK = os.cpu_count() * 128
+    URIS_PER_CHUNK = (os.cpu_count() or 1) * 128
     uris = uri_rdd.collect()
     assert len(uris) > 0, \
       f"Broken scan(s) ? No URIS for segments {seg_uris}"
