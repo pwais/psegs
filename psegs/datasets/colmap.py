@@ -656,6 +656,7 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
         ci_uri = input_uri.replaced(
             topic=input_uri.topic + cls.CI_RECON_TOPIC_SUFFIX)
         ci_uri.extra['colmap.image_name'] = imgpath.name
+        ci_uri.extra['colmap.input_uri'] = input_uri.to_urlsafe_str()
         all_uris.append(ci_uri)
         _ci_uris.append(ci_uri)
         if cls.INCLUDE_DEPTH_IMAGES:
@@ -688,10 +689,8 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
               ))
         mp_uri.extra['colmap.image1_name'] = im1_name
         mp_uri.extra['colmap.image2_name'] = im2_name
-        # TODO urllib.parse.quote_plus ?
-        mp_uri.extra['colmap.image1_uri'] = str(ci1_uri)
-        # TODO urllib.parse.quote_plus ?
-        mp_uri.extra['colmap.image2_uri'] = str(ci2_uri)
+        mp_uri.extra['colmap.image1_uri'] = ci1_uri.to_urlsafe_str()
+        mp_uri.extra['colmap.image2_uri'] = ci2_uri.to_urlsafe_str()
 
         all_uris.append(mp_uri)
 

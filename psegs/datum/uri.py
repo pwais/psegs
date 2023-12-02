@@ -18,6 +18,7 @@ import typing
 
 import attr
 import six
+import six.moves.urllib.parse
 
 
 @attr.s(slots=True, eq=True, weakref_slot=False)
@@ -175,6 +176,9 @@ class URI(object):
     toks = ('%s=%s' % (k, encode(k, v)) for k, v in tup)
     return '%s%s' % (self.PREFIX, '&'.join(toks))
   
+  def to_urlsafe_str(self):
+    return six.moves.urllib.parse.quote_plus(self.to_str())
+
   def __str__(self):
     return self.to_str()
   
