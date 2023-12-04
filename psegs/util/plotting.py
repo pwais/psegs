@@ -633,9 +633,12 @@ def sample_to_html(
         clouds_n_clouds=50,
         clouds_n_pts_per_plot=50000,
         cloud_include_cam_poses=True,
+        cloud_n_cam_poses=50,
         matches_n_examples=10,
         points2d_n_examples=10):
   
+  # ..... todo rename sdt to html ?
+
   from psegs import datum
   from psegs import table
   from psegs import util
@@ -1181,7 +1184,7 @@ def sample_to_html(
                           WHERE camera_image IS NOT NULL
                           ORDER BY RAND(1337)
                           LIMIT {limit}
-                      """.format(limit=clouds_n_clouds))
+                      """.format(limit=cloud_n_cam_poses))
         def _get_t_ci(row):
           ci = table.StampedDatumTable.sd_from_row(row.camera_image)
           return row.uri.timestamp, ci
@@ -1201,7 +1204,7 @@ def sample_to_html(
             """.format(
                   sample=len(cloud_df),
                   total=total_n_world,
-                  n=clouds_n_clouds)
+                  n=len(cloud_worlds))
       html = (
         fig.to_html(include_plotlyjs=True, full_html=False) + '<br/><br/>' + 
         footer)     
