@@ -74,6 +74,7 @@ def _save_image(
   T_c2w = ci.get_world_to_sensor()#.get_inverse() DEBUG THIS
   c2w = T_c2w.get_transformation_matrix(homogeneous=True)
   
+  # TODO: check if input cameras were actually in opencv frame!
   OPENCV_2_OPENGL = np.diag([1, -1, -1, 1])
   c2w = c2w @ OPENCV_2_OPENGL
 
