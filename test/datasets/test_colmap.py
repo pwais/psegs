@@ -148,7 +148,7 @@ def test_colmap_create_matched_pair():
     assert mp.img1.extra['colmap.image_name'] == image1_name
     assert mp.img2.extra['colmap.image_name'] == image2_name
 
-  # TODO we don't have any pairs that are not covisible in this fixture
+  # TODO we don't have any pairs that are NOT covisible in this fixture
 
 
 def test_colmap_create_sd_table_for_reconstruction():

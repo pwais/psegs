@@ -17,7 +17,7 @@
 ##  * https://github.com/opencv/opencv_contrib/tree/a26f71313009c93d105151094436eecd4a0990ed/modules/aruco/misc/pattern_generator 
 ##  * https://calib.io/pages/camera-calibration-pattern-generator 
 
-from typing import List
+from typing import List, Dict
 
 from cmath import isfinite
 import attr
@@ -397,6 +397,95 @@ def check_opencv_version_for_aruco():
     "and "
     "https://github.com/opencv/opencv/issues/23873#issuecomment-1620504453")
 
+
+@attr.s(slots=True)
+class CharucoCalibrationResults(object):
+  rms_error = attr.ib(default=0., type=float)
+  K = attr.ib(type=np.ndarray, default=np.eye(3, 3))
+  distortion_kv = attr.ib(default={}, type=Dict[str, float])
+  board_poses = attr.ib(default=[], type=List[datum.Transform])
+
+def charuco_calibrate_from_detections(camera_hw, dets):
+  import cv2
+  
+  h, w = camera_hw
+  
+  aruco_board = None
+  board_params = None
+  all_object_points = []
+  all_image_points = []
+  for det in dets:
+    if aruco_board is None:
+      board_params = det.board_params
+      aruco_board, aruco_dict = charuco_create_board(board_params)
+    else:
+      assert board_params == det.board_params, (
+        f"""
+          Programming error, not all detections are for same board; 
+            board_params={board_params} 
+            det={det.board_params}
+        """)
+
+    charuco_corners = det.charuco_corners
+    charuco_ids = det.charuco_ids
+    frame_pts = aruco_board.matchImagePoints(charuco_corners, charuco_ids)
+    frame_obj_points, frame_img_points = frame_pts
+    all_object_points.append(frame_obj_points)
+    all_image_points.append(frame_img_points)
+
+  calib_result = cv2.calibrateCamera(
+      all_object_points,
+      all_image_points, 
+      (w, h),
+      None,
+      None,
+      flags=cv2.CALIB_RATIONAL_MODEL)
+
+  rms, camera_matrix, dist_coefs, rvecs, tvecs = calib_result
+  assert len(rvecs) == len(tvecs)
+  board_poses = []
+  for rvec, tvec in zip(rvecs, tvecs):
+    
+    # FMI https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga3207604e4b1a1758aa66acb6ed5aa65d
+    # "brings the calibration pattern from the object coordinate space (in which object points are specified) to the camera coordinate space"
+    R, jac = cv2.Rodrigues(rvec)
+    T = tvec
+
+    board_poses.append(
+      datum.Transform(
+        src_frame='board',
+        dest_frame='camera',
+        rotation=R,
+        translation=T))
+
+  dist_coefs = dist_coefs.flatten()
+  assert len(dist_coefs) >= 8
+  
+  # yapf: disable
+  distortion_kv = {
+    'k1': float(dist_coefs[0]),
+    'k2': float(dist_coefs[1]),
+    
+    'p1': float(dist_coefs[2]),
+    'p2': float(dist_coefs[3]),
+    
+    # These are only available with `cv2.CALIB_RATIONAL_MODEL` and are
+    # important for very wide / near-fisheye lenses
+    'k3': float(dist_coefs[4]),
+    'k4': float(dist_coefs[5]),
+    'k5': float(dist_coefs[6]),
+    'k6': float(dist_coefs[7]),
+  }
+  # yapf: enable
+
+  calib = CharucoCalibrationResults(
+    rms_error=rms,
+    K=camera_matrix,
+    distortion_kv=distortion_kv,
+    board_poses=board_poses)
+  return calib
+
+
 @attr.s(slots=True)
 class CharucoDetections(object):
   board_id = attr.ib(default='anon', type=str)
@@ -412,6 +501,8 @@ class CharucoDetections(object):
   # These are usually identical to `aruco_marker_corners`
   charuco_marker_corners = attr.ib(default=None, type=List[np.ndarray])
   charuco_marker_ids = attr.ib(default=None, type=np.ndarray)
+
+  calib = attr.ib(default=None, type=CharucoCalibrationResults)
 
 
 def charuco_create_board(board_params):
@@ -442,6 +533,7 @@ def charuco_create_board(board_params):
 def charuco_detect_board(
       board_params,
       img_gray,
+      include_calibration=True,
       try_refine_markers=True):
   
   check_opencv_version_for_aruco()
@@ -468,11 +560,6 @@ def charuco_detect_board(
   md_ret = marker_detector.detectMarkers(img_gray)
   markerCorners, markerIds, rejectedImgPoints = md_ret
 
-  # if not np_truthy(markerCorners):
-  #   # OpenCV is inconsistent with returning array size 0 or None
-  #   markerCorners = None
-  #   markerIds = None
-
   board_detector = cv2.aruco.CharucoDetector(
     board=aruco_board,
     charucoParams=charuco_params)
@@ -480,16 +567,6 @@ def charuco_detect_board(
   bdet_ret = board_detector.detectBoard(img_gray)
   charucoCorners, charucoIds, bdet_markerCorners, bdet_markerIds = bdet_ret
  
-  # if not np_truthy(charucoCorners):
-  #   # OpenCV is inconsistent with returning array size 0 or None
-  #   charucoCorners = None
-  #   charucoIds = None
-
-  # if not np_truthy(bdet_markerCorners):
-  #   # OpenCV is inconsistent with returning array size 0 or None
-  #   bdet_markerCorners = None
-  #   bdet_markerIds = None
-
   result = CharucoDetections(
       board_params=board_params,
 
@@ -502,7 +579,14 @@ def charuco_detect_board(
 
       charuco_marker_corners = bdet_markerCorners,
       charuco_marker_ids = bdet_markerIds)
-  
+
+  calib = None
+  if include_calibration:
+    calib = charuco_calibrate_from_detections(
+                img_gray.shape[:2],
+                [result])
+    result.calib = calib
+
   return result
 
 
@@ -519,6 +603,7 @@ def charuco_detect_many_boards(
     board_id_to_params,
     camera_image,
     try_refine_markers=True,
+    include_single_image_calibration=True,
   ):
   
   import cv2
@@ -530,6 +615,7 @@ def charuco_detect_many_boards(
     dets = charuco_detect_board(
                 board_params,
                 image_gray,
+                include_calibration=include_single_image_calibration,
                 try_refine_markers=try_refine_markers)
     dets.board_id = board_id
     all_detections.append(dets)
