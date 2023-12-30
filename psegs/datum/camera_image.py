@@ -1275,7 +1275,7 @@ class CameraImage(object):
     
     import io
     import trimesh
-    import shapely # Required for frustum marker
+    import shapely # Transitive requirement for frustum marker
 
     T_ego_from_sensor = self.ego_to_sensor[self.sensor_name, 'ego']
     T_world_from_ego = self.ego_pose['ego', 'world']

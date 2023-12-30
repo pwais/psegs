@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+
 from psegs.datum import URI
 from psegs.datum.stamped_datum import Sample
 from psegs.datum.stamped_datum import STAMPED_DATUM_PROTO
@@ -82,20 +83,26 @@ class StampedDatumTable(object):
     else:
       return Sample()
 
-  def to_datum_rdd(self, spark=None):
+  def to_datum_rdd(self, spark=None, cache_to_disk=False):
+    datum_rdd = None
     if self._datum_rdd:
-      return self._datum_rdd
+      datum_rdd = self._datum_rdd
     elif self._sample:
       spark = spark or self._spark
       with Spark.sess(spark) as spark:
-        return spark.sparkContext.parallelize(
+        datum_rdd = spark.sparkContext.parallelize(
                     self._sample.datums, numSlices=len(self._sample.datums))
     elif self._spark_df:
-      return self.datum_df_to_datum_rdd(self._spark_df)
+      datum_rdd = self.datum_df_to_datum_rdd(self._spark_df)
     else:
       with Spark.sess(spark) as spark:
-        return spark.sparkContext.parallelize([])
-  
+        datum_rdd = spark.sparkContext.parallelize([])
+
+    if cache_to_disk:
+      from pyspark import StorageLevel
+      datum_rdd = datum_rdd.persist(StorageLevel.MEMORY_AND_DISK)
+    return datum_rdd
+
 
   ## Accessors
 

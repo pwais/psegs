@@ -43,6 +43,7 @@ def check_img(actual, fixture_name, actual_output_dir):
     f.write(actual_bytes)
   print(actual_path)
 
+  print('fixme TODO')
   return
   expected_bytes = open(FIXTURES_DIR / fixture_name, 'rb').read()
   assert actual_bytes == expected_bytes, "Check %s" % actual_path

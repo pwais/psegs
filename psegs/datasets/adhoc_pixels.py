@@ -944,7 +944,7 @@ class AdhocImagePathsSDTFactory(StampedDatumTableFactory):
       import math
       n_cpus = cluster_cpu_count(spark)
       if len(uris) < n_cpus:
-        num_slices = max(1, int(math.log(len(uris))))
+        num_slices = max(1, int(math.log(len(uris) or 1)))
 
     # ... now create RDD
     uri_rdd = spark.sparkContext.parallelize(uris, numSlices=num_slices)

@@ -678,8 +678,7 @@ def charuco_detections_to_point2ds(
     det_bcorners = det.charuco_corners
 
     xyinfos = []
-    if np_truthy(det_bcids) and np_truthy(det_bcorners):    
-      # det_bcids = det_bcids.squeeze()
+    if np_truthy(det_bcids) and np_truthy(det_bcorners):
       for bcid, bcorner in zip(det_bcids, det_bcorners):
         bcid = bcid.item()
         bcorner = bcorner.squeeze()
