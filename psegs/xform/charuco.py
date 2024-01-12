@@ -400,20 +400,23 @@ def check_opencv_version_for_aruco():
 
 @attr.s(slots=True)
 class CharucoCalibrationResults(object):
+  # Core Results
   rms_error = attr.ib(default=0., type=float)
   K = attr.ib(type=np.ndarray, default=np.eye(3, 3))
   distortion_kv = attr.ib(default={}, type=Dict[str, float])
   board_poses = attr.ib(default=[], type=List[datum.Transform])
 
-def charuco_calibrate_from_detections(camera_hw, dets):
-  import cv2
-  
-  h, w = camera_hw
-  
+  # Inputs to calibration in same order as charuco detections used
+  all_board_corner_points = attr.ib(default=[], type=List[np.ndarray]) # nx3
+  all_image_points = attr.ib(default=[], type=List[np.ndarray]) # nx2
+  all_board_point_ids = attr.ib(default=[], type=List[np.ndarray]) # nx1
+
+def charuco_get_all_obj_img_points(dets):
   aruco_board = None
   board_params = None
   all_object_points = []
   all_image_points = []
+  all_charuco_ids = []
   for det in dets:
     if aruco_board is None:
       board_params = det.board_params
@@ -432,6 +435,22 @@ def charuco_calibrate_from_detections(camera_hw, dets):
     frame_obj_points, frame_img_points = frame_pts
     all_object_points.append(frame_obj_points)
     all_image_points.append(frame_img_points)
+    all_charuco_ids.append(charuco_ids)
+  
+  res = (
+    all_object_points,
+    all_image_points,
+    all_charuco_ids,
+  )
+  return res
+
+def charuco_calibrate_from_detections(camera_hw, dets):
+  import cv2
+  
+  h, w = camera_hw
+  
+  res = charuco_get_all_obj_img_points(dets)
+  all_object_points, all_image_points, all_charuco_ids = res
 
   calib_result = cv2.calibrateCamera(
       all_object_points,
@@ -478,12 +497,16 @@ def charuco_calibrate_from_detections(camera_hw, dets):
   }
   # yapf: enable
 
-  calib = CharucoCalibrationResults(
+  cvcalib = CharucoCalibrationResults(
     rms_error=rms,
     K=camera_matrix,
     distortion_kv=distortion_kv,
-    board_poses=board_poses)
-  return calib
+    board_poses=board_poses,
+
+    all_board_corner_points=all_object_points,
+    all_image_points=all_image_points,
+    all_board_point_ids=all_charuco_ids)
+  return cvcalib
 
 
 @attr.s(slots=True)
@@ -502,7 +525,7 @@ class CharucoDetections(object):
   charuco_marker_corners = attr.ib(default=None, type=List[np.ndarray])
   charuco_marker_ids = attr.ib(default=None, type=np.ndarray)
 
-  calib = attr.ib(default=None, type=CharucoCalibrationResults)
+  cvcalib = attr.ib(default=None, type=CharucoCalibrationResults)
 
 
 def charuco_create_board(board_params):
@@ -580,12 +603,12 @@ def charuco_detect_board(
       charuco_marker_corners = bdet_markerCorners,
       charuco_marker_ids = bdet_markerIds)
 
-  calib = None
+  cvcalib = None
   if include_calibration:
-    calib = charuco_calibrate_from_detections(
+    cvcalib = charuco_calibrate_from_detections(
                 img_gray.shape[:2],
                 [result])
-    result.calib = calib
+  result.cvcalib = cvcalib
 
   return result
 
@@ -698,7 +721,8 @@ def charuco_detections_to_point2ds(
         include_aruco_marker_corners=True,
         include_board_corners=True,
         try_use_board_marker_corners=True,
-        ignore_empty_detections=True):
+        ignore_empty_detections=True,
+        include_board_xyz=True):
   
   from oarphpy.util.misc import np_truthy
 
@@ -740,7 +764,9 @@ def charuco_detections_to_point2ds(
             [x, y, mid, c, gid]
           )
     if xyinfos or (not ignore_empty_detections):
-      points_array = np.array(xyinfos)
+      # TODO: support board XYZs for aruco markers, today they're not
+      # immediately available
+      points_array = np.array(xyinfos, dtype='float64')
       points_colnames = [
         'x', 'y', 'aruco_marker_id', 'corner_num', 'psegs_aruco_marker_corner_gid'
       ]
@@ -775,10 +801,31 @@ def charuco_detections_to_point2ds(
         )
 
     if xyinfos or (not ignore_empty_detections):
-      points_array = np.array(xyinfos)
       points_colnames = [
         'x', 'y', 'charuco_corner_id', 'psegs_charuco_corner_gid'
       ]
+      if include_board_xyz:
+        all_object_points, _, all_charuco_ids = charuco_get_all_obj_img_points([det])
+        assert len(all_object_points) == 1
+        det_board_xyz = all_object_points[0]
+        assert len(all_charuco_ids) == 1
+        det_charuco_ids = all_charuco_ids[0]
+
+        # Sanity checks to ensure quick unpack & repack
+        assert len(xyinfos) == len(det_board_xyz)
+        xyinfo_cids = [cid for x, y, cid, gid in xyinfos]
+        assert det_charuco_ids.squeeze().tolist() == xyinfo_cids
+
+        points_colnames += [
+          'charuco_board_frame_x', 'charuco_board_frame_y', 'charuco_board_frame_z'
+        ]
+        xyinfos = [
+          (x, y, cid, gid, bX, bY, bZ) for 
+          ((x, y, cid, gid), (bX, bY, bZ)) in zip()
+        ]
+
+      points_array = np.array(xyinfos, dtype='float64')
+      
       extra = {}
       extra.update(base_extra)
 
