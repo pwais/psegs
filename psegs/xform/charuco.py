@@ -401,6 +401,7 @@ def check_opencv_version_for_aruco():
 @attr.s(slots=True)
 class CharucoCalibrationResults(object):
   # Core Results
+  opencv_calib_model = attr.ib(default='')
   rms_error = attr.ib(default=0., type=float)
   K = attr.ib(type=np.ndarray, default=np.eye(3, 3))
   distortion_kv = attr.ib(default={}, type=Dict[str, float])
@@ -459,6 +460,7 @@ def charuco_calibrate_from_detections(camera_hw, dets):
       None,
       None,
       flags=cv2.CALIB_RATIONAL_MODEL)
+  opencv_calib_model = 'OPENCV_CHARUCO_RATIONAL_MODEL'
 
   rms, camera_matrix, dist_coefs, rvecs, tvecs = calib_result
   assert len(rvecs) == len(tvecs)
@@ -498,6 +500,8 @@ def charuco_calibrate_from_detections(camera_hw, dets):
   # yapf: enable
 
   cvcalib = CharucoCalibrationResults(
+    opencv_calib_model=opencv_calib_model,
+
     rms_error=rms,
     K=camera_matrix,
     distortion_kv=distortion_kv,
@@ -563,8 +567,6 @@ def charuco_detect_board(
 
   import cv2
   import cv2.aruco
-
-  # from oarphpy.util.misc import np_truthy
 
   aruco_board, aruco_dict = charuco_create_board(board_params)
   
@@ -807,7 +809,7 @@ def charuco_detections_to_point2ds(
       if include_board_xyz:
         all_object_points, _, all_charuco_ids = charuco_get_all_obj_img_points([det])
         assert len(all_object_points) == 1
-        det_board_xyz = all_object_points[0]
+        det_board_xyz = all_object_points[0].squeeze()
         assert len(all_charuco_ids) == 1
         det_charuco_ids = all_charuco_ids[0]
 
@@ -821,7 +823,7 @@ def charuco_detections_to_point2ds(
         ]
         xyinfos = [
           (x, y, cid, gid, bX, bY, bZ) for 
-          ((x, y, cid, gid), (bX, bY, bZ)) in zip()
+          ((x, y, cid, gid), (bX, bY, bZ)) in zip(xyinfos, det_board_xyz)
         ]
 
       points_array = np.array(xyinfos, dtype='float64')
