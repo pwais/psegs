@@ -373,7 +373,8 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
   VIDEO_METADATA = None
 
   # Cache pre-computed `DiskCachedFramesVideoSegmentFactory` here; avoids
-  # having to re-read videos for metadata.
+  # having to re-read videos for metadata.  You probably want these
+  # cached on the same disk (e.g. a local disk) that `IMAGE_CACHE_CLS` uses.
   CLS_CACHE_DIR = None
 
   # Cache the actual frame image paths after a call to `explode_frames()`
@@ -403,7 +404,13 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     with open(F_path, 'wb') as f:
       cloudpickle.dump(F, f, protocol=3) # Support older python
 
-
+  @classmethod
+  def _needs_explode(cls):
+    return not (
+      cls.EXPLODED_FRAME_PATHS and
+      all(Path(p).exists() for p in cls.EXPLODED_FRAME_PATHS)
+    )
+    
   ## User API / Factory-Factory API
 
   DEFAULT_BASE_URI = datum.URI(
@@ -499,7 +506,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
         do_cache_factory=True,
         img_cache_now_time=None):
     
-    if cls.EXPLODED_FRAME_PATHS and not force_recompute:
+    if not (force_recompute or cls._needs_explode()):
       util.log.debug(
         f"Factory \n{str(cls.BASE_URI)}\n already has "
                     f"{len(cls.EXPLODED_FRAME_PATHS)} exploded frames.")
@@ -558,17 +565,17 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
       if not has_match:
         return []
 
-    if cls.AUTO_EXPLODE and not cls.EXPLODED_FRAME_PATHS:
-      util.log.info(
-        f"Auto-exploding cached images for {cls.__name__}"
-        f" for {str(cls.BASE_URI)} ...")
-      EF = cls.explode_frames()
-      util.log.info("... done auto-exploding!")
-      
-      return EF._create_datum_rdds(
-        spark,
-        existing_uri_df=existing_uri_df,
-        only_segments=only_segments)
+    if cls.AUTO_EXPLODE:
+      if cls._needs_explode():
+        util.log.info(
+          f"Auto-exploding cached images for {cls.__name__}"
+          f" for {str(cls.BASE_URI)} ...")
+        EF = cls.explode_frames()
+        util.log.info("... done auto-exploding!")     
+        return EF._create_datum_rdds(
+          spark,
+          existing_uri_df=existing_uri_df,
+          only_segments=only_segments)
 
 
     # Generate URIs ...

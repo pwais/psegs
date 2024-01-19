@@ -412,6 +412,12 @@ class CharucoCalibrationResults(object):
   all_image_points = attr.ib(default=[], type=List[np.ndarray]) # nx2
   all_board_point_ids = attr.ib(default=[], type=List[np.ndarray]) # nx1
 
+  # Well actually, calibration failed
+  error_msg = attr.ib(default='', type=str)
+
+  def is_error(self):
+    return bool(self.error_msg)
+
 def charuco_get_all_obj_img_points(dets):
   aruco_board = None
   board_params = None
@@ -432,6 +438,10 @@ def charuco_get_all_obj_img_points(dets):
 
     charuco_corners = det.charuco_corners
     charuco_ids = det.charuco_ids
+    if charuco_corners is None or charuco_ids is None:
+      # Careful, prevent a segfault below in `aruco_board.matchImagePoints()`
+      continue
+
     frame_pts = aruco_board.matchImagePoints(charuco_corners, charuco_ids)
     frame_obj_points, frame_img_points = frame_pts
     all_object_points.append(frame_obj_points)
@@ -450,16 +460,19 @@ def charuco_calibrate_from_detections(camera_hw, dets):
   
   h, w = camera_hw
   
-  res = charuco_get_all_obj_img_points(dets)
-  all_object_points, all_image_points, all_charuco_ids = res
-
-  calib_result = cv2.calibrateCamera(
-      all_object_points,
-      all_image_points, 
-      (w, h),
-      None,
-      None,
-      flags=cv2.CALIB_RATIONAL_MODEL)
+  try:
+    res = charuco_get_all_obj_img_points(dets)
+    all_object_points, all_image_points, all_charuco_ids = res
+    calib_result = cv2.calibrateCamera(
+        all_object_points,
+        all_image_points, 
+        (w, h),
+        None,
+        None,
+        flags=cv2.CALIB_RATIONAL_MODEL)
+  except cv2.error as e:
+    return CharucoCalibrationResults(error_msg=str(e))
+  
   opencv_calib_model = 'OPENCV_CHARUCO_RATIONAL_MODEL'
 
   rms, camera_matrix, dist_coefs, rvecs, tvecs = calib_result
@@ -482,7 +495,7 @@ def charuco_calibrate_from_detections(camera_hw, dets):
   dist_coefs = dist_coefs.flatten()
   assert len(dist_coefs) >= 8
   
-  # yapf: disable
+  # fmt: off
   distortion_kv = {
     'k1': float(dist_coefs[0]),
     'k2': float(dist_coefs[1]),
@@ -497,7 +510,7 @@ def charuco_calibrate_from_detections(camera_hw, dets):
     'k5': float(dist_coefs[6]),
     'k6': float(dist_coefs[7]),
   }
-  # yapf: enable
+  # fmt: on
 
   cvcalib = CharucoCalibrationResults(
     opencv_calib_model=opencv_calib_model,
@@ -809,14 +822,14 @@ def charuco_detections_to_point2ds(
       if include_board_xyz:
         all_object_points, _, all_charuco_ids = charuco_get_all_obj_img_points([det])
         assert len(all_object_points) == 1
-        det_board_xyz = all_object_points[0].squeeze()
+        det_board_xyz = all_object_points[0].reshape([-1, 3]).tolist()
         assert len(all_charuco_ids) == 1
         det_charuco_ids = all_charuco_ids[0]
 
-        # Sanity checks to ensure quick unpack & repack
-        assert len(xyinfos) == len(det_board_xyz)
+        # Sanity checks to ensure quick unpack & repack below is safe
+        assert len(xyinfos) == len(det_board_xyz), f"{len(xyinfos)} != {len(det_board_xyz)}"
         xyinfo_cids = [cid for x, y, cid, gid in xyinfos]
-        assert det_charuco_ids.squeeze().tolist() == xyinfo_cids
+        assert det_charuco_ids.flatten().tolist() == xyinfo_cids, f"{det_charuco_ids.flatten().tolist()} != {xyinfo_cids}"
 
         points_colnames += [
           'charuco_board_frame_x', 'charuco_board_frame_y', 'charuco_board_frame_z'
@@ -880,16 +893,22 @@ def charuco_create_debug_images(
 
   debug_board_detections = None
   if create_board_detections_debug_images:
-    debug_board_detections = cv2.aruco.drawDetectedCornersCharuco(
-      img.copy(), dt.charuco_corners, charucoIds=dt.charuco_ids)
-  
+    if dt.charuco_corners is not None:
+      debug_board_detections = cv2.aruco.drawDetectedCornersCharuco(
+        img.copy(), dt.charuco_corners, charucoIds=dt.charuco_ids)
+    else:
+      debug_board_detections = img.copy()
+
 
   debug_board_marker_detections = None
   if create_board_marker_debug_images:
-    debug_board_marker_detections = cv2.aruco.drawDetectedMarkers(
-                              img.copy(),
-                              corners=dt.charuco_marker_corners,
-                              ids=dt.charuco_marker_ids)
+    if dt.charuco_marker_corners is not None:
+      debug_board_marker_detections = cv2.aruco.drawDetectedMarkers(
+                                img.copy(),
+                                corners=dt.charuco_marker_corners,
+                                ids=dt.charuco_marker_ids)
+    else:
+      debug_board_marker_detections = img.copy()
     
   debug_images = CharucoDetectionDebugImages(
     debug_marker_detections = debug_marker_detections,

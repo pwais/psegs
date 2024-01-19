@@ -20,10 +20,8 @@ import attr
 import numpy as np
 from oarphpy import util as oputil
 
-from loguru import logger as log
-
 # # A global logger, just for PSegs
-# log = oputil.create_log(name='ps')
+log = oputil.create_log(name='ps')
 
 
 def missing_or_empty(path):

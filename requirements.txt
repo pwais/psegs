@@ -20,8 +20,6 @@ fasteners
 ffmpeg
 imageio
 imageio[ffmpeg]
-loguru
-
 
 # fixme why does 1.21.5 break? and who installs it?
 #numpy

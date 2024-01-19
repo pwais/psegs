@@ -102,18 +102,18 @@ def test_colmap_create_matched_pair():
 
     matches = mp.get_matches()
 
-    # yapf: disable
+    # fmt: off
     assert mp.matches_colnames == [
       'x1', 'y1', 'x2', 'y2',
       'r', 'g', 'b',
       'world_x', 'world_y', 'world_z',
       'error', 'track_length', 'colmap_p3id',
-    ]# yapf: enable
+    ] # fmt: on
 
     assert matches.shape[1] == len(mp.matches_colnames)
     
     # Spot check some numbers we pulled manually from 
-    # yapf: disable
+    # fmt: off
     EXPECTED_IM1_TO_MATCHES_ROWS = {
       'frame_00033.jpg': [
         (129.14500427246094, 169.54025268554688,
@@ -123,7 +123,7 @@ def test_colmap_create_matched_pair():
          0.29433191072803566, 4., 1.),
       ],
     }
-    # yapf: enable
+    # fmt: on
     
     expected_match_rows = EXPECTED_IM1_TO_MATCHES_ROWS.get(image1_name, [])
     actual_match_rows = set(tuple(r) for r in matches)

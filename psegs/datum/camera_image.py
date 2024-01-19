@@ -245,7 +245,7 @@ class CameraImage(object):
     return not missing
 
   def get_opencv_distcoeffs(self):
-    # yapf: disable
+    # fmt: off
     # OpenCV wants at least four numbers, perhaps more, in a specific order
     KEYS = (
       # Base model
@@ -254,7 +254,7 @@ class CameraImage(object):
       'k3', 'k4', 'k5', 'k6', 
       # TODO support othermodels
     )
-    # yapf: enable
+    # fmt: on
 
     dist_coeff_raw = [self.distortion_kv.get(k) for k in KEYS]
     dist_coeff_raw = [v for v in dist_coeff_raw if v is not None]
