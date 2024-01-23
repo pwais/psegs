@@ -20,9 +20,12 @@ class VideoMeta(object):
   video_uri = attr.ib(default='')
 
   start_time_nanostamp = attr.ib(default=0)
-  frames_per_second = attr.ib(default=0.0)
+  
+  # Note: A video can have dropped frames and/or invalid metadata, so these
+  # could disagree with the actual extracted frames (especially `n_frames`)
   n_frames = attr.ib(default=0)
-
+  frames_per_second = attr.ib(default=0.0)
+  end_time_nanostamp = attr.ib(default=0)
   height = attr.ib(default=0)
   width = attr.ib(default=0)
   
@@ -32,7 +35,7 @@ class VideoMeta(object):
   lstat_attr = attr.ib(default='st_mtime')
 
   @classmethod
-  def create_for_video(cls, video_uri, lstat_attr='st_mtime'):
+  def create_for_video(cls, video_uri, lstat_attr='st_mtime', prefer_ffmpeg=True):
     import imageio
     r = imageio.get_reader(video_uri)
     n_frames = r.get_meta_data()['nframes']
@@ -52,27 +55,63 @@ class VideoMeta(object):
     start_time_sec = getattr(lstat_res, lstat_attr)
     lstat_nanostamp = int(1e9 * start_time_sec)
     start_time_nanostamp = lstat_nanostamp
+    
+    duration_sec = r.get_meta_data().get('duration', 0.0)
+    end_time_nanostamp = start_time_nanostamp + duration_sec * 1e9
 
     is_10bit_hdr = False
 
     vid_dict = maybe_get_ffmpeg_meta(video_uri)
     if vid_dict:
-      start_time_nanostamp = (
-        ffmpeg_meta_maybe_get_start_time(vid_dict) or start_time_nanostamp)
+      if prefer_ffmpeg:
+        # imageio and ffmpeg can sometimes disagree on e.g. frame count :(
+        for stream in vid_dict.get('streams', []):
+          if stream.get('codec_type') == 'video':
+            n_frames = int(stream.get('nb_frames', n_frames))
+            
+            def _to_float(fraction_str):
+              try:
+                n, d = fraction_str.split('/')
+                return float(n) / float(d)
+              except ValueError:
+                try:
+                  return float(fraction_str)
+                except Exception:
+                  return None
+            
+            ffmpeg_fps = _to_float(stream.get('avg_frame_rate'))
+            fps = ffmpeg_fps or fps
+
+            duration_sec_str = stream.get('duration', '')
+            if duration_sec_str:
+              duration_sec = None
+              try:
+                duration_sec = float(duration_sec_str)
+              except:
+                pass
+              if duration_sec is not None:
+                end_time_nanostamp = start_time_nanostamp + duration_sec * 1e9
+
+            break
+
+        ffmpeg_start_time_nanostamp = ffmpeg_meta_maybe_get_start_time(vid_dict)
+        if ffmpeg_start_time_nanostamp is not None and prefer_ffmpeg:
+          start_time_nanostamp = ffmpeg_start_time_nanostamp
+      
       is_10bit_hdr = (
         ffmpeg_meta_maybe_get_is_10bit_hdr(vid_dict) or is_10bit_hdr)
+      
 
       # TODO try to read:
-      # * displaymatrix
       # * com.apple.quicktime.location.ISO6709
       # * Core Media Metadata
-
 
     return cls(
             video_uri=video_uri,
             start_time_nanostamp=start_time_nanostamp,
             frames_per_second=fps,
             n_frames=n_frames,
+            end_time_nanostamp=end_time_nanostamp,
             height=h,
             width=w,
             is_10bit_hdr=is_10bit_hdr,
@@ -82,6 +121,8 @@ class VideoMeta(object):
 
 def maybe_get_ffmpeg_meta(video_uri):
   import ffmpeg
+  assert hasattr(ffmpeg, 'probe'), \
+    f"probe() function missing, do you have a bad install of `ffmpeg-python`? {ffmpeg.__file__}"
 
   vid_dict = None
   try:
@@ -104,7 +145,7 @@ def ffmpeg_meta_maybe_get_start_time(vid_dict):
     return None
 
   try:
-    return dateparser.parse(date_raw_str)
+    return dateparser.parse(date_raw_str).timestamp()
   except Exception as e:
     return None
   
@@ -126,6 +167,7 @@ class VideoExplodeParams(object):
 
   jpeg_quality_percent = attr.ib(default=100)
 
+  # Extract only the first `n_frames`
   n_frames = attr.ib(default=-1)
 
 

@@ -17,7 +17,7 @@ attrs>=21.4.0
 
 dateparser
 fasteners
-ffmpeg
+ffmpeg-python
 imageio
 imageio[ffmpeg]
 

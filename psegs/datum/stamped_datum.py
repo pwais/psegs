@@ -132,41 +132,40 @@ class Sample(object):
   @property
   def ego_poses(self):
     """Normalized selector for the `ego_pose`
-    :class:`~psegs.datum.transform.Transform` canonical topic.
+    :class:`~psegs.datum.transform.Transform` datums in this `Sample`.
     Returns a list of transforms.
     """
     return [
-      sd.transform for sd in self.topic_datums(topic='ego_pose')
+      sd.transform for sd in self.datums if sd.transform is not None
     ]
   
   @property
   def camera_images(self):
     """Normalized selector for all camera
-    :class:`~psegs.datum.camera_image.CameraImage` canonical topics.
-    Returns a list of camera images.
+    :class:`~psegs.datum.camera_image.CameraImage` datums in this `Sample`.
     """
     return [
-      sd.camera_image for sd in self.topic_datums(prefix='camera')
+      sd.camera_image for sd in self.datums if sd.camera_image is not None
     ]
   
   @property
   def lidar_clouds(self):
     """Normalized selector for all lidar
-    :class:`~psegs.datum.point_cloud.PointCloud` canonical topics.
-    Returns a list of point clouds.
+    :class:`~psegs.datum.point_cloud.PointCloud` datums in this `Sample`.
+
     """
     return [
-      sd.point_cloud for sd in self.topic_datums(prefix='lidar')
+      sd.point_cloud for sd in self.datums if sd.point_cloud is not None
     ]
   
   @property
-  def cuboid_labels(self):
+  def cuboid_labels(self, topic='labels|cuboids'):
     """Normalized selector for the *label* :class:`~psegs.datum.Cuboid`
     canonical topic.  Returns a list of cuboids flattened from all available
     datums.
     """
     return list(itertools.chain.from_iterable(
-      sd.cuboids for sd in self.topic_datums(topic='labels|cuboids')))
+      sd.cuboids for sd in self.topic_datums(topic=topic)))
 
   ## Utils
 

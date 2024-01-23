@@ -133,7 +133,7 @@ class CameraImage(object):
   """Transform: From ego / robot frame to the camera frame (typically a static
   transform)."""
 
-  K = attr.ib(type=np.ndarray, default=np.eye(3, 3))
+  K = attr.ib(type=np.ndarray, default=np.eye(3, 3, dtype='float64'))
   """numpy.ndarray: The 3x3 intrinsic calibration camera matrix"""
 
   distortion_model = attr.ib(type=str, default="")

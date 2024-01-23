@@ -359,7 +359,6 @@ class AdhocVideosSDTFactory(StampedDatumTableFactory):
 #   import imageio
 #   return imageio.imread(path)
 
-
 class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
   """This `StampedDatumTableFactory` TODO
   """
@@ -509,7 +508,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     if not (force_recompute or cls._needs_explode()):
       util.log.debug(
         f"Factory \n{str(cls.BASE_URI)}\n already has "
-                    f"{len(cls.EXPLODED_FRAME_PATHS)} exploded frames.")
+                    f"{len(cls.EXPLODED_FRAME_PATHS or [])} exploded frames.")
       return cls
       
     img_cache = cls.IMAGE_CACHE_CLS()
@@ -631,7 +630,7 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     
     vm = cls.VIDEO_METADATA
     extra = dict(
-      video_url=urllib.parse.quote_plus(str(vm.video_uri)),
+      video_uri=urllib.parse.quote_plus(str(vm.video_uri)),
       start_time_nanostamp=vm.start_time_nanostamp,
       frames_per_second=vm.frames_per_second,
       n_frames=vm.n_frames,
@@ -691,12 +690,16 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     base_uri = cls.BASE_URI
     vm = cls.VIDEO_METADATA
     uris = []
-    for i in range(vm.n_frames):
+    frame_paths = cls.EXPLODED_FRAME_PATHS or []
+    n_frames_exploded = len(frame_paths)
+    for i, frame_path in enumerate(frame_paths):
       t = int(
         vm.start_time_nanostamp + i * (1e9 / float(vm.frames_per_second)))
       uri = base_uri.replaced(timestamp=t)
       uri.extra.update(cls._get_uri_extra())
+      uri.extra['DiskCachedFramesVideoSegmentFactory.frame_path'] = str(frame_path)
       uri.extra['DiskCachedFramesVideoSegmentFactory.frame_index'] = str(i)
+      uri.extra['DiskCachedFramesVideoSegmentFactory.n_frames_exploded'] = str(n_frames_exploded)
       uris.append(uri)
     return uris
 
@@ -708,7 +711,10 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
 
     frame_idx = uri.extra['DiskCachedFramesVideoSegmentFactory.frame_index']
     frame_idx = int(frame_idx)
-    frame_path = cls.EXPLODED_FRAME_PATHS[frame_idx]
+    n_frames_exploded = uri.extra['DiskCachedFramesVideoSegmentFactory.n_frames_exploded']
+    n_frames_exploded = int(n_frames_exploded)
+
+    frame_path = uri.extra['DiskCachedFramesVideoSegmentFactory.frame_path']
 
     assert Path(frame_path).exists(), frame_path
     extra = dict(uri.extra)
@@ -724,11 +730,25 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
     image_factory = lambda: _load_image(path=frame_path)
 
     vm = cls.VIDEO_METADATA
-    w, h = vm.width, vm.height
-    if cls.EXPLODE_PARAMS.max_hw >= 0:
-      if w > cls.EXPLODE_PARAMS.max_hw or h > cls.EXPLODE_PARAMS.max_hw:
-        w, h = get_image_wh(frame_path)
+    # w, h = vm.width, vm.height
+    # if cls.EXPLODE_PARAMS.max_hw >= 0:
+    #   if w > cls.EXPLODE_PARAMS.max_hw or h > cls.EXPLODE_PARAMS.max_hw:
+    w, h = get_image_wh(frame_path)
     
+    # All we know for sure is the frame index, so include a refined estimated
+    # frame timestamp and context used for that estimate.  This estimate could
+    # be WRONG tho if there are lots of dropped frames and the video metadata
+    # is actually correct.
+    extra['DiskCachedFramesVideoSegmentFactory.VideoMeta.start_time_nanostamp'] = str(vm.start_time_nanostamp)
+    extra['DiskCachedFramesVideoSegmentFactory.VideoMeta.n_frames'] = str(vm.n_frames)
+    extra['DiskCachedFramesVideoSegmentFactory.VideoMeta.frames_per_second'] = str(vm.frames_per_second)
+    extra['DiskCachedFramesVideoSegmentFactory.VideoMeta.end_time_nanostamp'] = str(vm.end_time_nanostamp)
+
+    duration_ns = vm.end_time_nanostamp - vm.start_time_nanostamp
+    ns_per_frame = duration_ns / float(n_frames_exploded)
+    estimated_frame_nanostamp = frame_idx * ns_per_frame
+    extra['DiskCachedFramesVideoSegmentFactory.estimated_frame_nanostamp'] = str(estimated_frame_nanostamp)
+
     ci = datum.CameraImage.create_world_frame_ci(
           sensor_name=uri.topic,
           width=w,
