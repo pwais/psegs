@@ -51,6 +51,9 @@ class StampedDatumTable(object):
     sdt._spark = spark
     return sdt
 
+  def get_spark(self, spark=None):
+    # Prefer our own spark handle
+    return self._spark or spark
 
   ## StampedDatumTable -> Datums
 
