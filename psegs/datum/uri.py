@@ -14,6 +14,7 @@
 
 import copy
 import itertools
+import os
 import typing
 
 import attr
@@ -178,6 +179,12 @@ class URI(object):
   
   def to_urlsafe_str(self):
     return six.moves.urllib.parse.quote_plus(self.to_str())
+
+  def to_segment_partition_relpath(self):
+    return os.path.join(
+      "dataset=%s" % (self.dataset or 'EMPTY_DATASET'),
+      "split=%s" % (self.split or 'EMPTY_SPLIT'),
+      "segment_id=%s" % (self.segment_id or 'EMPTY_SEGMENT_ID'))
 
   def __str__(self):
     return self.to_str()

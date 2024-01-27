@@ -122,20 +122,22 @@ def get_matching_seg_uris(args):
 
 
 def get_partition_paths(seg_uris):
-  part_keys = set(
-    (uri.dataset, uri.split, uri.segment_id)
-    for uri in seg_uris)
-  return [
-    os.path.join(
-      "dataset=" + (dataset or "EMPTY_DATASET"),
-      "split=" + (split or "EMPTY_SPLIT"),
-      "segment_id=" + (segment_id or "EMPTY_SEGMENT_ID"))
-    for (dataset, split, segment_id) in sorted(part_keys)
-  ]
+  # part_keys = set(
+  #   (uri.dataset, uri.split, uri.segment_id)
+  #   for uri in seg_uris)
+  # return [
+  #   os.path.join(
+  #     "dataset=" + (dataset or "EMPTY_DATASET"),
+  #     "split=" + (split or "EMPTY_SPLIT"),
+  #     "segment_id=" + (segment_id or "EMPTY_SEGMENT_ID"))
+  #   for (dataset, split, segment_id) in sorted(part_keys)
+  #]
+  return sorted(set(
+    uri.to_segment_partition_relpath()
+    for uri in seg_uris))
 
 
 def get_partition_path(v):
-  "TODO move to URI"
   if isinstance(v, six.string_types):
     v = URI.from_str(v)
   

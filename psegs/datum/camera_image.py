@@ -264,6 +264,7 @@ class CameraImage(object):
       return None
 
   def to_cv_undistorted_ci(self, alpha=0.):
+    """Uses cache-friendly image_factory"""
     import cv2
 
     assert self.has_rgb()
@@ -273,22 +274,24 @@ class CameraImage(object):
 
     cur_wh = (self.width, self.height)
     newK, roi = cv2.getOptimalNewCameraMatrix(self.K, dist, cur_wh, alpha)
-    image = self.image
+    rx, ry, rw, rh = roi
 
-    # NB: cv2.remap() might be faster for latency-critical use cases
-    undistorted = cv2.undistort(image, self.K, dist, None, newK)
-    # TODO support cv2.fisheye.undistortImage
-
-    _x, _y, _w, _h = roi
-    undistorted = undistorted[_y : _y + _h, _x : _x + _w]
+    def _get_undistorted():
+      import cv2
+      # NB: cv2.remap() might be faster for latency-critical use cases
+      undistorted = cv2.undistort(self.image, self.K, dist, None, newK)
+      # TODO support cv2.fisheye.undistortImage
+      
+      undistorted = undistorted[ry : ry + rh, rx : rx + rw]
+      return undistorted
 
     undistorted_ci = copy.deepcopy(self)
-    undistorted_ci.image_factory = CloudpickeledCallable(lambda: undistorted)
+    undistorted_ci.image_factory = CloudpickeledCallable(lambda: _get_undistorted())
     undistorted_ci.K = newK
     undistorted_ci.distortion_kv = {}
     undistorted_ci.distortion_model = ''
-    undistorted_ci.width = _w
-    undistorted_ci.height = _h
+    undistorted_ci.width = rw
+    undistorted_ci.height = rh
     return undistorted_ci
 
   def to_resized_ci(
@@ -298,7 +301,7 @@ class CameraImage(object):
         interpolate='INTER_AREA',
         resize_dtype='float32',
         final_dtype='uint8'):
-    import cv2
+    """Uses cache-friendly image_factory"""
 
     if target_wh is not None:
       tw, th = target_wh
@@ -306,17 +309,20 @@ class CameraImage(object):
       assert scale is not None
       tw = int(self.width * scale)
       th = int(self.height * scale)
-    
-    assert hasattr(cv2, interpolate), \
-      (interpolate, [x for x in dir(cv2) if 'INTER_' in x])
-    cv2_interp = getattr(cv2, interpolate)
 
-    image = self.image
-    if resize_dtype:
-      image = image.astype(resize_dtype)
-    resized = cv2.resize(image, (tw, th), interpolation=cv2_interp)
-    if final_dtype:
-      resized = resized.astype(final_dtype)
+    def _get_resized():
+      import cv2    
+      assert hasattr(cv2, interpolate), \
+        (interpolate, [x for x in dir(cv2) if 'INTER_' in x])
+      cv2_interp = getattr(cv2, interpolate)
+
+      image = self.image
+      if resize_dtype:
+        image = image.astype(resize_dtype)
+      resized = cv2.resize(image, (tw, th), interpolation=cv2_interp)
+      if final_dtype:
+        resized = resized.astype(final_dtype)
+      return resized
 
     newK = self.K.copy()
     scale_x = float(tw) / self.width
@@ -328,7 +334,7 @@ class CameraImage(object):
     newK[1, 2] *= scale_y
 
     resized_ci = copy.deepcopy(self)
-    resized_ci.image_factory = CloudpickeledCallable(lambda: resized)
+    resized_ci.image_factory = CloudpickeledCallable(lambda: _get_resized())
     resized_ci.K = newK
     resized_ci.width = tw
     resized_ci.height = th

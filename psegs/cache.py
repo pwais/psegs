@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 
 class LocalDiskCache(object):
   """Defines the API that PSegs expects to cache clients and provides
   a simple local adhoc disk cache."""
+
+  TIMELESS_KEY = datetime.datetime.fromtimestamp(0)
 
   def __init__(self):
     """Cache clients must have a zero-arg ctor"""
@@ -27,23 +30,32 @@ class LocalDiskCache(object):
     dest.parent.mkdir(parents=True, exist_ok=True)
     return dest
 
-  def new_dirpath(self, dirpath, t=None):
+  def new_dirpath(self, relpath, t=None):
     from psegs.conf import C
-    dest = C.DATA_ROOT / 'psegs_local_disk_cache' / 'adhoc_dirs' / dirpath
+    dest = C.DATA_ROOT / 'psegs_local_disk_cache' / 'adhoc_dirs' / relpath
     dest.mkdir(parents=True, exist_ok=True)
     return dest
 
+  # Methods for temporally global or "timeless" keys
+
+  def new_timeless_filepath(self, fname):
+    return self.new_filepath(fname, t=self.TIMELESS_KEY)
+  
+  def new_timeless_dirpath(self, relpath):
+    return self.new_dirpath(relpath, t=self.TIMELESS_KEY)
+
 
 class AssetDiskCache(LocalDiskCache):
+  # TODO demo how to subclass and plug in your own cache client ....
 
   def __init__(self, config=None):
-    """get canonical psegs config from somewhere or write to /opt/psegs/psegs_temp / dataroot stuff
+    """TODO get canonical psegs config from somewhere or write to /opt/psegs/psegs_temp / dataroot stuff
     """
     self.yay = None
 
   def new_filepath(self, fname, t=None):
     raise NotImplementedError
 
-  def new_dirpath(self, dirpath, t=None):
+  def new_dirpath(self, relpath, t=None):
     raise NotImplementedError
 
