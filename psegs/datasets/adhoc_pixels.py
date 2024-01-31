@@ -469,6 +469,8 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
           f"Using cached {F.__name__} for {str(cls_base_uri)}")
         return F
 
+    util.log.info(
+      "DiskCachedFramesVideoSegmentFactory: Creating video meta for %s" % video_uri)
     video_meta = VideoMeta.create_for_video(
       video_uri, lstat_attr=start_timestamp_lstat_attr)
     if start_time_nanostamp is not None:

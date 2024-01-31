@@ -276,6 +276,12 @@ class CameraImage(object):
     newK, roi = cv2.getOptimalNewCameraMatrix(self.K, dist, cur_wh, alpha)
     rx, ry, rw, rh = roi
 
+    # print()
+    # print("self.K, dist, cur_wh, alpha", (self.K.tolist(), dist, cur_wh, alpha))
+    # print("newK, roi", (newK.tolist(), roi))
+    # print()
+
+
     def _get_undistorted():
       import cv2
       # NB: cv2.remap() might be faster for latency-critical use cases
@@ -296,19 +302,19 @@ class CameraImage(object):
 
   def to_resized_ci(
         self,
-        target_wh=None,
+        target_h=None,
         scale=1.0,
         interpolate='INTER_AREA',
         resize_dtype='float32',
         final_dtype='uint8'):
     """Uses cache-friendly image_factory"""
 
-    if target_wh is not None:
-      tw, th = target_wh
+    if target_h is not None:
+      scale = float(target_h) / self.height      
     else:
       assert scale is not None
-      tw = int(self.width * scale)
-      th = int(self.height * scale)
+    tw = int(self.width * scale)
+    th = int(self.height * scale)
 
     def _get_resized():
       import cv2    
@@ -325,13 +331,18 @@ class CameraImage(object):
       return resized
 
     newK = self.K.copy()
-    scale_x = float(tw) / self.width
-    newK[0, 0] *= scale_x
-    newK[0, 2] *= scale_x
+    newK[:2, :] *= scale
+    # K [[3168.395196984074, 0.0, 2048.995029305805], [0.0, 3248.9459634700142, 1030.390052631334], [0.0, 0.0, 1.0]] (2159, 3839) 
+    # newK [[798.0823536034384, 0.0, 516.1183103252705], [0.0, 818.6320537877201, 259.625840033092], [0.0, 0.0, 1.0]] (544, 967) (0.2518885126334983, 0.25196850393700787)
+    # scale_x = float(tw) / self.width
+    # newK[0, 0] *= scale_x
+    # newK[0, 2] *= scale_x
 
-    scale_y = float(th) / self.height
-    newK[1, 1] *= scale_y
-    newK[1, 2] *= scale_y
+    # scale_y = float(th) / self.height
+    # newK[1, 1] *= scale_y
+    # newK[1, 2] *= scale_y
+
+    # print('K', self.K.tolist(), (self.height, self.width), 'newK', newK.tolist(), (th, tw), scale)
 
     resized_ci = copy.deepcopy(self)
     resized_ci.image_factory = CloudpickeledCallable(lambda: _get_resized())
