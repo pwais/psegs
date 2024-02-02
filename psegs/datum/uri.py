@@ -292,6 +292,9 @@ class URI(object):
     if isinstance(s, cls) or not bool(s):
       return s
 
+    if s.startswith(six.moves.urllib.parse.quote_plus(URI.PREFIX)):
+      s = six.moves.urllib.parse.unquote_plus(s)
+
     assert s.startswith(URI.PREFIX), "Missing %s in %s" % (URI.PREFIX, s)
     toks_s = s[len(URI.PREFIX):]
     if not toks_s:

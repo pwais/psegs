@@ -1367,6 +1367,8 @@ class CameraImage(object):
 
     T_ego_from_sensor = self.ego_to_sensor[self.sensor_name, 'ego']
     T_world_from_ego = self.ego_pose['ego', 'world']
+    
+    # errrr wait 
     w2c = T_world_from_ego @ T_ego_from_sensor
     w2c = w2c.get_transformation_matrix(homogeneous=True)
 

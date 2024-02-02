@@ -527,6 +527,8 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
   INCLUDE_MATCHED_PAIRS = True
   USE_NP_CACHED_ASSETS = True
 
+  MP_MAX_PAIRS = -1
+  MP_MAX_PAIRS_SEED = 1337
   MP_INCLUDE_POINT3D_COLORS_UINT8 = True
   MP_INCLUDE_POINT3D_WORLD_XYS = True
   MP_INCLUDE_POINT3D_EXTRAS = True
@@ -672,6 +674,13 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
       image_pair_names = set(itertools.chain.from_iterable(
         ((image_name1, in2) for in2 in image_name2s)
         for image_name1, image_name2s in image_name_to_covis_names.items()))
+      if cls.MP_MAX_PAIRS > 0 and len(image_pair_names) > cls.MP_MAX_PAIRS:
+        import random
+        util.log.info(
+          "Sub-sampling matched pairs %s -> %s" % (
+            len(image_pair_names), cls.MP_MAX_PAIRS))
+        r = random.Random(cls.MP_MAX_PAIRS_SEED)
+        image_pair_names = r.sample(sorted(image_pair_names), cls.MP_MAX_PAIRS)
       for im1_name, im2_name in image_pair_names:
         ci1_uri = ci_image_name_to_uri[im1_name]
         ci2_uri = ci_image_name_to_uri[im2_name]
@@ -891,6 +900,9 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
     if cls.USE_NP_CACHED_ASSETS:
       util.log.info(
         f"... using numpy asset cache, may take moments to populate ...")
+      print('todo use psegs disk cache')
+      print('todo use psegs disk cache')
+      print('todo use psegs disk cache')
       if not cls.psegs_npy_cache_dir().exists():
         # Initial cache population may be memory intensive
         uri_rdd = uri_rdd.repartition(uri_rdd.count())
