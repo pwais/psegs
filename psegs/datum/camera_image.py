@@ -304,7 +304,7 @@ class CameraImage(object):
         self,
         target_h=None,
         scale=1.0,
-        interpolate='INTER_AREA',
+        interpolate='',
         resize_dtype='float32',
         final_dtype='uint8'):
     """Uses cache-friendly image_factory"""
@@ -316,8 +316,15 @@ class CameraImage(object):
     tw = int(self.width * scale)
     th = int(self.height * scale)
 
+    if not interpolate:
+      if scale <= 1:
+        interpolate = 'INTER_AREA'
+      else:
+        interpolate = 'INTER_CUBIC'
+
     def _get_resized():
-      import cv2    
+      import cv2
+
       assert hasattr(cv2, interpolate), \
         (interpolate, [x for x in dir(cv2) if 'INTER_' in x])
       cv2_interp = getattr(cv2, interpolate)

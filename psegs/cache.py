@@ -24,9 +24,9 @@ class LocalDiskCache(object):
     """Cache clients must have a zero-arg ctor"""
     pass
 
-  def new_filepath(self, fname, t=None):
+  def new_filepath(self, f_relpath, t=None):
     from psegs.conf import C
-    dest = C.DATA_ROOT / 'psegs_local_disk_cache' / 'adhoc_files' / fname
+    dest = C.DATA_ROOT / 'psegs_local_disk_cache' / 'adhoc_files' / f_relpath
     dest.parent.mkdir(parents=True, exist_ok=True)
     return dest
 
