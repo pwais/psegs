@@ -254,8 +254,8 @@ def export_sdt_to_nerfstudio_format(
     # Select the depth images to export
     psegs_uri_to_frame = dict((f['psegs_uri'], f) for f in frames)
     datum_dci_rdd = sd_table.get_datum_rdd_matching(
-                    only_types=['camera_image'],
-                    only_topics=only_cameras)
+                      only_types=['camera_image'],
+                      only_topics=only_cameras)
     
     def to_sd_frame(stamped_datum):
       dci = stamped_datum.camera_image
@@ -269,7 +269,7 @@ def export_sdt_to_nerfstudio_format(
           f"WARN: Found depth image that has no `psegs.depth.rgb_uri` key: "
           f"{str(stamped_datum.uri)}")
       return None
-    
+
     sd_frame_rdd = datum_dci_rdd.map(to_sd_frame)
     sd_frame_rdd = sd_frame_rdd.filter(lambda v: v is not None).cache()
     util.log.info(f"Selected {sd_frame_rdd.count()} depth images ...")

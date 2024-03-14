@@ -358,6 +358,22 @@ class CameraImage(object):
     resized_ci.height = th
     return resized_ci
 
+  def to_grayscale_ci(self, final_dtype='uint8'):
+    def _get_gray():
+      import cv2
+      image = self.image
+
+      gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+      if final_dtype:
+        gray = gray.astype(final_dtype)
+      gray = gray.reshape([image.shape[0], image.shape[1], 1])
+      return gray
+    
+    gray_ci = copy.deepcopy(self)
+    gray_ci.image_factory = CloudpickeledCallable(lambda: _get_gray())
+    gray_ci.channel_names = ['grayscale']
+    return gray_ci
+
   def depth_image_to_point_cloud(self):
     """Create and return a datum.PointCloud instance if this image is
     a depth image (and None otherwise)"""

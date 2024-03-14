@@ -40,7 +40,6 @@ class UnionFactory(StampedDatumTableFactory):
   @classmethod
   def get_segment_sd_table(cls, segment_uri, spark=None):
     from psegs.spark import Spark
-
     Fs = cls._get_factories_for_seg_uri(segment_uri)
     with Spark.sess(spark) as spark:
       # TODO make this more flexible, for now we assume 

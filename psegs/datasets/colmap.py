@@ -899,11 +899,12 @@ class COLMAP_SDTFactory(StampedDatumTableFactory):
 
     if cls.USE_NP_CACHED_ASSETS:
       util.log.info(
-        f"... using numpy asset cache, may take moments to populate ...")
+        f"... using numpy asset cache at {cls.psegs_npy_cache_dir()} ...")
       print('todo use psegs disk cache')
       print('todo use psegs disk cache')
       print('todo use psegs disk cache')
       if not cls.psegs_npy_cache_dir().exists():
+        util.log.info("... will populate numpy asset cache on read ...")
         # Initial cache population may be memory intensive
         uri_rdd = uri_rdd.repartition(uri_rdd.count())
         cls.psegs_npy_cache_dir().mkdir(parents=True, exist_ok=True)

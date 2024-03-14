@@ -495,7 +495,12 @@ class DiskCachedFramesVideoSegmentFactory(StampedDatumTableFactory):
 
   @classmethod
   def get_segment_uri(cls):
-    return cls.BASE_URI.to_segment_uri()
+    # Add path if available, to help --list-and-exit
+    suri = copy.deepcopy(cls.BASE_URI.to_segment_uri())
+    if cls.VIDEO_METADATA is not None:
+      video_uri = cls.VIDEO_METADATA.video_uri
+      suri.extra[cls.__name__ + '.video_uri'] = str(video_uri)
+    return suri
   
 
   DEFAULT_IMAGE_CACHE_CLS = AssetDiskCache
