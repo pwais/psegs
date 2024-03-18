@@ -14,6 +14,7 @@
 
 
 import itertools
+import copy
 
 from psegs import datum
 from psegs.table.sd_table import StampedDatumTable
@@ -34,8 +35,18 @@ class UnionFactory(StampedDatumTableFactory):
   def get_all_segment_uris(cls):
     iseg_uris = itertools.chain.from_iterable(
         F.get_all_segment_uris() for F in cls.SDT_FACTORIES)
-    distinct_set_uris = set(str(suri) for suri in iseg_uris)
-    return sorted(datum.URI.from_str(s) for s in distinct_set_uris)
+    
+    # Two factories might have data for the same segment. Merge these such
+    # that e.g. the user can see `extra` info that distinguishes the sources.
+    key_to_uri = {}
+    for suri in iseg_uris:
+      key = (suri.dataset, suri.split, suri.segment_id)
+      if key in key_to_uri:
+        ref_suri = key_to_uri[key]
+        ref_suri.extra.update(suri.extra)
+      else:
+        key_to_uri[key] = copy.deepcopy(suri)
+    return sorted(key_to_uri.values())
 
   @classmethod
   def get_segment_sd_table(cls, segment_uri, spark=None):

@@ -111,19 +111,24 @@ class Points2D(object):
     points = self.get_points()
     return points[:, axes]
 
-  def get_debug_points_image(self, should_color_with_gid_col=True):
+  def get_debug_points_image(
+          self,
+          should_color_with_gid_col=True,
+          color_cols=None,
+          colors=None):
     from psegs.util import plotting as pspl
     from oarphpy.plotting import hash_to_rbg
 
     pts = self.get_xy()
-    colors = None
-    if len(self.points_colnames) > 2:
+    if colors is None and len(self.points_colnames) > 2:
       colordata = None
       if should_color_with_gid_col:
         for i, colname in enumerate(self.points_colnames):
           if colname.endswith('gid'):
             colordata = self.get_points()
             colordata = colordata[:, i]
+      elif color_cols is not None:
+        colordata = self.get_points_colnames(color_cols)
       if colordata is None:
         colordata = self.get_xy_extra()
         colordata = colordata[:, 2:]
